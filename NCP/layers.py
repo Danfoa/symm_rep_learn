@@ -8,7 +8,7 @@ class SingularLayer(Module):
         self.weights = torch.nn.Parameter(torch.Tensor(np.random.normal(0, 2/input_shape, input_shape)), requires_grad=True)
 
     def forward(self, x):
-        return x * self.weights
+        return x * torch.exp(-self.weights**2)
 
 class MLPOperator(Module):
     def __init__(self, input_shape, n_hidden, layer_size, output_shape, dropout=0.5):
