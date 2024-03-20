@@ -28,7 +28,7 @@ class DeepSVD:
     def fit(self, X, Y, X_val, Y_val, optimizer:Optimizer, optimizer_kwargs:dict, epochs=1000,lr=1e-3, gamma=None):
         if gamma is not None:
             self.gamma = gamma
-        optimizer = Optimizer(self.models.parameters(), **optimizer_kwargs)
+        optimizer = optimizer(self.models.parameters(), **optimizer_kwargs)
 
         pbar = tqdm(range(epochs))
 
@@ -53,7 +53,7 @@ class DeepSVD:
             z3 = self.models['V'](Y1)
             z4 = self.models['V'](Y2)
 
-            loss = CMELoss(gamma=gamma)
+            loss = CMELoss(gamma=self.gamma)
             l = loss(z1, z2, z3, z4, self.models['S'])
             l.backward()
             optimizer.step()
