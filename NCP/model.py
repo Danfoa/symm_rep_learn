@@ -10,7 +10,7 @@ from NCP.nn.losses import CMELoss
 
 class DeepSVD:
     # ideally, entries should be int
-    def __init__(self, U_operator:Module, V_operator:Module, layer_size, output_shape, gamma=0.):
+    def __init__(self, U_operator:Module, V_operator:Module, output_shape, gamma=0.):
 
         self.models = ModuleDict({
             'U':U_operator, 
