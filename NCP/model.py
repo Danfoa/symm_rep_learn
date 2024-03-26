@@ -92,21 +92,27 @@ class DeepSVD:
 
         Y = torch.Tensor(self.training_Y)
 
-        # Ux = self.models['U'](X).detach().numpy()
-        # Vy = self.models['V'](torch.Tensor(self.training_Y)).detach().numpy()
-
         # whitening of Ux and Vy
-        Ux = self.models['U'](torch.Tensor(self.training_X))
-        Vy = self.models['V'](torch.Tensor(self.training_Y))
+        sigma = torch.sqrt(self.models['S'].weights)
+        Ux = self.models['U'](torch.Tensor(self.training_X)) @ torch.diag(sigma**-1)
+        Vy = self.models['V'](torch.Tensor(self.training_Y)) @ torch.diag(sigma**-1)
+
+        Vy = Vy - torch.outer(torch.mean(Vy, axis=-1), torch.ones(Ux.shape[-1]))
+        Ux = Ux - torch.outer(torch.mean(Ux, axis=-1), torch.ones(Ux.shape[-1]))
 
         cov_X = Ux.T @ Ux * n**-1
         cov_Y = Vy.T @ Vy * n**-1
+        cov_XY = Ux.T @ Vy * n**-1 
 
         sqrt_cov_X = sqrtmh(cov_X)
         sqrt_cov_Y = sqrtmh(cov_Y)
+        M = (sqrt_cov_X**-1) @ cov_XY @ (sqrt_cov_Y**-1)
+        sing_vec_l, sing_val, sing_vec_r = torch.svd(M)
 
-        Ux = torch.linalg.lstsq(sqrt_cov_X,Ux.T).solution.T.detach().numpy()
-        Vy = torch.linalg.lstsq(sqrt_cov_Y,Vy.T).solution.T.detach().numpy()
+        Ux = (Ux @ sing_vec_l.T).detach().numpy()
+        Vy = (Vy @ sing_vec_r).detach().numpy()
+
+        # centering on Ux and Vx maybe before?
 
         print('U(x)', Ux)
         print('V(y)', Vy)
@@ -117,7 +123,7 @@ class DeepSVD:
 
         Vy_fY = np.mean(Vy * fY, axis=0)
         print('VyfY', Vy_fY)
-        sigma_U_fY_VY = self.models['S'].weights.detach().numpy() * Ux * Vy_fY
+        sigma_U_fY_VY = sing_val.detach().numpy() * Ux * Vy_fY
         val = np.sum(sigma_U_fY_VY, axis=-1)
         # print(bias, val)
         return bias + val
