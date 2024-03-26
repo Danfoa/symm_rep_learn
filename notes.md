@@ -10,7 +10,7 @@ $$
 NCPs are a class of linear operator models constructed as a sum of rank-one learned components. The notation we use is a nudge to interpret $u := \{ u_{i} : 1 \leq i \leq d\}$, $\sigma$, and $v$ as the truncated SVD of our target operator, which $\mathsf{G}$ aims to approximate. And indeed, the loss function $\mathcal{L}_{\gamma}$ is minimized by the target operator's truncated SVD.
 
 _However,_ in terms of the applicability of this model, we need to ensure
-1. That the cross covariances $\int \mu(dx) u_{i}(x) \otimes u_{j}(x) = \delta_{ij}$ (same for $v$), meaning that the functions are correctly orthonormalized.
+1. That the covariances satisfy $\int \mu(dx) u_{i}(x) \otimes u_{j}(x) = \delta_{ij}$  (same for $v$), meaning that the functions are correctly orthonormalized.
 2. That $\text{span}(u) \perp 1$ (and the same for $v$), meaning that we are learning the _deflated_ conditional expectation operator. 
 When 1. holds, we have a bona fide SVD. It may not approximate tightly the target operator, but it is an SVD nonetheless. Point 2. is specific to the problem of learning deflated operators, but this requirement can be elegantly included in 1. by simply ensuring
 
