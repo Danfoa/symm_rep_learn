@@ -7,7 +7,7 @@ $$
 \mathsf{G} = \sum_{i= 1}^{d} \sigma_{i} u_{i}\otimes v_{i},
 $$
 
-NCPs are a class of linear operator models constructed as a sum of rank-one learned components. The notation we use is a nudge to interpret $u := \{ u_{i} : 1 \leq i \leq d\}$, $\sigma$, and $v$ as the truncated SVD of our target operator, which $\mathsf{G}$ aims to approximate. And indeed, the loss function $\mathcal{L}_{\gamma}$ is minimized by the target operator's truncated SVD.
+NCPs are a class of linear operator models constructed as a sum of rank-one learned components. The notation we use is a nudge to interpret $u := \\{ u_{i} : 1 \leq i \leq d\\}$, $\sigma$, and $v$ as the truncated SVD of our target operator, which $\mathsf{G}$ aims to approximate. And indeed, the loss function $\mathcal{L}_{\gamma}$ is minimized by the target operator's truncated SVD.
 
 _However,_ in terms of the applicability of this model, we need to ensure
 1. That the covariances satisfy $\int \mu(dx) u_{i}(x) \otimes u_{j}(x) = \delta_{ij}$  (same for $v$), meaning that the functions are correctly orthonormalized.
