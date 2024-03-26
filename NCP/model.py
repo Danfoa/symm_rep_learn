@@ -98,26 +98,28 @@ class DeepSVD:
         Ux = self.models['U'](torch.Tensor(self.training_X)) @ torch.diag(sigma)
         Vy = self.models['V'](torch.Tensor(self.training_Y)) @ torch.diag(sigma)
 
-        #Vy = Vy - torch.outer(torch.mean(Vy, axis=-1), torch.ones(Ux.shape[-1]))
-        #Ux = Ux - torch.outer(torch.mean(Ux, axis=-1), torch.ones(Ux.shape[-1]))
+        Vy = Vy - torch.outer(torch.mean(Vy, axis=-1), torch.ones(Ux.shape[-1]))
+        Ux = Ux - torch.outer(torch.mean(Ux, axis=-1), torch.ones(Ux.shape[-1]))
 
-        #cov_X = Ux.T @ Ux * n**-1
-        #cov_Y = Vy.T @ Vy * n**-1
-        #cov_XY = Ux.T @ Vy * n**-1 
+        cov_X = Ux.T @ Ux * n**-1
+        cov_Y = Vy.T @ Vy * n**-1
+        cov_XY = Ux.T @ Vy * n**-1 
 
         # write in a stable way
-        #sqrt_cov_X = sqrtmh(cov_X)
-        #sqrt_cov_Y = sqrtmh(cov_Y)
-        #M = (sqrt_cov_X**-1) @ cov_XY @ (sqrt_cov_Y**-1)
-        #sing_vec_l, sing_val, sing_vec_r = torch.svd(M)
-        sing_vec_l, sing_val, sing_vec_r = torch.svd(Ux.T @ Vy * n**-1)
+        sqrt_cov_X = sqrtmh(cov_X)
+        sqrt_cov_Y = sqrtmh(cov_Y)
+        M = (sqrt_cov_X**-1) @ cov_XY @ (sqrt_cov_Y**-1)
+        sing_vec_l, sing_val, sing_vec_r = torch.svd(M)
+        #sing_vec_l, sing_val, sing_vec_r = torch.svd(Ux.T @ Vy * n**-1)
         print('sing val', sing_val)
 
-        Ux = (Ux @ sing_vec_l.T).detach().numpy()
-        Vy = (Vy @ sing_vec_r).detach().numpy()
+        Ux = (Ux @ (sqrt_cov_X**-1) @ sing_vec_l.T).detach().numpy()
+        Vy = (Vy @ (sqrt_cov_Y**-1) @ sing_vec_r).detach().numpy()
 
         Vy = Vy - np.outer(np.mean(Vy, axis=-1), np.ones(Ux.shape[-1]))
         Ux = Ux - np.outer(np.mean(Ux, axis=-1), np.ones(Ux.shape[-1]))
+
+        print(Vy @ Vy.T)
 
         # centering on Ux and Vx maybe before?
 
