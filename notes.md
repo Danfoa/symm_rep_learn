@@ -1,20 +1,24 @@
-# Notes
+# Notes
 
 ## Mar 26, 2024
-An NCP model of rank $d$ consists of $2d$ functions $(u_{i}, v_{i})_{i=1}^{d}$ and $d$ positive numbers $(\sigma_{i})_{i = 1}^{d}$, and it is written as
+An NCP model of rank $d$ consists of $2d$ functions $(u_{i}, v_{i})_ {i = 1}^{d}$ and $d$ positive numbers $(\sigma_{i})_{i = 1}^{d}$, and it is written as
+
 $$
 \mathsf{G} = \sum_{i= 1}^{d} \sigma_{i} u_{i}\otimes v_{i},
 $$
+
 NCPs are a class of linear operator models constructed as a sum of rank-one learned components. The notation we use is a nudge to interpret $u := \{ u_{i} : 1 \leq i \leq d\}$, $\sigma$, and $v$ as the truncated SVD of our target operator, which $\mathsf{G}$ aims to approximate. And indeed, the loss function $\mathcal{L}_{\gamma}$ is minimized by the target operator's truncated SVD.
 
 _However,_ in terms of the applicability of this model, we need to ensure
 1. That the cross covariances $\int \mu(dx) u_{i}(x) \otimes u_{j}(x) = \delta_{ij}$ (same for $v$), meaning that the functions are correctly orthonormalized.
 2. That $\text{span}(u) \perp 1$ (and the same for $v$), meaning that we are learning the _deflated_ conditional expectation operator. 
 When 1. holds, we have a bona fide SVD. It may not approximate tightly the target operator, but it is an SVD nonetheless. Point 2. is specific to the problem of learning deflated operators, but this requirement can be elegantly included in 1. by simply ensuring
+
 $$
 \int \mu(dx) (u_{i}(x) - 1 \langle u_{i}, 1\rangle) \otimes (u_{j}(x) - 1 \langle u_{i}, 1\rangle) = \delta_{ij}.
 $$
-Notice that the above equation is simply the centered cross-covariance, as $1 \langle u_{i}, 1\rangle = \mathbb{E}_{\mu}[u_{i}]$. 
+
+Notice that the above equation is simply the centered cross-covariance, as $1 \langle u_{i}, 1\rangle = \mathbb{E}_ {\mu}[u_{i}]$. 
 **The orthogonalization of $u$ and $v$ is a pre-requisite.** Every downstream relation between NCPs and the predicted conditional probabilities/expectations assumes orthonormal $u$ and $v$.
 ### How to do that?
 Two options:
