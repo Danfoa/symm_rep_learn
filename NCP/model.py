@@ -93,9 +93,10 @@ class DeepSVD:
         Y = torch.Tensor(self.training_Y)
 
         # whitening of Ux and Vy
-        sigma = torch.sqrt(self.models['S'].weights)
-        Ux = self.models['U'](torch.Tensor(self.training_X)) @ torch.diag(sigma**-1)
-        Vy = self.models['V'](torch.Tensor(self.training_Y)) @ torch.diag(sigma**-1)
+        sigma = torch.exp(-torch.sqrt(self.models['S'].weights)**2)
+        print(sigma)
+        Ux = self.models['U'](torch.Tensor(self.training_X)) @ torch.diag(sigma)
+        Vy = self.models['V'](torch.Tensor(self.training_Y)) @ torch.diag(sigma)
 
         Vy = Vy - torch.outer(torch.mean(Vy, axis=-1), torch.ones(Ux.shape[-1]))
         Ux = Ux - torch.outer(torch.mean(Ux, axis=-1), torch.ones(Ux.shape[-1]))
@@ -108,6 +109,7 @@ class DeepSVD:
         sqrt_cov_Y = sqrtmh(cov_Y)
         M = (sqrt_cov_X**-1) @ cov_XY @ (sqrt_cov_Y**-1)
         sing_vec_l, sing_val, sing_vec_r = torch.svd(M)
+        print('sing val', sing_val)
 
         Ux = (Ux @ sing_vec_l.T).detach().numpy()
         Vy = (Vy @ sing_vec_r).detach().numpy()
