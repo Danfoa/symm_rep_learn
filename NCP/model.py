@@ -111,7 +111,7 @@ class DeepSVD:
         sigma = torch.sqrt(torch.exp(-self.models['S'].weights**2))
         print(sigma)
 
-        Ux = self.models['U'](X)
+        Ux = self.models['U'](torch.Tensor(self.training_X).to(self.device))
         Vy = self.models['V'](Y)
 
         if Ux.shape[-1] > 1:
@@ -144,7 +144,7 @@ class DeepSVD:
 
         # Ux = Ux - torch.outer(torch.mean(Ux, axis=-1), torch.ones(Ux.shape[-1], device=self.device))
         # Vy = Vy - torch.outer(torch.mean(Vy, axis=-1), torch.ones(Vy.shape[-1], device=self.device))
-
+        Ux = self.models['U'](X)
         Ux = (Ux @ sqrt_cov_X_inv @ sing_vec_l).detach().cpu().numpy()
         Vy = (Vy @ sqrt_cov_Y_inv @ sing_vec_r).detach().cpu().numpy()
 
