@@ -37,15 +37,21 @@ def compute_quantile_robust(values:np.ndarray, cdf:np.ndarray, alpha:Union[str, 
 def get_cdf(model, X, observable = lambda x : x):
     # observable is a vector to scalar function
 
-    fY = np.apply_along_axis(observable, 0, model.training_Y)
+    fY = np.apply_along_axis(observable, 0, model.training_Y).flatten()
     candidates = np.argsort(fY)
     probas = np.cumsum(np.ones(fY.shape[0]))/fY.shape[0]
 
-    Ux, Vy, sing_val = model.get_representation(X)
+    Ux, sing_val, Vy = model.postprocess_UV(X)
 
     # estimating the cdf of the function f on X_t
-    cdf = np.array([probas[i] + np.sum(sing_val * Ux * np.sum(Vy * (fY <= fY[candidates[i]]) , axis=-1), axis=-1) for i in range(candidates.shape[0])]).T
-    return fY[candidates], cdf
+    cdf = np.zeros((candidates.shape[0], Ux.shape[0]))
+    for i, val in enumerate(candidates):
+        Ify = np.outer((fY <= fY[candidates[i]]), np.ones(Vy.shape[1]))
+        EVyFy = np.mean(Vy * Ify, axis=0)
+        EVyFy = np.outer(np.ones(Ux.shape[0]), EVyFy)
+        cdf[i] = probas[i] + np.sum(sing_val * Ux * EVyFy, axis=-1)
+
+    return fY.flatten()[candidates], cdf
 
 def quantile_regression(model, X, observable = lambda x : np.mean(x, axis=-1), alpha=0.01, t=1, isotonic=True, rescaling=True):
     x, cdfX = get_cdf(model, X, observable)

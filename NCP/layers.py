@@ -11,7 +11,7 @@ class SingularLayer(Module):
         return x * torch.exp(-self.weights**2)
 
 class MLPOperator(Module):
-    def __init__(self, input_shape, n_hidden, layer_size, output_shape, dropout=0.5):
+    def __init__(self, input_shape, n_hidden, layer_size, output_shape, dropout=0.):
         super(MLPOperator, self).__init__()
         if isinstance(layer_size, int):
             layer_size = [layer_size]*n_hidden
@@ -22,11 +22,11 @@ class MLPOperator(Module):
             for layer in range(n_hidden):
                 if layer == 0:
                     layers = [Linear(input_shape, layer_size[layer])]
-                    # layers.append(Dropout(p=dropout))
+                    layers.append(Dropout(p=dropout))
                     layers.append(ReLU())
                 else:
                     layers.append(Linear(layer_size[layer-1], layer_size[layer]))
-                    # layers.append(Dropout(p=dropout))
+                    layers.append(Dropout(p=dropout))
                     layers.append(ReLU())
             layers.append(Linear(layer_size[-1], output_shape, bias=False))
         self.model = Sequential(*layers)
