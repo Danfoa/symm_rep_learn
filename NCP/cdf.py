@@ -34,20 +34,19 @@ def compute_quantile_robust(values:np.ndarray, cdf:np.ndarray, alpha:Union[str, 
 
     return quantiles
 
-def get_cdf(model, X, observable = lambda x : np.mean(x, axis=-1)):
+def get_cdf(model, X, observable = lambda x : x):
     # observable is a vector to scalar function
-    fY = model.training_Y.numpy().apply_map(observable)
+
+    fY = np.apply_along_axis(observable, 0, model.training_Y)
     candidates = np.argsort(fY)
     probas = np.cumsum(np.ones(fY.shape[0]))/fY.shape[0]
 
-    hatUx = model.models['U'](torch.Tensor(X)).numpy() - np.sum(model.models['U'](model.training_X))
-    hatVy = model.models['V'](model.training_Y).numpy() - np.sum(model.models['V'](model.training_Y))
-    Sigma = model.models['S'].weights.detach().numpy()
+    Ux, Vy, sing_val = model.get_representation(X)
 
     # estimating the cdf of the function f on X_t
-    cdf = np.array([probas[i] + np.sum(Sigma * hatUx * np.sum(hatVy * (fY <= fY[candidates[i]]) , axis=-1), axis=-1) for i in range(candidates.shape[0])]).T
+    cdf = np.array([probas[i] + np.sum(sing_val * Ux * np.sum(Vy * (fY <= fY[candidates[i]]) , axis=-1), axis=-1) for i in range(candidates.shape[0])]).T
     return fY[candidates], cdf
 
 def quantile_regression(model, X, observable = lambda x : np.mean(x, axis=-1), alpha=0.01, t=1, isotonic=True, rescaling=True):
-    x, cdfX = model.get_cdf(X, observable)
-    return compute_quantile_robust(X, cdfX, alpha=alpha, isotonic=isotonic, rescaling=rescaling)
+    x, cdfX = get_cdf(model, X, observable)
+    return compute_quantile_robust(x, cdfX, alpha=alpha, isotonic=isotonic, rescaling=rescaling)

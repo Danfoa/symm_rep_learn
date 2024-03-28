@@ -75,68 +75,71 @@ class DeepSVD:
                 val_l = loss(z1_val, z2_val, z3_val, z4_val, self.models['S'])
                 self.val_losses.append(val_l.detach().numpy())
 
-            #if i%1000 == 0:
-            #    print(list(self.models['U'].parameters()), list(self.models['V'].parameters()), list(self.models['S'].parameters()))
-
     def get_losses(self):
         return self.losses
 
     def get_val_losses(self):
         return self.val_losses
 
-    def predict(self, X, observable = lambda x :x ):
+    def get_representation(self, X):
         self.models.eval()
-        n = self.training_X.shape[0]
         if not torch.is_tensor(X):
             X = torch.Tensor(X)
 
-        Y = torch.Tensor(self.training_Y)
+        Ux_pred = self.models['U'](torch.Tensor(X))
+        Ux_train = self.models['U'](torch.Tensor(self.training_X))
+        Vy = self.models['V'](torch.Tensor(self.training_Y))
 
-        # whitening of Ux and Vy
-        sigma = torch.sqrt(torch.exp(-self.models['S'].weights**2))
-        print(sigma)
-        Ux = self.models['U'](torch.Tensor(self.training_X)) @ torch.diag(sigma)
-        Vy = self.models['V'](torch.Tensor(self.training_Y)) @ torch.diag(sigma)
+        Ux, Vy, sing_val = whiten_normalize(Ux_pred, Ux_train, Vy, self.models['S'].weights)
+        Ux, Vy, sing_val = Ux.numpy(), Vy.numpy(), sing_val.numpy()
 
-        Vy = Vy - torch.outer(torch.mean(Vy, axis=-1), torch.ones(Ux.shape[-1]))
-        Ux = Ux - torch.outer(torch.mean(Ux, axis=-1), torch.ones(Ux.shape[-1]))
+        return Ux, Vy, sing_val
 
-        cov_X = Ux.T @ Ux * n**-1
-        cov_Y = Vy.T @ Vy * n**-1
-        cov_XY = Ux.T @ Vy * n**-1 
+    def predict_expectation(self, X, observable = lambda x :x ):
 
-        # write in a stable way
-        sqrt_cov_X_inv = torch.linalg.pinv(sqrtmh(cov_X))
-        sqrt_cov_Y_inv = torch.linalg.pinv(sqrtmh(cov_Y))
-
-        M = sqrt_cov_X_inv @ cov_XY @ sqrt_cov_Y_inv
-        sing_vec_l, sing_val, sing_vec_r = torch.svd(M)
-        #sing_vec_l, sing_val, sing_vec_r = torch.svd(Ux.T @ Vy * n**-1)
-        print('sing val', sing_val)
-
-        Ux = (Ux @ sqrt_cov_X_inv @ sing_vec_l.T).detach().numpy()
-        Vy = (Vy @ sqrt_cov_Y_inv @ sing_vec_r).detach().numpy()
-
-        #Vy = Vy - np.outer(np.mean(Vy, axis=-1), np.ones(Ux.shape[-1]))
-        #Ux = Ux - np.outer(np.mean(Ux, axis=-1), np.ones(Ux.shape[-1]))
-
-        print(Vy @ Vy.T)
-
-        # centering on Ux and Vx maybe before?
-
-        print('U(x)', Ux)
-        print('V(y)', Vy)
-
+        Ux, Vy, sing_val = self.get_representation(X)
+        
         fY = np.outer(np.squeeze(observable(self.training_Y)), np.ones(Vy.shape[-1]))
         bias = np.mean(fY)
-        print('fY', fY)
 
         Vy_fY = np.mean(Vy * fY, axis=0)
-        print('VyfY', Vy_fY)
-        sigma_U_fY_VY = sing_val.detach().numpy() * Ux * Vy_fY
+        sigma_U_fY_VY = sing_val * Ux * Vy_fY
         val = np.sum(sigma_U_fY_VY, axis=-1)
-        # print(bias, val)
+
         return bias + val
+
+def whiten_normalize(Ux_pred:torch.Tensor, Ux_train:torch.Tensor, Vy:torch.Tensor, S:torch.Tensor):
+    # whitening of the Uxs and Vy
+
+    # we use U evaluated on training data to recenter and whiten the representation of U(X) and V(Y)
+    sigma = torch.sqrt(torch.exp(-S**2))
+
+    n = Ux_train.size()[0]
+
+    Ux_pred, Ux_train, Vy = Ux_pred @ torch.diag(sigma), Ux_train @ torch.diag(sigma), Vy @ torch.diag(sigma)
+
+    # centering
+    Vy = Vy - torch.outer(torch.mean(Vy, axis=-1), torch.ones(Ux_train.shape[-1]))
+    Ux_train = Ux_train - torch.outer(torch.mean(Ux_train, axis=-1), torch.ones(Ux_train.shape[-1]))
+    Ux_pred = Ux_pred - torch.outer(torch.mean(Ux_train, axis=-1), torch.ones(Ux_train.shape[-1]))
+
+    cov_X = Ux_train.T @ Ux_train * n**-1
+    cov_Y = Vy.T @ Vy * n**-1
+    cov_XY = Ux_train.T @ Vy * n**-1 
+
+    # write in a stable way
+    sqrt_cov_X_inv = torch.linalg.pinv(sqrtmh(cov_X))
+    sqrt_cov_Y_inv = torch.linalg.pinv(sqrtmh(cov_Y))
+
+    M = sqrt_cov_X_inv @ cov_XY @ sqrt_cov_Y_inv
+    sing_vec_l, sing_val, sing_vec_r = torch.svd(M)
+
+    # We now evaluate the new values for U(X_pred) and V(Y_train)
+
+    Ux_pred = (Ux_pred @ sqrt_cov_X_inv @ sing_vec_l.T).detach()
+    Vy = (Vy @ sqrt_cov_Y_inv @ sing_vec_r).detach()
+
+    return Ux_pred, Vy, sing_val.detach()
 
 def sqrtmh(A: torch.Tensor):
     # Credits to
