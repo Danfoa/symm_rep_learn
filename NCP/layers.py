@@ -16,7 +16,7 @@ class MLPOperator(Module):
         if isinstance(layer_size, int):
             layer_size = [layer_size]*n_hidden
         if n_hidden == 0:
-            layers = [Linear(input_shape, output_shape)]
+            layers = [Linear(input_shape, output_shape, bias=False)]
         else:
             layers = []
             for layer in range(n_hidden):
@@ -28,7 +28,7 @@ class MLPOperator(Module):
                     layers.append(Linear(layer_size[layer-1], layer_size[layer]))
                     # layers.append(Dropout(p=dropout))
                     layers.append(ReLU())
-            layers.append(Linear(layer_size[-1], output_shape))
+            layers.append(Linear(layer_size[-1], output_shape, bias=False))
         self.model = Sequential(*layers)
 
     def forward(self, x):

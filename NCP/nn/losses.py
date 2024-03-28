@@ -1,6 +1,6 @@
 import torch
 
-from NCP.nn.functional import cme_score
+from NCP.nn.functional import cme_score, cme_score_cov
 from NCP.layers import SingularLayer
 
 class CMELoss():
@@ -25,4 +25,5 @@ class CMELoss():
             Y2 (torch.Tensor): .
             S (SingularLayer): .
         """
-        return cme_score(X1, X2, Y1, Y2, S, self.gamma)
+        # return cme_score(X1, X2, Y1, Y2, S, self.gamma)
+        return cme_score_cov(X1, X2, Y1, Y2, S, self.gamma)
