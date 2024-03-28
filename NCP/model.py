@@ -106,7 +106,6 @@ class DeepSVD:
                 wandb.log({"train_loss": l, "val_loss": val_l})
             #if i%1000 == 0:
             #    print(list(self.models['U'].parameters()), list(self.models['V'].parameters()), list(self.models['S'].parameters()))
-
     def get_losses(self):
         return self.losses
 
@@ -190,10 +189,9 @@ class DeepSVD:
         cov_Y = Vy.T @ Vy * n ** -1
         cov_XY = Ux.T @ Vy * n ** -1
 
-        Ux, Vy, sing_val = self.get_representation(X)
-        
-        fY = np.outer(np.squeeze(observable(self.training_Y)), np.ones(Vy.shape[-1]))
-        bias = np.mean(fY)
+        # write in a stable way
+        sqrt_cov_X_inv = torch.linalg.pinv(sqrtmh(cov_X))
+        sqrt_cov_Y_inv = torch.linalg.pinv(sqrtmh(cov_Y))
 
         M = sqrt_cov_X_inv @ cov_XY @ sqrt_cov_Y_inv
         e_val, sing_vec_l = torch.linalg.eigh(M @ M.T)
