@@ -178,8 +178,9 @@ class DeepSVD:
         Vy = self.models['V'](Y_train)
 
         if Ux.shape[-1] > 1:
-            Ux = Ux - torch.outer(torch.mean(Ux, axis=-1), torch.ones(Ux.shape[-1], device=self.device))
-            Vy = Vy - torch.outer(torch.mean(Vy, axis=-1), torch.ones(Vy.shape[-1], device=self.device))
+            mean_Ux = torch.mean(Ux, axis=0)
+            Ux = Ux - torch.outer(torch.ones(Ux.shape[0], device=self.device), mean_Ux)
+            Vy = Vy - torch.outer(torch.ones(Vy.shape[0], device=self.device), torch.mean(Vy, axis=0))
 
         Ux = Ux @ torch.diag(sigma)
         Vy = Vy @ torch.diag(sigma)
@@ -188,13 +189,16 @@ class DeepSVD:
         cov_Y = Vy.T @ Vy * n ** -1
         cov_XY = Ux.T @ Vy * n ** -1
 
+        # print(torch.linalg.cond(cov_X))
+        # print(torch.linalg.cond(cov_Y))
+
         # write in a stable way
         sqrt_cov_X_inv = torch.linalg.pinv(sqrtmh(cov_X))
         sqrt_cov_Y_inv = torch.linalg.pinv(sqrtmh(cov_Y))
 
         M = sqrt_cov_X_inv @ cov_XY @ sqrt_cov_Y_inv
         e_val, sing_vec_l = torch.linalg.eigh(M @ M.T)
-        # print(e_val)
+        # print(torch.sqrt(e_val))
         e_val, sing_vec_l = self._filter_reduced_rank_svals(e_val, sing_vec_l)
         sing_val = torch.sqrt(e_val)
         sing_vec_r = (M.T @ sing_vec_l) / sing_val
@@ -204,7 +208,7 @@ class DeepSVD:
                 X_test = torch.Tensor(X_test).to(self.device)
             Ux = self.models['U'](X_test)
 
-            Ux = Ux - torch.outer(torch.mean(Ux, axis=-1), torch.ones(Ux.shape[-1], device=self.device))
+            Ux = Ux - torch.outer(torch.ones(Ux.shape[0], device=self.device), mean_Ux)
             Ux = Ux @ torch.diag(sigma)
 
         Ux = Ux @ sqrt_cov_X_inv @ sing_vec_l
