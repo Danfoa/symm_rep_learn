@@ -26,11 +26,6 @@ def cme_score_cov(x1:torch.Tensor, x2:torch.Tensor, y1:torch.Tensor, y2:torch.Te
     cov_V1 = torch.cov(V1.T)
     cov_V2 = torch.cov(V2.T)
 
-    U1_mean = U1.mean(axis=0, keepdims=True)
-    U2_mean = U2.mean(axis=0, keepdims=True)
-    V1_mean = V1.mean(axis=0, keepdims=True)
-    V2_mean = V2.mean(axis=0, keepdims=True)
-
     cov_U1V1 = cross_cov(U1.T, V1.T, centered=True)
     cov_U2V2 = cross_cov(U2.T, V2.T, centered=True)
 
@@ -38,6 +33,10 @@ def cme_score_cov(x1:torch.Tensor, x2:torch.Tensor, y1:torch.Tensor, y2:torch.Te
 
     if gamma > 0:
         d = x1.shape[-1]
+        U1_mean = U1.mean(axis=0, keepdims=True)
+        U2_mean = U2.mean(axis=0, keepdims=True)
+        V1_mean = V1.mean(axis=0, keepdims=True)
+        V2_mean = V2.mean(axis=0, keepdims=True)
 
         # uncentered covariance matrices
         uc_cov_U1 = cov_U1 + U1_mean @ U1_mean.T

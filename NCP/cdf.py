@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from sklearn.isotonic import IsotonicRegression
 from typing import Optional, Callable, Union
+from NCP.utils import tonp, frnp
 
 def compute_quantile_robust(values:np.ndarray, cdf:np.ndarray, alpha:Union[str, float]='all', isotonic:bool=True, rescaling:bool=True):
     # TODO: correct this code
@@ -34,7 +35,7 @@ def compute_quantile_robust(values:np.ndarray, cdf:np.ndarray, alpha:Union[str, 
 
     return quantiles
 
-def get_cdf(model, X, observable = lambda x : x):
+def get_cdf(model, X, observable = lambda x : x, postprocess = None):
     # observable is a vector to scalar function
 
     fY = np.apply_along_axis(observable, 0, model.training_Y).flatten()
@@ -42,7 +43,14 @@ def get_cdf(model, X, observable = lambda x : x):
     fY = fY[candidates]
     probas = np.cumsum(np.ones(fY.shape[0]))/fY.shape[0]
 
-    Ux, sing_val, Vy = model.postprocess_UV(X)
+    if postprocess:  # postprocessing can be 'centering' or 'whitening'
+        Ux, sigma, Vy = model.postprocess_UV(X, postprocess)
+    else:
+        sigma = torch.sqrt(torch.exp(-model.models['S'].weights ** 2))
+        Ux = model.models['U'](frnp(X, model.device))
+        Vy = model.models['V'](frnp(model.training_Y, model.device))
+        Ux, sigma, Vy = tonp(Ux), tonp(sigma), tonp(Vy)
+
     # print(Ux.mean(axis=0))
     # print(Vy.mean(axis=0))
     # estimating the cdf of the function f on X_t
@@ -51,7 +59,7 @@ def get_cdf(model, X, observable = lambda x : x):
         Ify = np.outer((fY <= fY[i]), np.ones(Vy.shape[1]))
         EVyFy = np.mean(Vy * Ify, axis=0)
         EVyFy = np.outer(np.ones(Ux.shape[0]), EVyFy)
-        cdf[i] = probas[i] + np.sum(sing_val * Ux * EVyFy, axis=-1)
+        cdf[i] = probas[i] + np.sum(sigma * Ux * EVyFy, axis=-1)
         # print(np.sum(sing_val * Ux * EVyFy, axis=-1))
 
     return fY.flatten(), cdf

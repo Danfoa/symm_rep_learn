@@ -7,6 +7,7 @@ import numpy as np
 
 from NCP.layers import SingularLayer
 from NCP.nn.losses import CMELoss
+from NCP.utils import tonp, frnp
 
 class DeepSVD:
     # ideally, entries should be int
@@ -112,29 +113,29 @@ class DeepSVD:
     def get_val_losses(self):
         return self.val_losses
 
-    def predict(self, X_test, observable = lambda x :x, postprocessing = True):
-        if postprocessing:
-            Ux, sing_val, Vy = self.postprocess_UV(X_test)
+    def predict(self, X_test, observable = lambda x :x, postprocess = None):
+        if postprocess: # postprocessing can be 'centering' or 'whitening'
+            Ux, sigma, Vy = self.postprocess_UV(X_test, postprocess)
         else:
-            Ux, sing_val, Vy = self.postprocess_UV_tmp(X_test)
+            sigma = torch.sqrt(torch.exp(-self.models['S'].weights ** 2))
+            Ux = self.models['U'](frnp(X_test, self.device))
+            Vy = self.models['V'](frnp(self.training_Y, self.device))
+            Ux, sigma, Vy = tonp(Ux), tonp(sigma), tonp(Vy)
 
         fY = np.outer(np.squeeze(observable(self.training_Y)), np.ones(Vy.shape[-1]))
         bias = np.mean(fY)
 
         Vy_fY = np.mean(Vy * fY, axis=0)
-        sigma_U_fY_VY = sing_val * Ux * Vy_fY
+        sigma_U_fY_VY = sigma * Ux * Vy_fY
         val = np.sum(sigma_U_fY_VY, axis=-1)
 
         return bias + val
 
-    def conditional_probability(self, interval_A, interval_B, postprocessing = True):
+    def conditional_probability(self, interval_A, interval_B, postprocessing = None):
         Y_train = self.training_Y
         X_train = self.training_X
 
-        if postprocessing:
-            Ux, sing_val, Vy = self.postprocess_UV(X_train)
-        else:
-            Ux, sing_val, Vy = self.postprocess_UV_tmp(X_train)
+        Ux, sigma, Vy = self.postprocess_UV(X_train, postprocessing)
 
         n = Y_train.shape[0]
         x_A = indicator_fn(X_train, interval_A)
@@ -142,17 +143,14 @@ class DeepSVD:
         Ux_A = Ux[x_A, :].sum(axis=0)*n**-1
         Vy_B = Vy[y_B, :].sum(axis=0)*n**-1
 
-        conditional_prob = y_B.mean() + (sing_val * Ux_A * (x_A.mean() ** -1) * Vy_B).sum(axis=-1)
+        conditional_prob = y_B.mean() + (sigma * Ux_A * (x_A.mean() ** -1) * Vy_B).sum(axis=-1)
         return conditional_prob
 
-    def joint_probability(self, interval_A, interval_B, postprocessing = True):
+    def joint_probability(self, interval_A, interval_B, postprocessing = None):
         Y_train = self.training_Y
         X_train = self.training_X
 
-        if postprocessing:
-            Ux, sing_val, Vy = self.postprocess_UV(X_train)
-        else:
-            Ux, sing_val, Vy = self.postprocess_UV_tmp(X_train)
+        Ux, sigma, Vy = self.postprocess_UV(X_train, postprocessing)
 
         n = Y_train.shape[0]
         x_A = indicator_fn(X_train, interval_A)
@@ -160,34 +158,51 @@ class DeepSVD:
 
         Ux_A = Ux[x_A, :].sum(axis=0) * n ** -1
         Vy_B = Vy[y_B, :].sum(axis=0) * n ** -1
-        joint_prob = 1 + (sing_val * Ux_A * (x_A.mean() ** -1) * Vy_B * (y_B.mean() ** -1)).sum(axis=-1)
+        joint_prob = 1 + (sigma * Ux_A * (x_A.mean() ** -1) * Vy_B * (y_B.mean() ** -1)).sum(axis=-1)
         return joint_prob
 
-    # postprocessing
-    def postprocess_UV(self, X_test):
+    def postprocess_UV(self, X_test, postprocess):
+        if postprocess == 'centering':
+            sigma = torch.sqrt(torch.exp(-self.models['S'].weights ** 2))
+            Ux, Vy = self.centering(X_test)
+        elif postprocess == 'whitening':
+            Ux, sigma, Vy = self.whitening(X=X_test)
+
+        return tonp(Ux), tonp(sigma), tonp(Vy)
+
+    def centering(self, X=None):
         self.models.eval()
+
+        Ux_train = self.models['U'](frnp(self.training_X, self.device))
+        Vy_train = self.models['V'](frnp(self.training_Y, self.device))
+        self.mean_Ux = torch.mean(Ux_train, axis=0)
+        self.mean_Vy = torch.mean(Vy_train, axis=0)
+
+        if X is not None:
+            if not torch.is_tensor(X):
+                X = frnp(X, self.device)
+            Ux = self.models['U'](X)
+        else:
+            Ux = Ux_train
+
+        if Ux_train.shape[-1] > 1:
+            Ux_centered = Ux - torch.outer(torch.ones(Ux.shape[0], device=self.device), self.mean_Ux)
+            Vy_centered = Vy_train - torch.outer(torch.ones(Vy_train.shape[0], device=self.device), self.mean_Vy)
+
+        return Ux_centered, Vy_centered
+
+    def whitening(self, X=None):
         n = self.training_X.shape[0]
-
-        X_train = torch.Tensor(self.training_X).to(self.device)
-        Y_train = torch.Tensor(self.training_Y).to(self.device)
-
-        # whitening of Ux and Vy
         sigma = torch.sqrt(torch.exp(-self.models['S'].weights ** 2))
 
-        Ux = self.models['U'](X_train)
-        Vy = self.models['V'](Y_train)
+        Ux_centered, Vy_centered = self.centering()
 
-        if Ux.shape[-1] > 1:
-            mean_Ux = torch.mean(Ux, axis=0)
-            Ux = Ux - torch.outer(torch.ones(Ux.shape[0], device=self.device), mean_Ux)
-            Vy = Vy - torch.outer(torch.ones(Vy.shape[0], device=self.device), torch.mean(Vy, axis=0))
+        Ux_centered = Ux_centered @ torch.diag(sigma)
+        Vy_centered = Vy_centered @ torch.diag(sigma)
 
-        Ux = Ux @ torch.diag(sigma)
-        Vy = Vy @ torch.diag(sigma)
-
-        cov_X = Ux.T @ Ux * n ** -1
-        cov_Y = Vy.T @ Vy * n ** -1
-        cov_XY = Ux.T @ Vy * n ** -1
+        cov_X = Ux_centered.T @ Ux_centered * n ** -1
+        cov_Y = Vy_centered.T @ Vy_centered * n ** -1
+        cov_XY = Ux_centered.T @ Vy_centered * n ** -1
 
         # print(torch.linalg.cond(cov_X))
         # print(torch.linalg.cond(cov_Y))
@@ -203,69 +218,20 @@ class DeepSVD:
         sing_val = torch.sqrt(e_val)
         sing_vec_r = (M.T @ sing_vec_l) / sing_val
 
-        if X_test is not None:
-            if not torch.is_tensor(X_test):
-                X_test = torch.Tensor(X_test).to(self.device)
-            Ux = self.models['U'](X_test)
+        if X is not None:
+            if not torch.is_tensor(X):
+                X = frnp(X, self.device)
+            Ux = self.models['U'](X)
 
-            Ux = Ux - torch.outer(torch.ones(Ux.shape[0], device=self.device), mean_Ux)
+            Ux = Ux - torch.outer(torch.ones(Ux.shape[0], device=self.device), self.mean_Ux)
             Ux = Ux @ torch.diag(sigma)
+        else:
+            Ux = Ux_centered
 
         Ux = Ux @ sqrt_cov_X_inv @ sing_vec_l
-        Vy = Vy @ sqrt_cov_Y_inv @ sing_vec_r
+        Vy = Vy_centered @ sqrt_cov_Y_inv @ sing_vec_r
 
-        return tonp(Ux), tonp(sing_val), tonp(Vy)
-
-    def postprocess_UV_tmp(self, X_test):
-        self.models.eval()
-        n = self.training_X.shape[0]
-
-        X_test = torch.Tensor(X_test).to(self.device)
-        X_train = torch.Tensor(self.training_X).to(self.device)
-        Y_train = torch.Tensor(self.training_Y).to(self.device)
-
-        # whitening of Ux and Vy
-        sing_val = torch.sqrt(torch.exp(-self.models['S'].weights ** 2))
-
-        Ux_train = self.models['U'](X_train)
-        Ux = self.models['U'](X_test)
-        Vy = self.models['V'](Y_train)
-
-        # print(Ux_train.mean(axis=-1))
-        # print(Vy.mean(axis=-1))
-
-        # if Ux.shape[-1] > 1:
-        #     Ux = Ux - torch.outer(torch.mean(Ux_train, axis=-1), torch.ones(Ux_train.shape[-1], device=self.device))
-        #     Vy = Vy - torch.outer(torch.mean(Vy, axis=-1), torch.ones(Vy.shape[-1], device=self.device))
-
-        # Ux = Ux - torch.outer(torch.mean(Ux_train, axis=-1), torch.ones(Ux_train.shape[-1], device=self.device))
-        # Vy = Vy - torch.outer(torch.mean(Vy, axis=-1), torch.ones(Vy.shape[-1], device=self.device))
-        # Ux = self.models['U'](X_test)
-        # Ux = Ux @ torch.diag(sigma)
-        # Vy = Vy @ torch.diag(sigma)
-        #
-        # cov_X = Ux.T @ Ux * n ** -1
-        # cov_Y = Vy.T @ Vy * n ** -1
-        # cov_XY = Ux.T @ Vy * n ** -1
-        #
-        # # write in a stable way
-        # sqrt_cov_X_inv = torch.linalg.pinv(sqrtmh(cov_X))
-        # sqrt_cov_Y_inv = torch.linalg.pinv(sqrtmh(cov_Y))
-        #
-        # M = sqrt_cov_X_inv @ cov_XY @ sqrt_cov_Y_inv
-        # e_val, sing_vec_l = torch.linalg.eigh(M @ M.T)
-        # e_val, sing_vec_l = self._filter_reduced_rank_svals(e_val, sing_vec_l)
-        # sing_val = torch.sqrt(e_val)
-        # sing_vec_r = (M.T @ sing_vec_l) / sing_val
-        #
-        # if X_test is not None:
-        #     if not torch.is_tensor(X_test):
-        #         X_test = torch.Tensor(X_test).to(self.device)
-        #     Ux = self.models['U'](X_test)
-        #
-        # Ux = Ux @ sqrt_cov_X_inv @ sing_vec_l
-        # Vy = Vy @ sqrt_cov_Y_inv @ sing_vec_r
-        return tonp(Ux), tonp(sing_val), tonp(Vy)
+        return Ux, sing_val, Vy
 
     def _filter_reduced_rank_svals(self, values, vectors):
         eps = 2 * torch.finfo(torch.get_default_dtype()).eps
@@ -300,12 +266,6 @@ def sqrtmh(A: torch.Tensor):
     threshold = L.max(-1).values * L.size(-1) * torch.finfo(L.dtype).eps
     L = L.where(L > threshold.unsqueeze(-1), zero)  # zero out small components
     return (Q * L.sqrt().unsqueeze(-2)) @ Q.mH
-
-def tonp(x):
-    return x.detach().cpu().numpy()
-
-def frnp(x, device='cpu'):
-    return torch.Tensor(x).to(device)
 
 def indicator_fn(x, interval):
     return ((interval[0] <= x) & (x <= interval[1])).squeeze()
