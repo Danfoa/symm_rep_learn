@@ -38,10 +38,9 @@ def compute_quantile_robust(values:np.ndarray, cdf:np.ndarray, alpha:Union[str, 
 def get_cdf(model, X, observable = lambda x : x, postprocess = None):
     # observable is a vector to scalar function
 
-    fY = np.apply_along_axis(observable, 0, model.training_Y).flatten()
+    fY = np.apply_along_axis(observable, -1, model.training_Y).flatten()
     candidates = np.argsort(fY)
-    fY = fY[candidates]
-    probas = np.cumsum(np.ones(fY.shape[0]))/fY.shape[0]
+    probas = np.cumsum(np.ones(fY.shape[0]))/fY.shape[0] # vector of [k/n], k \in [n]
 
     if postprocess:  # postprocessing can be 'centering' or 'whitening'
         Ux, sigma, Vy = model.postprocess_UV(X, postprocess)
@@ -51,18 +50,16 @@ def get_cdf(model, X, observable = lambda x : x, postprocess = None):
         Vy = model.models['V'](frnp(model.training_Y, model.device))
         Ux, sigma, Vy = tonp(Ux), tonp(sigma), tonp(Vy)
 
-    # print(Ux.mean(axis=0))
-    # print(Vy.mean(axis=0))
-    # estimating the cdf of the function f on X_t
-    cdf = np.zeros((candidates.shape[0], Ux.shape[0]))
-    for i, val in enumerate(candidates):
-        Ify = np.outer((fY <= fY[i]), np.ones(Vy.shape[1]))
-        EVyFy = np.mean(Vy * Ify, axis=0)
-        EVyFy = np.outer(np.ones(Ux.shape[0]), EVyFy)
-        cdf[i] = probas[i] + np.sum(sigma * Ux * EVyFy, axis=-1)
-        # print(np.sum(sing_val * Ux * EVyFy, axis=-1))
+    Ux = Ux.flatten()
 
-    return fY.flatten(), cdf
+    # estimating the cdf of the function f on X_t
+    cdf = np.zeros(candidates.shape[0])
+    for i, val in enumerate(fY[candidates]):
+        Ify = np.outer((fY <= val), np.ones(Vy.shape[1]))         # indicator function of fY < fY[i], put into shape (n_sample, latent_dim)
+        EVyFy = np.mean(Vy * Ify, axis=0)                         # for all latent dim, compute E (Vy * fY)
+        cdf[i] = probas[i] + np.sum(sigma * Ux * EVyFy)
+
+    return fY[candidates].flatten(), cdf
 
 def quantile_regression(model, X, observable = lambda x : np.mean(x, axis=-1), alpha=0.01, t=1, isotonic=True, rescaling=True):
     x, cdfX = get_cdf(model, X, observable)
