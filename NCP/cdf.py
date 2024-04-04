@@ -35,10 +35,11 @@ def compute_quantile_robust(values:np.ndarray, cdf:np.ndarray, alpha:Union[str, 
 
     return quantiles
 
-def get_cdf(model, X, observable = lambda x : x, postprocess = None):
+def get_cdf(model, X, Y=None, observable = lambda x : x, postprocess = None):
     # observable is a vector to scalar function
-
-    fY = np.apply_along_axis(observable, -1, model.training_Y).flatten()
+    if Y is None: # if no Y is given, use the training data
+        Y = model.training_Y
+    fY = np.apply_along_axis(observable, -1, Y).flatten()
     candidates = np.argsort(fY)
     probas = np.cumsum(np.ones(fY.shape[0]))/fY.shape[0] # vector of [k/n], k \in [n]
 
@@ -47,7 +48,7 @@ def get_cdf(model, X, observable = lambda x : x, postprocess = None):
     else:
         sigma = torch.sqrt(torch.exp(-model.models['S'].weights ** 2))
         Ux = model.models['U'](frnp(X, model.device))
-        Vy = model.models['V'](frnp(model.training_Y, model.device))
+        Vy = model.models['V'](frnp(Y, model.device))
         Ux, sigma, Vy = tonp(Ux), tonp(sigma), tonp(Vy)
 
     Ux = Ux.flatten()
