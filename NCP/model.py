@@ -113,13 +113,16 @@ class DeepSVD:
     def get_val_losses(self):
         return self.val_losses
 
-    def predict(self, X_test, observable = lambda x :x, postprocess = None, Y=None):
+    def predict(self, X_test, Y=None, observable = lambda x :x, postprocess = None):
         if postprocess: # postprocessing can be 'centering' or 'whitening'
-            Ux, sigma, Vy = self.postprocess_UV(X_test, postprocess)
+            Ux, sigma, Vy = self.postprocess_UV(X_test, postprocess, Y=Y)
         else:
             sigma = torch.sqrt(torch.exp(-self.models['S'].weights ** 2))
             Ux = self.models['U'](frnp(X_test, self.device))
-            Vy = self.models['V'](frnp(self.training_Y, self.device))
+            if Y is None:
+                Vy = self.models['V'](frnp(self.training_Y, self.device))
+            else:
+                Vy = self.models['V'](frnp(Y, self.device))
             Ux, sigma, Vy = tonp(Ux), tonp(sigma), tonp(Vy)
 
         fY = np.outer(np.squeeze(observable(self.training_Y)), np.ones(Vy.shape[-1]))
@@ -163,12 +166,12 @@ class DeepSVD:
         joint_prob = 1 + (sigma * Ux_A * (x_A.mean() ** -1) * Vy_B * (y_B.mean() ** -1)).sum(axis=-1)
         return joint_prob
 
-    def postprocess_UV(self, X_test, postprocess, Y_test=None):
+    def postprocess_UV(self, X_test, postprocess, Y=None):
         if postprocess == 'centering':
             sigma = torch.sqrt(torch.exp(-self.models['S'].weights ** 2))
-            Ux, Vy = self.centering(X_test)
+            Ux, Vy = self.centering(X_test, Y)
         elif postprocess == 'whitening':
-            Ux, sigma, Vy = self.whitening(X=X_test)
+            Ux, sigma, Vy = self.whitening(X=X_test, Y=Y)
 
         return tonp(Ux), tonp(sigma), tonp(Vy)
 
@@ -187,10 +190,17 @@ class DeepSVD:
         else:
             Ux = Ux_train
 
+        if Y is not None:
+            if not torch.is_tensor(Y):
+                Y = frnp(Y, self.device)
+            Vy = self.models['V'](Y)
+        else:
+            Vy = Vy_train            
+
         if Ux_train.shape[-1] > 1:
             Ux_centered = Ux - torch.outer(torch.ones(Ux.shape[0], device=self.device), self.mean_Ux)
-            Vy_centered = Vy_train - torch.outer(torch.ones(Vy_train.shape[0], device=self.device), self.mean_Vy)
-
+            Vy_centered = Vy - torch.outer(torch.ones(Vy.shape[0], device=self.device), self.mean_Vy)
+        
         return Ux_centered, Vy_centered
 
     def whitening(self, X=None, Y=None):
@@ -230,8 +240,17 @@ class DeepSVD:
         else:
             Ux = Ux_centered
 
+        if Y is not None:
+            if not torch.is_tensor(Y):
+                Y = frnp(Y, self.device)
+            Vy = self.models['V'](Y)
+
+            Vy = Vy - torch.outer(torch.ones(Vy.shape[0], device=self.device), self.mean_Vy)
+            Vy = Vy @ torch.diag(sigma)
+        else:
+            Vy = Vy_centered
         Ux = Ux @ sqrt_cov_X_inv @ sing_vec_l
-        Vy = Vy_centered @ sqrt_cov_Y_inv @ sing_vec_r
+        Vy = Vy @ sqrt_cov_Y_inv @ sing_vec_r
 
         return Ux, sing_val, Vy
 
