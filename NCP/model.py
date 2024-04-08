@@ -113,7 +113,7 @@ class DeepSVD:
     def get_val_losses(self):
         return self.val_losses
 
-    def predict(self, X_test, observable = lambda x :x, postprocess = None):
+    def predict(self, X_test, observable = lambda x :x, postprocess = None, Y=None):
         if postprocess: # postprocessing can be 'centering' or 'whitening'
             Ux, sigma, Vy = self.postprocess_UV(X_test, postprocess)
         else:
@@ -130,6 +130,8 @@ class DeepSVD:
         val = np.sum(sigma_U_fY_VY, axis=-1)
 
         return bias + val
+
+    # adapt functions to work with function from R^d to {0,1}
 
     def conditional_probability(self, interval_A, interval_B, postprocessing = None):
         Y_train = self.training_Y
@@ -161,7 +163,7 @@ class DeepSVD:
         joint_prob = 1 + (sigma * Ux_A * (x_A.mean() ** -1) * Vy_B * (y_B.mean() ** -1)).sum(axis=-1)
         return joint_prob
 
-    def postprocess_UV(self, X_test, postprocess):
+    def postprocess_UV(self, X_test, postprocess, Y_test=None):
         if postprocess == 'centering':
             sigma = torch.sqrt(torch.exp(-self.models['S'].weights ** 2))
             Ux, Vy = self.centering(X_test)
@@ -170,7 +172,7 @@ class DeepSVD:
 
         return tonp(Ux), tonp(sigma), tonp(Vy)
 
-    def centering(self, X=None):
+    def centering(self, X=None, Y=None):
         self.models.eval()
 
         Ux_train = self.models['U'](frnp(self.training_X, self.device))
@@ -191,7 +193,7 @@ class DeepSVD:
 
         return Ux_centered, Vy_centered
 
-    def whitening(self, X=None):
+    def whitening(self, X=None, Y=None):
         n = self.training_X.shape[0]
         sigma = torch.sqrt(torch.exp(-self.models['S'].weights ** 2))
 

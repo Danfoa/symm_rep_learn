@@ -4,6 +4,11 @@ from sklearn.isotonic import IsotonicRegression
 from typing import Optional, Callable, Union
 from NCP.utils import tonp, frnp
 
+def smooth_cdf(values, cdf, isotonic=True):
+    cdf = IsotonicRegression(y_min=0., y_max=cdf.max()).fit_transform(values, cdf)
+    cdf = cdf/cdf.max()   
+    return cdf
+
 def compute_quantile_robust(values:np.ndarray, cdf:np.ndarray, alpha:Union[str, float]='all', isotonic:bool=True, rescaling:bool=True):
     # TODO: correct this code
     # correction of the cdf using isotonic regression
@@ -61,6 +66,16 @@ def get_cdf(model, X, Y=None, observable = lambda x : x, postprocess = None):
         cdf[i] = probas[i] + np.sum(sigma * Ux * EVyFy)
 
     return fY[candidates].flatten(), cdf
+
+def compute_moments(model, X, order=2, Y=None, observable = lambda x : x, postprocess=None):
+    obs_moment = lambda x : observable(x)**order
+    return model.predict(X, Y=Y, observable=obs_moment, postprocess=postprocess)
+
+def compute_variance(model, X, Y=None, observable = lambda x : x, postprocess=None):
+    e2 = compute_moments(model, X, Y=Y, order=2, observable=observable, postprocess=postprocess)
+    e1 = model.predict(X, Y=Y, observable=observable, postprocess=postprocess)
+    return e2 - e1**2
+
 
 def quantile_regression(model, X, observable = lambda x : np.mean(x, axis=-1), alpha=0.01, t=1, isotonic=True, rescaling=True):
     x, cdfX = get_cdf(model, X, observable)
