@@ -49,7 +49,7 @@ def get_cdf(model, X, Y=None, observable = lambda x : x, postprocess = None):
     probas = np.cumsum(np.ones(fY.shape[0]))/fY.shape[0] # vector of [k/n], k \in [n]
 
     if postprocess:  # postprocessing can be 'centering' or 'whitening'
-        Ux, sigma, Vy = model.postprocess_UV(X, postprocess)
+        Ux, sigma, Vy = model.postprocess_UV(X, postprocess=postprocess, Y=Y)
     else:
         sigma = torch.sqrt(torch.exp(-model.models['S'].weights ** 2))
         Ux = model.models['U'](frnp(X, model.device))
@@ -75,7 +75,6 @@ def compute_variance(model, X, Y=None, observable = lambda x : x, postprocess=No
     e2 = compute_moments(model, X, Y=Y, order=2, observable=observable, postprocess=postprocess)
     e1 = model.predict(X, Y=Y, observable=observable, postprocess=postprocess)
     return e2 - e1**2
-
 
 def quantile_regression(model, X, observable = lambda x : np.mean(x, axis=-1), alpha=0.01, t=1, isotonic=True, rescaling=True):
     x, cdfX = get_cdf(model, X, observable)
