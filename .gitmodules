@@ -1,0 +1,3 @@
+[submodule "Conditional_Density_Estimation"]
+	path = Conditional_Density_Estimation
+	url = git@github.com:freelunchtheorem/Conditional_Density_Estimation.git
