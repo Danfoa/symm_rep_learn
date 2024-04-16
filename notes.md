@@ -1,5 +1,71 @@
 # Notes
 
+## Apr 13, 2024
+A Neural Conditional Probability model (NCP) of rank $d$ is a probabilistic model describing a pair of random variables $(X, Y)$, where $X \sim \mu$ and $Y \sim \nu$. By letting $\mathsf{E}: L^{2}_{\nu} \to L^{2}_{\mu}$ be the conditional expectation operator of $Y$ given $X$
+$$f \mapsto \mathbb{E}\left[f(Y) \mid X = x\right] =: (\mathsf{E}f)(x),$$
+we aim to approximate the _deflated_ conditional expectation $\mathsf{D} := \mathsf{E} - 1_{\mu} \otimes 1_{\nu}$. By letting the class of rank-$d$ NCP models be 
+$$\text{NCP}_{d} := \left\{(u_{i}, v_{i}, \sigma_{i}) \in L^{2}_{\mu} \times L^{2}_{\nu} \times [0, 1] : i \in [d]\right\},$$
+every element of $\text{NCP}_{d}$ is naturally associated to a rank-$d$ linear operator
+$$\mathsf{M} := \sum_{i=1}^{d} \sigma_{i} \left( u_{i} \otimes v_{i}\right).$$
+
+After a leap of faith in which you trust me that the loss function we proposed to train the NCP gives us a good approximation of $\mathsf{D}$, let me denote $\mathsf{M}$ the linear operator resulting from an ERM procedure and for which $\mathsf{M} \simeq \mathsf{D}$.
+
+## Computation of conditional statistics via NCPs
+> [PIE] This is not going to be rigorous: I'll make use of Dirac's deltas to make the derivation direct, although they are not functions in any $L^{2}$. We'll fix everything in the draft.
+
+### Conditional probability function $p(y | x)$
+
+By letting $\delta_{y}$ be Dirac's delta centered at $y$. Then
+$$
+\begin{split}
+p(y | x) = (\mathsf{E}\delta_{y})(x) &\simeq \left((\mathsf{M} + 1_{\mu} \otimes 1_{\nu})\delta_{y}\right)(x) \\
+&=\left[\sum_{i = 1}^{d} \sigma_{i} u_{i}(x) \int_{\mathcal{Y}} v_{i}(y^{\prime})\delta(y - y^{\prime})\nu(dy^{\prime})\right] + \int 1_{\nu}(y^{\prime})\delta(y - y^{\prime})\nu(dy^{\prime}) \\
+&=\left(1 + \sum_{i = 1}^{d} \sigma_{i} u_{i}(x) v_{i}(y)\right)p_{\nu}(y) \\
+\end{split}
+$$
+Where $p_{\nu}(y)$ is the probability density function of $Y$, that is $\frac{d\nu}{dy}$, the Radon-Nikodym of $\nu$ with respect to the Lebesgue measure on $\mathcal{Y}$ (which we assume to exist). 
+
+If we happen _not_ to know $p_{\nu}(y)$, we can estimate it from data e.g. by
+1. Kernel Density Estimation
+2. Histograms
+3. ???
+
+### Joint probability density function $p(x, y)$
+
+We notice that $p(x, y) = p(y | x)p_{\mu}(x)$, which from the previous section gives
+$$
+\begin{split}
+p(x, y) \simeq \left(1 + \sum_{i = 1}^{d} \sigma_{i} u_{i}(x) v_{i}(y) \right)p_{\nu}(y)p_{\mu}(x) \\
+\end{split}
+$$
+
+### Conditional CDF 
+Let $\mathcal{Y} = \mathbb{R}$. The conditional Cumulative Density Function of $Y$ given $X = x$ is by definition
+$$
+\begin{split}
+F(t; x) = (\mathsf{E}1_{y \leq t})(x) &\simeq \left((\mathsf{M} + 1_{\mu} \otimes 1_{\nu})1_{y \leq t}\right)(x) \\
+&=\left[\sum_{i = 1}^{d} \sigma_{i} u_{i}(x) \int_{-\infty}^{t} v_{i}(y)\nu(dy)\right] + \int_{-\infty}^{t}1_{\nu}(y)\nu(dy) \\
+&=F_{\nu}(t) + \sum_{i = 1}^{d} \sigma_{i} u_{i}(x) \int_{-\infty}^{t} v_{i}(y)p_{\nu}(y)dy \\
+\end{split}
+$$
+Where $F_{\nu}(t)$ is the _unconditional_ CDF of $Y \sim \nu$.
+To evaluate the CDF, we need to compute an integral with respect to $\nu$ which we might not know. We can estimate it from data via e.g Montecarlo integration.
+
+### Conditional moments
+You got the drill
+$$
+\begin{split}
+(\mathsf{E}|y|^{t})(x) &\simeq \left((\mathsf{M} + 1_{\mu} \otimes 1_{\nu})|y|^{t}\right)(x) \\
+&=\left[\sum_{i = 1}^{d} \sigma_{i} u_{i}(x) \int_{-\infty}^{t} v_{i}(y)|y|^{t}\nu(dy)\right] + \int_{-\infty}^{t}|y|^{t}\nu(dy) \\
+&=\mathbb{E}_{\nu}[|y|^{t}] + \sum_{i = 1}^{d} \sigma_{i} u_{i}(x) \int_{-\infty}^{t} v_{i}(y)|y|^{t}p_{\nu}(y)dy \\
+\end{split}
+$$
+
+## Random Thoughts
+To avoid any sorts of weird results we should make sure that for all $(x, y) \in \mathcal{X} \times \mathcal{Y}$.
+- $1 + \sum_{i = 1}^{d} \sigma_{i} u_{i}(x)v_{i}(y) \geq 0$ 
+- $\sum_{i = 1}^{d}\int_{\mathcal{X} \times \mathcal{Y}}  \sigma_{i} u_{i}(x)v_{i}(y)p_{\mu}(x)p_{\nu}(y) dxdy = 0$
+
 ## Mar 26, 2024
 An NCP model of rank $d$ consists of $2d$ functions $(u_{i}, v_{i})_ {i = 1}^{d}$ and $d$ positive numbers $(\sigma_{i})_{i = 1}^{d}$, and it is written as
 
