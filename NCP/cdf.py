@@ -1,13 +1,8 @@
 import numpy as np
 import torch
-from sklearn.isotonic import IsotonicRegression
 from typing import Optional, Callable, Union
 from NCP.utils import tonp, frnp
-
-def smooth_cdf(values, cdf, isotonic=True):
-    cdf = IsotonicRegression(y_min=0., y_max=cdf.max()).fit_transform(values, cdf)
-    cdf = cdf/cdf.max()   
-    return cdf
+from sklearn.isotonic import IsotonicRegression
 
 def compute_quantile_robust(values:np.ndarray, cdf:np.ndarray, alpha:Union[str, float]='all', isotonic:bool=True, rescaling:bool=True):
     # TODO: correct this code
