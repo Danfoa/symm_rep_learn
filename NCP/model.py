@@ -42,15 +42,6 @@ class DeepSVD:
         optimizer = optimizer(self.models.parameters(), **optimizer_kwargs)
         pbar = tqdm(range(epochs))
 
-        # random split of X and Y
-        X1, X2, Y1, Y2 = train_test_split(X, Y, test_size=0.5, random_state=self.seed)
-        X1, X2, Y1, Y2 = (torch.Tensor(X1).to(self.device), torch.Tensor(X2).to(self.device),
-                          torch.Tensor(Y1).to(self.device), torch.Tensor(Y2).to(self.device))
-
-        X1_val, X2_val, Y1_val, Y2_val = train_test_split(X_val, Y_val, test_size=0.5, random_state=self.seed)
-        X1_val, X2_val, Y1_val, Y2_val = (torch.Tensor(X1_val).to(self.device), torch.Tensor(X2_val).to(self.device),
-                                          torch.Tensor(Y1_val).to(self.device), torch.Tensor(Y2_val).to(self.device))
-
         last_val_loss = torch.inf
 
         self.save_after_training(X, Y)
@@ -61,6 +52,15 @@ class DeepSVD:
             #     wandb.watch(module, log="all", log_freq=10)
 
         for i in pbar:
+            # random split of X and Y
+            X1, X2, Y1, Y2 = train_test_split(X, Y, test_size=0.5)
+            X1, X2, Y1, Y2 = (torch.Tensor(X1).to(self.device), torch.Tensor(X2).to(self.device),
+                              torch.Tensor(Y1).to(self.device), torch.Tensor(Y2).to(self.device))
+
+            X1_val, X2_val, Y1_val, Y2_val = train_test_split(X_val, Y_val, test_size=0.5)
+            X1_val, X2_val, Y1_val, Y2_val = (
+            torch.Tensor(X1_val).to(self.device), torch.Tensor(X2_val).to(self.device),
+            torch.Tensor(Y1_val).to(self.device), torch.Tensor(Y2_val).to(self.device))
 
             optimizer.zero_grad()
             self.models.train()
@@ -167,6 +167,9 @@ class DeepSVD:
         return joint_prob
 
     def postprocess_UV(self, X_test, postprocess, Y=None):
+        if not torch.is_tensor(X_test):
+            X_test = frnp(X_test, device=self.device)
+
         if postprocess == 'centering':
             sigma = torch.sqrt(torch.exp(-self.models['S'].weights ** 2))
             Ux, Vy = self.centering(X_test, Y)
@@ -207,7 +210,7 @@ class DeepSVD:
         n = self.training_X.shape[0]
         sigma = torch.sqrt(torch.exp(-self.models['S'].weights ** 2))
 
-        Ux_centered, Vy_centered = self.centering()
+        Ux_centered, Vy_centered = self.centering(self.training_X, self.training_Y)
 
         Ux_centered = Ux_centered @ torch.diag(sigma)
         Vy_centered = Vy_centered @ torch.diag(sigma)
