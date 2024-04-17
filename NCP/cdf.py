@@ -3,6 +3,7 @@ import torch
 from typing import Optional, Callable, Union
 from NCP.utils import tonp, frnp
 from sklearn.isotonic import IsotonicRegression
+from sklearn.neighbors import KernelDensity
 
 def compute_quantile_robust(values:np.ndarray, cdf:np.ndarray, alpha:Union[str, float]='all', isotonic:bool=True, rescaling:bool=True):
     # TODO: correct this code
@@ -62,6 +63,29 @@ def get_cdf(model, X, Y=None, observable = lambda x : x, postprocess = None):
 
     return fY[candidates].flatten(), cdf
 
+def get_pdf(model, X, Y=None, observable = lambda x : x, postprocess = None, p_y = lambda x : 1):
+    # observable is a vector to scalar function
+    if Y is None: # if no Y is given, use the training data
+        Y = model.training_Y
+    fY = np.apply_along_axis(observable, -1, Y).flatten()
+    candidates = np.argsort(fY)
+    n = fY.shape[0]
+    probas = np.ones(n) # vector of [1], k \in [n]
+
+    if postprocess:  # postprocessing can be 'centering' or 'whitening'
+        Ux, sigma, Vy = model.postprocess_UV(X, postprocess, Y)
+    else:
+        sigma = torch.sqrt(torch.exp(-model.models['S'].weights ** 2))
+        Ux = model.models['U'](frnp(X, model.device))
+        Vy = model.models['V'](frnp(Y, model.device))
+        Ux, sigma, Vy = tonp(Ux), tonp(sigma), tonp(Vy)
+
+    Ux = Ux.flatten()
+    EVyFy = Vy[candidates]
+    pdf = (probas + np.sum(sigma * Ux * EVyFy, axis=-1)) * p_y(fY[candidates])
+
+    return fY[candidates].flatten(), pdf
+
 def compute_moments(model, X, order=2, Y=None, observable = lambda x : x, postprocess=None):
     obs_moment = lambda x : observable(x)**order
     return model.predict(X, Y=Y, observable=obs_moment, postprocess=postprocess)
@@ -74,3 +98,9 @@ def compute_variance(model, X, Y=None, observable = lambda x : x, postprocess=No
 def quantile_regression(model, X, observable = lambda x : np.mean(x, axis=-1), alpha=0.01, t=1, isotonic=True, rescaling=True):
     x, cdfX = get_cdf(model, X, observable)
     return compute_quantile_robust(x, cdfX, alpha=alpha, isotonic=isotonic, rescaling=rescaling)
+
+class compute_marginal(KernelDensity):
+    def __call__(self, x):
+        log_probability = self.score_samples(np.array(x).reshape(-1, 1))
+        probability = np.exp(log_probability)
+        return probability
