@@ -1,295 +1,210 @@
-from torch.nn import Module, ModuleDict
-from torch.optim import Optimizer
+from torch.nn import Module
 import torch
-from tqdm import tqdm
-from sklearn.model_selection import train_test_split
-import numpy as np
 
 from NCP.layers import SingularLayer
-from NCP.nn.losses import CMELoss
-from NCP.utils import tonp, frnp
+from NCP.utils import tonp, sqrtmh, cross_cov, filter_reduced_rank_svals
+from torch.utils.data import Dataset
+import lightning as L
+from copy import deepcopy
 
-class DeepSVD:
-    # ideally, entries should be int
-    def __init__(self, U_operator:Module, V_operator:Module, output_shape, gamma=0., device='cpu'):
+class CustomImageDataset(Dataset):
+    def __init__(self, annotations_file, img_dir, transform=None, target_transform=None):
+        self.img_labels = pd.read_csv(annotations_file)
+        self.img_dir = img_dir
+        self.transform = transform
+        self.target_transform = target_transform
 
-        self.models = ModuleDict({
-            'U':U_operator.to(device),
-            'S':SingularLayer(output_shape).to(device),
-            'V':V_operator.to(device)
-        })
-        self.losses = []
-        self.val_losses = []
-        self.cond_number_cov_X = []
-        self.cond_number_cov_Y = []
-        self.cond_number_cov_XY = []
-        self.gamma = gamma
-        self.device = device
+    def __len__(self):
+        return len(self.img_labels)
 
-    def save_after_training(self, X, Y):
-        self.training_X = X
-        self.training_Y = Y
+    def __getitem__(self, idx):
+        img_path = os.path.join(self.img_dir, self.img_labels.iloc[idx, 0])
+        image = read_image(img_path)
+        label = self.img_labels.iloc[idx, 1]
+        if self.transform:
+            image = self.transform(image)
+        if self.target_transform:
+            label = self.target_transform(label)
+        return image, label
+class NCPOperator(Module):
+    def __init__(self, U_operator:Module, V_operator:Module, U_operator_kwargs:dict, V_operator_kwargs:dict):
 
-    def fit(self, X, Y, X_val, Y_val, optimizer:Optimizer, optimizer_kwargs:dict, epochs=1000,lr=1e-3, gamma=None, seed=None, wandb=None):
-        if gamma is not None:
-            self.gamma = gamma
-        if seed is not None:
-            self.seed = seed
+        super(NCPOperator, self).__init__()
+        if U_operator_kwargs['output_shape'] == V_operator_kwargs['output_shape']:
+            d = U_operator_kwargs['output_shape'] # number of latent dimensions
         else:
-            self.seed = 0
+            raise ValueError('Number of latent dimensions must be the same for U_operator and V_operator.')
 
-        torch.manual_seed(self.seed)
-        optimizer = optimizer(self.models.parameters(), **optimizer_kwargs)
-        pbar = tqdm(range(epochs))
+        self.U = U_operator(**U_operator_kwargs)
+        self.V = V_operator(**V_operator_kwargs)
+        self.S = SingularLayer(d)
 
-        last_val_loss = torch.inf
+        # buffers for centering
+        self.register_buffer('_mean_Ux', torch.zeros(d))
+        self.register_buffer('_mean_Vy', torch.zeros(d))
 
-        self.save_after_training(X, Y)
+        #buffers for whitening
+        self.register_buffer('_sqrt_cov_X_inv', torch.eye(d))
+        self.register_buffer('_sqrt_cov_Y_inv', torch.eye(d))
+        self.register_buffer('_sing_val', torch.ones(d))
+        self.register_buffer('_sing_vec_l', torch.eye(d))
+        self.register_buffer('_sing_vec_r', torch.eye(d))
 
-        if wandb:
-            wandb.watch(self.models, log="all", log_freq=10)
-            # for _, module in self.models.items():
-            #     wandb.watch(module, log="all", log_freq=10)
+    def forward(self, x, y, postprocess=None):
+        Ux, sigma, Vy = self.postprocess_UV(x, y, postprocess)
 
-        for i in pbar:
-            # random split of X and Y
-            X1, X2, Y1, Y2 = train_test_split(X, Y, test_size=0.5)
-            X1, X2, Y1, Y2 = (torch.Tensor(X1).to(self.device), torch.Tensor(X2).to(self.device),
-                              torch.Tensor(Y1).to(self.device), torch.Tensor(Y2).to(self.device))
+        # return F.relu(torch.sum(sigma * Ux * Vy, axis=-1))
+        return torch.sum(sigma * Ux * Vy, axis=-1)
 
-            X1_val, X2_val, Y1_val, Y2_val = train_test_split(X_val, Y_val, test_size=0.5)
-            X1_val, X2_val, Y1_val, Y2_val = (
-            torch.Tensor(X1_val).to(self.device), torch.Tensor(X2_val).to(self.device),
-            torch.Tensor(Y1_val).to(self.device), torch.Tensor(Y2_val).to(self.device))
-
-            optimizer.zero_grad()
-            self.models.train()
-
-            z1 = self.models['U'](X1)
-            z2 = self.models['U'](X2)
-            z3 = self.models['V'](Y1)
-            z4 = self.models['V'](Y2)
-
-            if wandb and i % 10 == 0:
-                wandb.log({'z1': tonp(z1)})
-                wandb.log({'z2': tonp(z2)})
-                wandb.log({'z3': tonp(z3)})
-                wandb.log({'z4': tonp(z4)})
-                wandb.log({'cov_z1': tonp(z1.T @ z1)})
-                centered_z1 = z1 - z1.mean(axis=-1).reshape(-1, 1)
-                wandb.log({'centered_cov_z1': tonp(centered_z1.T @ centered_z1)})
-
-            loss = CMELoss(gamma=self.gamma)
-            l = loss(z1, z2, z3, z4, self.models['S'])
-            l.backward()
-            optimizer.step()
-            self.losses.append(tonp(l))
-            pbar.set_description(f'epoch = {i}, loss = {l}')
-
-            # validation step:
-            with torch.no_grad():
-                self.models.eval()
-                z1_val = self.models['U'](X1_val)
-                z2_val = self.models['U'](X2_val)
-                z3_val = self.models['V'](Y1_val)
-                z4_val = self.models['V'](Y2_val)
-                val_l = loss(z1_val, z2_val, z3_val, z4_val, self.models['S'])
-                self.val_losses.append(tonp(val_l))
-                if wandb and i%10 == 0:
-                    for module_name, module in self.models.items():
-                        for name, param in module.named_parameters():
-                            if module_name == 'S':
-                                wandb.log({module_name+'_'+name: tonp(module.weights).squeeze()})
-                            else:
-                                wandb.log({module_name+'_'+name: tonp(param).squeeze()})
-
-            if wandb:
-                wandb.log({"train_loss": l, "val_loss": val_l})
-            #if i%1000 == 0:
-            #    print(list(self.models['U'].parameters()), list(self.models['V'].parameters()), list(self.models['S'].parameters()))
-    def get_losses(self):
-        return self.losses
-
-    def get_val_losses(self):
-        return self.val_losses
-
-    def predict(self, X_test, Y=None, observable = lambda x :x, postprocess = None):
-        if postprocess: # postprocessing can be 'centering' or 'whitening'
-            Ux, sigma, Vy = self.postprocess_UV(X_test, postprocess, Y=Y)
+    def postprocess_UV(self, X, Y, postprocess=None):
+        sigma = torch.sqrt(torch.exp(-self.S.weights ** 2))
+        if postprocess is None:
+            Ux = self.U(X)
+            Vy = self.V(Y)
         else:
-            sigma = torch.sqrt(torch.exp(-self.models['S'].weights ** 2))
-            Ux = self.models['U'](frnp(X_test, self.device))
-            if Y is None:
-                Vy = self.models['V'](frnp(self.training_Y, self.device))
-            else:
-                Vy = self.models['V'](frnp(Y, self.device))
-            Ux, sigma, Vy = tonp(Ux), tonp(sigma), tonp(Vy)
+            if postprocess == 'centering':
+                Ux, Vy = self.centering(X, Y)
+            elif postprocess == 'whitening':
+                Ux, sigma, Vy = self.whitening(X, Y)
+        return Ux, sigma, Vy
 
-        fY = np.outer(np.squeeze(observable(self.training_Y)), np.ones(Vy.shape[-1]))
-        bias = np.mean(fY)
+    def centering(self, X, Y):
+        Ux = self.U(X)
+        Vy = self.V(Y)
 
-        Vy_fY = np.mean(Vy * fY, axis=0)
-        sigma_U_fY_VY = sigma * Ux * Vy_fY
-        val = np.sum(sigma_U_fY_VY, axis=-1)
+        Ux_centered = Ux - torch.outer(torch.ones(Ux.shape[0]), self._mean_Ux)
+        Vy_centered = Vy - torch.outer(torch.ones(Vy.shape[0]), self._mean_Vy)
 
-        return bias + val
-
-    # adapt functions to work with function from R^d to {0,1}
-
-    def conditional_probability(self, interval_A, interval_B, postprocessing = None):
-        Y_train = self.training_Y
-        X_train = self.training_X
-
-        Ux, sigma, Vy = self.postprocess_UV(X_train, postprocessing)
-
-        n = Y_train.shape[0]
-        x_A = indicator_fn(X_train, interval_A)
-        y_B = indicator_fn(Y_train, interval_B)
-        Ux_A = Ux[x_A, :].sum(axis=0)*n**-1
-        Vy_B = Vy[y_B, :].sum(axis=0)*n**-1
-
-        conditional_prob = y_B.mean() + (sigma * Ux_A * (x_A.mean() ** -1) * Vy_B).sum(axis=-1)
-        return conditional_prob
-
-    def joint_probability(self, interval_A, interval_B, postprocessing = None):
-        Y_train = self.training_Y
-        X_train = self.training_X
-
-        Ux, sigma, Vy = self.postprocess_UV(X_train, postprocessing)
-
-        n = Y_train.shape[0]
-        x_A = indicator_fn(X_train, interval_A)
-        y_B = indicator_fn(Y_train, interval_B)
-
-        Ux_A = Ux[x_A, :].sum(axis=0) * n ** -1
-        Vy_B = Vy[y_B, :].sum(axis=0) * n ** -1
-        joint_prob = 1 + (sigma * Ux_A * (x_A.mean() ** -1) * Vy_B * (y_B.mean() ** -1)).sum(axis=-1)
-        return joint_prob
-
-    def postprocess_UV(self, X_test, postprocess, Y=None):
-        if not torch.is_tensor(X_test):
-            X_test = frnp(X_test, device=self.device)
-
-        if postprocess == 'centering':
-            sigma = torch.sqrt(torch.exp(-self.models['S'].weights ** 2))
-            Ux, Vy = self.centering(X_test, Y)
-        elif postprocess == 'whitening':
-            Ux, sigma, Vy = self.whitening(X=X_test, Y=Y)
-
-        return tonp(Ux), tonp(sigma), tonp(Vy)
-
-    def centering(self, X=None, Y=None):
-        self.models.eval()
-
-        Ux_train = self.models['U'](frnp(self.training_X, self.device))
-        Vy_train = self.models['V'](frnp(self.training_Y, self.device))
-        self.mean_Ux = torch.mean(Ux_train, axis=0)
-        self.mean_Vy = torch.mean(Vy_train, axis=0)
-
-        if X is not None:
-            if not torch.is_tensor(X):
-                X = frnp(X, self.device)
-            Ux = self.models['U'](X)
-        else:
-            Ux = Ux_train
-
-        if Y is not None:
-            if not torch.is_tensor(Y):
-                Y = frnp(Y, self.device)
-            Vy = self.models['V'](Y)
-        else:
-            Vy = Vy_train            
-
-        if Ux_train.shape[-1] > 1:
-            Ux_centered = Ux - torch.outer(torch.ones(Ux.shape[0], device=self.device), self.mean_Ux)
-            Vy_centered = Vy - torch.outer(torch.ones(Vy.shape[0], device=self.device), self.mean_Vy)
-        
         return Ux_centered, Vy_centered
 
-    def whitening(self, X=None, Y=None):
-        n = self.training_X.shape[0]
-        sigma = torch.sqrt(torch.exp(-self.models['S'].weights ** 2))
+    def whitening(self, X, Y):
+        sigma = torch.sqrt(torch.exp(-self.S.weights ** 2))
 
-        Ux_centered, Vy_centered = self.centering(self.training_X, self.training_Y)
+        Ux = self.U(X)
+        Ux = Ux - torch.outer(torch.ones(Ux.shape[0]), self._mean_Ux)
+        Ux = Ux @ torch.diag(sigma)
+        Ux = Ux @ self._sqrt_cov_X_inv @ self._sing_vec_l
+
+        Vy = self.V(Y)
+        Vy = Vy - torch.outer(torch.ones(Vy.shape[0]), self._mean_Vy)
+        Vy = Vy @ torch.diag(sigma)
+        Vy = Vy @ self._sqrt_cov_Y_inv @ self._sing_vec_r
+
+        return Ux, self._sing_val, Vy
+
+    def conditional_expectation(self, X, Y, observable=lambda x: x, postprocess=None):
+        Ux, sigma, Vy = self.postprocess_UV(X, Y, postprocess)
+
+        fY = torch.outer(torch.squeeze(observable(Y)), torch.ones(Vy.shape[-1]))
+        bias = torch.mean(fY)
+
+        Vy_fY = torch.mean(Vy * fY, axis=0)
+        sigma_U_fY_VY = sigma * Ux * Vy_fY
+        val = torch.sum(sigma_U_fY_VY, axis=-1)
+
+        return tonp(bias + val)
+
+    def cdf(self, X, Y, observable=lambda x: x, postprocess=None):
+        # observable is a vector to scalar function
+        fY = torch.stack([observable(x_i) for x_i in torch.unbind(Y, dim=-1)], dim=-1).flatten() # Pytorch equivalent of numpy.apply_along_axis
+        candidates = torch.argsort(fY)
+        probas = torch.cumsum(torch.ones(fY.shape[0]), -1) / fY.shape[0]  # vector of [k/n], k \in [n]
+
+        Ux, sigma, Vy = self.postprocess_UV(X, Y, postprocess)
+        Ux = Ux.flatten()
+
+        # estimating the cdf of the function f on X_t
+        cdf = torch.zeros(candidates.shape[0])
+        for i, val in enumerate(fY[candidates]):
+            Ify = torch.outer((fY <= val), torch.ones(Vy.shape[1]))  # indicator function of fY < fY[i], put into shape (n_sample, latent_dim)
+            EVyFy = torch.mean(Vy * Ify, axis=0)  # for all latent dim, compute E (Vy * fY)
+            cdf[i] = probas[i] + torch.sum(sigma * Ux * EVyFy)
+
+        return tonp(fY[candidates].flatten()), tonp(cdf)
+
+    def pdf(self, X, Y, p_y, observable=lambda x: x, postprocess=None):
+        # observable is a vector to scalar function
+        fY = torch.stack([observable(x_i) for x_i in torch.unbind(Y, dim=-1)], dim=-1).flatten() # Pytorch equivalent of numpy.apply_along_axis
+        candidates = torch.argsort(fY)
+
+        pdf = (1 + self.forward(X, Y, postprocess)) * p_y(fY[candidates])
+        return tonp(fY[candidates].flatten()), tonp(pdf)
+
+    def _compute_data_statistics(self, X, Y):
+        sigma = torch.sqrt(torch.exp(-self.S.weights ** 2))
+        Ux = self.U(X)
+        Vy = self.V(Y)
+        self._mean_Ux = torch.mean(Ux, axis=0)
+        self._mean_Vy = torch.mean(Vy, axis=0)
+
+        Ux_centered = Ux - torch.outer(torch.ones(Ux.shape[0]).type_as(Ux), self._mean_Ux)
+        Vy_centered = Vy - torch.outer(torch.ones(Vy.shape[0]).type_as(Vy), self._mean_Vy)
 
         Ux_centered = Ux_centered @ torch.diag(sigma)
         Vy_centered = Vy_centered @ torch.diag(sigma)
 
-        cov_X = Ux_centered.T @ Ux_centered * n ** -1
-        cov_Y = Vy_centered.T @ Vy_centered * n ** -1
-        cov_XY = Ux_centered.T @ Vy_centered * n ** -1
-
-        # print(torch.linalg.cond(cov_X))
-        # print(torch.linalg.cond(cov_Y))
+        cov_X = torch.cov(Ux_centered.T)
+        cov_Y = torch.cov(Vy_centered.T)
+        cov_XY = cross_cov(Ux_centered.T, Vy_centered.T)
 
         # write in a stable way
-        sqrt_cov_X_inv = torch.linalg.pinv(sqrtmh(cov_X))
-        sqrt_cov_Y_inv = torch.linalg.pinv(sqrtmh(cov_Y))
+        self._sqrt_cov_X_inv = torch.linalg.pinv(sqrtmh(cov_X))
+        self._sqrt_cov_Y_inv = torch.linalg.pinv(sqrtmh(cov_Y))
 
-        M = sqrt_cov_X_inv @ cov_XY @ sqrt_cov_Y_inv
+        M = self._sqrt_cov_X_inv @ cov_XY @ self._sqrt_cov_Y_inv
         e_val, sing_vec_l = torch.linalg.eigh(M @ M.T)
-        # print(torch.sqrt(e_val))
-        e_val, sing_vec_l = self._filter_reduced_rank_svals(e_val, sing_vec_l)
-        sing_val = torch.sqrt(e_val)
-        sing_vec_r = (M.T @ sing_vec_l) / sing_val
+        e_val, self._sing_vec_l = filter_reduced_rank_svals(e_val, sing_vec_l)
+        self._sing_val = torch.sqrt(e_val)
+        self._sing_vec_r = (M.T @ self._sing_vec_l) / self._sing_val
 
-        if X is not None:
-            if not torch.is_tensor(X):
-                X = frnp(X, self.device)
-            Ux = self.models['U'](X)
-
-            Ux = Ux - torch.outer(torch.ones(Ux.shape[0], device=self.device), self.mean_Ux)
-            Ux = Ux @ torch.diag(sigma)
+class NCPModule(L.LightningModule):
+    def __init__(
+            self,
+            model: NCPOperator,
+            optimizer_fn: torch.optim.Optimizer,
+            optimizer_kwargs: dict,
+            loss_fn: torch.nn.Module,
+            loss_kwargs: dict,
+    ):
+        super(NCPModule, self).__init__()
+        self.model = model
+        self._optimizer = optimizer_fn
+        _tmp_opt_kwargs = deepcopy(optimizer_kwargs)
+        if "lr" in _tmp_opt_kwargs:  # For Lightning's LearningRateFinder
+            self.lr = _tmp_opt_kwargs.pop("lr")
+            self.opt_kwargs = _tmp_opt_kwargs
         else:
-            Ux = Ux_centered
+            self.lr = 1e-3
+            raise Warning(
+                "No learning rate specified. Using default value of 1e-3. You can specify the learning rate by passing it to the optimizer_kwargs argument."
+            )
+        self.loss_fn = loss_fn(**loss_kwargs)
+        self.train_loss = []
+        self.val_loss = []
 
-        if Y is not None:
-            if not torch.is_tensor(Y):
-                Y = frnp(Y, self.device)
-            Vy = self.models['V'](Y)
+    def configure_optimizers(self):
+        kw = self.opt_kwargs | {"lr": self.lr}
+        return self._optimizer(self.parameters(), **kw)
+    def training_step(self, batch, batch_idx):
+        X, Y = batch
+        # X, Y = X.reshape(-1, 1), Y.reshape(-1, 1)
 
-            Vy = Vy - torch.outer(torch.ones(Vy.shape[0], device=self.device), self.mean_Vy)
-            Vy = Vy @ torch.diag(sigma)
-        else:
-            Vy = Vy_centered
-        Ux = Ux @ sqrt_cov_X_inv @ sing_vec_l
-        Vy = Vy @ sqrt_cov_Y_inv @ sing_vec_r
+        loss = self.loss_fn
+        l = loss(X, Y, self.model)
+        self.log('train_loss', l, on_step=False, on_epoch=True, prog_bar=True)
+        self.train_loss.append(l.detach().cpu().numpy())
 
-        return Ux, sing_val, Vy
+        if self.current_epoch == self.trainer.max_epochs - 1:
+            self.model._compute_data_statistics(X, Y)
 
-    def _filter_reduced_rank_svals(self, values, vectors):
-        eps = 2 * torch.finfo(torch.get_default_dtype()).eps
-        # Filtering procedure.
-        # Create a mask which is True when the real part of the eigenvalue is negative or the imaginary part is nonzero
-        is_invalid = torch.logical_or(torch.abs(torch.real(values)) <= eps,
-                                      torch.imag(vectors) != 0 if torch.is_complex(values) else torch.zeros(len(values), device=self.device))
-        # Check if any is invalid take the first occurrence of a True value in the mask and filter everything after that
-        if torch.any(is_invalid):
-            values = values[~is_invalid].real
-            vectors = vectors[:, ~is_invalid]
+        return l
 
-        # sort_perm = topk(values, len(values)).indices
-        # values = values[sort_perm]
-        # vectors = vectors[:, sort_perm]
+    def validation_step(self, batch, batch_idx):
+        X, Y = batch
+        # X, Y = X.reshape(-1, 1), Y.reshape(-1, 1)
 
-        # # Assert that the eigenvectors do not have any imaginary part
-        # assert torch.all(
-        #     torch.imag(vectors) == 0 if torch.is_complex(values) else torch.ones(len(values))
-        # ), "The eigenvectors should be real. Decrease the rank or increase the regularization strength."
-
-        # Take the real part of the eigenvectors
-        vectors = torch.real(vectors)
-        values = torch.real(values)
-        return values, vectors
-
-def sqrtmh(A: torch.Tensor):
-    # Credits to
-    """Compute the square root of a Symmetric or Hermitian positive definite matrix or batch of matrices. Credits to  `https://github.com/pytorch/pytorch/issues/25481#issuecomment-1032789228 <https://github.com/pytorch/pytorch/issues/25481#issuecomment-1032789228>`_."""
-    L, Q = torch.linalg.eigh(A)
-    zero = torch.zeros((), device=L.device, dtype=L.dtype)
-    threshold = L.max(-1).values * L.size(-1) * torch.finfo(L.dtype).eps
-    L = L.where(L > threshold.unsqueeze(-1), zero)  # zero out small components
-    return (Q * L.sqrt().unsqueeze(-2)) @ Q.mH
-
-def indicator_fn(x, interval):
-    return ((interval[0] <= x) & (x <= interval[1])).squeeze()
+        loss = self.loss_fn
+        l = loss(X, Y, self.model)
+        self.log('val_loss', l, on_step=False, on_epoch=True, prog_bar=True)
+        self.val_loss.append(l.detach().cpu().numpy())
+        return l

@@ -1,29 +1,42 @@
 import torch
-
-from NCP.nn.functional import cme_score, cme_score_cov
+from NCP.nn.functional import cme_score_cov, cme_score_Ustat
 from NCP.layers import SingularLayer
+from NCP.model import NCPOperator
 
 class CMELoss():
     def __init__(
-        self, gamma:float
+            self,
+            mode: str = "split",
+            gamma:float = 0.,
+            metric_deformation: float = 1.0,
+            center: bool = True
     ):
         """Initializes the CME loss of CITATION NEEDED
 
         Args:
             gamma (float): penalisation parameter.
         """
-        self.gamma = gamma
+        available_modes = ["split", "U_stat"]
+        if mode not in available_modes:
+            raise ValueError(f"Unknown mode {mode}. Available modes are {available_modes}")
+        else:
+            self.mode = mode
 
+        if mode == "split":
+            self.gamma = gamma
+        else:
+            self.metric_deformation = metric_deformation
+            self.center = center
 
-    def __call__(self, X1: torch.Tensor, X2:torch.Tensor, Y1: torch.Tensor, Y2: torch.Tensor, S: SingularLayer):
+    def __call__(self, X: torch.Tensor, Y:torch.Tensor, NCP: NCPOperator):
         """Compute the Deep Projection loss function
 
         Args:
-            X1 (torch.Tensor): Covariates for the initial time steps.
-            X2 (torch.Tensor): .
-            Y1 (torch.Tensor): Covariates for the evolved time steps.
-            Y2 (torch.Tensor): .
+            X (torch.Tensor): Covariates for the initial time steps.
+            Y (torch.Tensor): Covariates for the evolved time steps.
             S (SingularLayer): .
         """
-        # return cme_score(X1, X2, Y1, Y2, S, self.gamma)
-        return cme_score_cov(X1, X2, Y1, Y2, S, self.gamma)
+        if self.mode == "split":
+            return cme_score_cov(X, Y, NCP, self.gamma)
+        else:
+            return cme_score_Ustat(X, Y, NCP, self.metric_deformation, self.center)

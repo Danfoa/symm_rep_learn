@@ -1,18 +1,30 @@
 import torch
 from torch.nn import Module, Linear, Dropout, ReLU, Sequential
-import numpy as np
 
 class SingularLayer(Module):
-    def __init__(self, input_shape):
+    def __init__(self, d):
         super(SingularLayer, self).__init__()
-        self.weights = torch.nn.Parameter(torch.Tensor(np.random.normal(0, 2/input_shape, input_shape)), requires_grad=True)
+        self.weights = torch.nn.Parameter(torch.Tensor(torch.normal(mean=0.,std=2./d,size=(d,))), requires_grad=True)
 
     def forward(self, x):
         return x * torch.exp(-self.weights**2)
 
-class MLPOperator(Module):
+class MLPBlock(Module):
+    def __init__(self, input_size, output_size, dropout=0.):
+        super(MLPBlock, self).__init__()
+        self.linear = Linear(input_size, output_size)
+        self.dropout = Dropout(dropout)
+        self.relu = ReLU()
+
+    def forward(self, x):
+        out = self.linear(x)
+        out = self.dropout(out)
+        out = self.relu(out)
+        return out
+
+class MLP(Module):
     def __init__(self, input_shape, n_hidden, layer_size, output_shape, dropout=0., iterative_whitening=False):
-        super(MLPOperator, self).__init__()
+        super(MLP, self).__init__()
         if isinstance(layer_size, int):
             layer_size = [layer_size]*n_hidden
         if n_hidden == 0:
@@ -21,13 +33,10 @@ class MLPOperator(Module):
             layers = []
             for layer in range(n_hidden):
                 if layer == 0:
-                    layers = [Linear(input_shape, layer_size[layer])]
-                    layers.append(Dropout(p=dropout))
-                    layers.append(ReLU())
+                    layers.append(MLPBlock(input_shape, layer_size[layer], dropout))
                 else:
-                    layers.append(Linear(layer_size[layer-1], layer_size[layer]))
-                    layers.append(Dropout(p=dropout))
-                    layers.append(ReLU())
+                    layers.append(MLPBlock(layer_size[layer-1], layer_size[layer], dropout))
+
             layers.append(Linear(layer_size[-1], output_shape, bias=False))
             if iterative_whitening:
                 layers.append(IterativeWhitening(output_shape))

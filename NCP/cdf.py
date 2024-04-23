@@ -101,6 +101,8 @@ def quantile_regression(model, X, observable = lambda x : np.mean(x, axis=-1), a
 
 class compute_marginal(KernelDensity):
     def __call__(self, x):
+        if torch.is_tensor(x):
+            x = tonp(x)
         log_probability = self.score_samples(np.array(x).reshape(-1, 1))
         probability = np.exp(log_probability)
-        return probability
+        return frnp(probability)
