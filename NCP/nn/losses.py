@@ -1,6 +1,6 @@
 import torch
 from NCP.nn.functional import cme_score_cov, cme_score_Ustat
-from NCP.layers import SingularLayer
+from NCP.nn.layers import SingularLayer
 from NCP.model import NCPOperator
 
 class CMELoss():

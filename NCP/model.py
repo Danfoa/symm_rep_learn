@@ -1,7 +1,7 @@
 from torch.nn import Module
 import torch
 
-from NCP.layers import SingularLayer
+from NCP.nn.layers import SingularLayer
 from NCP.utils import tonp, sqrtmh, cross_cov, filter_reduced_rank_svals
 from torch.utils.data import Dataset
 import lightning as L
@@ -26,6 +26,7 @@ class CustomImageDataset(Dataset):
         if self.target_transform:
             label = self.target_transform(label)
         return image, label
+        
 class NCPOperator(Module):
     def __init__(self, U_operator:Module, V_operator:Module, U_operator_kwargs:dict, V_operator_kwargs:dict):
 

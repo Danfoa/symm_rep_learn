@@ -1,5 +1,5 @@
 import torch
-from NCP.layers import SingularLayer
+from NCP.nn.layers import SingularLayer
 from NCP.model import NCPOperator
 from NCP.utils import cross_cov, random_split
 
