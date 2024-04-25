@@ -2,10 +2,16 @@ from torch.nn import Module
 import torch
 
 from NCP.nn.layers import SingularLayer
-from NCP.utils import tonp, sqrtmh, cross_cov, filter_reduced_rank_svals
+from NCP.utils import tonp, frnp, sqrtmh, cross_cov, filter_reduced_rank_svals
 from torch.utils.data import Dataset
 import lightning as L
 from copy import deepcopy
+
+def ensure_torch(x):
+    if torch.is_tensor(x):
+        return x
+    else:
+        return frnp(x)
 
 class CustomImageDataset(Dataset):
     def __init__(self, annotations_file, img_dir, transform=None, target_transform=None):
@@ -93,10 +99,13 @@ class NCPOperator(Module):
 
         return Ux, self._sing_val, Vy
 
-    def conditional_expectation(self, X, Y, observable=lambda x: x, postprocess=None):
-        Ux, sigma, Vy = self.postprocess_UV(X, Y, postprocess)
+    def conditional_expectation(self, X, Y_sampling, observable=lambda x: x, postprocess=None):
+        X = ensure_torch(X)
+        Y_sampling = ensure_torch(Y_sampling)
 
-        fY = torch.outer(torch.squeeze(observable(Y)), torch.ones(Vy.shape[-1]))
+        Ux, sigma, Vy = self.postprocess_UV(X, Y_sampling, postprocess)
+
+        fY = torch.outer(torch.squeeze(observable(Y_sampling)), torch.ones(Vy.shape[-1]))
         bias = torch.mean(fY)
 
         Vy_fY = torch.mean(Vy * fY, axis=0)
@@ -105,13 +114,16 @@ class NCPOperator(Module):
 
         return tonp(bias + val)
 
-    def cdf(self, X, Y, observable=lambda x: x, postprocess=None):
+    def cdf(self, X, Y_sampling, observable=lambda x: x, postprocess=None):
+        X = ensure_torch(X)
+        Y_sampling = ensure_torch(Y_sampling)            
+
         # observable is a vector to scalar function
-        fY = torch.stack([observable(x_i) for x_i in torch.unbind(Y, dim=-1)], dim=-1).flatten() # Pytorch equivalent of numpy.apply_along_axis
+        fY = torch.stack([observable(x_i) for x_i in torch.unbind(Y_sampling, dim=-1)], dim=-1).flatten() # Pytorch equivalent of numpy.apply_along_axis
         candidates = torch.argsort(fY)
         probas = torch.cumsum(torch.ones(fY.shape[0]), -1) / fY.shape[0]  # vector of [k/n], k \in [n]
 
-        Ux, sigma, Vy = self.postprocess_UV(X, Y, postprocess)
+        Ux, sigma, Vy = self.postprocess_UV(X, Y_sampling, postprocess)
         Ux = Ux.flatten()
 
         # estimating the cdf of the function f on X_t
@@ -123,12 +135,12 @@ class NCPOperator(Module):
 
         return tonp(fY[candidates].flatten()), tonp(cdf)
 
-    def pdf(self, X, Y, p_y, observable=lambda x: x, postprocess=None):
+    def pdf(self, X, Y_sampling, p_y=lambda x:x, observable=lambda x: x, postprocess=None):
         # observable is a vector to scalar function
-        fY = torch.stack([observable(x_i) for x_i in torch.unbind(Y, dim=-1)], dim=-1).flatten() # Pytorch equivalent of numpy.apply_along_axis
+        fY = torch.stack([observable(x_i) for x_i in torch.unbind(Y_sampling, dim=-1)], dim=-1).flatten() # Pytorch equivalent of numpy.apply_along_axis
         candidates = torch.argsort(fY)
 
-        pdf = (1 + self.forward(X, Y, postprocess)) * p_y(fY[candidates])
+        pdf = (1 + self.forward(X, Y_sampling, postprocess)) * p_y(fY[candidates])
         return tonp(fY[candidates].flatten()), tonp(pdf)
 
     def _compute_data_statistics(self, X, Y):
