@@ -1,6 +1,21 @@
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
+from scipy.stats import norm
+import pandas as pd
+
+def standardise_and_cut(X, Y, N_train, N_val, N_test):
+
+    xscaler = StandardScaler()
+    yscaler = StandardScaler()
+
+    Xtransformed = xscaler.fit_transform(X)
+    Ytransformed = yscaler.fit_transform(Y)
+
+    X_train, X_test, Y_train, Y_test = train_test_split(Xtransformed, Ytransformed, test_size=N_test, random_state=0)
+    X_train, X_val, Y_train, Y_val = train_test_split(X_train, Y_train, test_size=N_val, random_state=0)
+
+    return X_train, Y_train, X_val, Y_val, X_test, Y_test, xscaler, yscaler   
 
 def gen_additive_noise_data(noise, f, N_train=1000, N_val=1000, N_test=1000, x_min=0, x_max=5):
     '''
@@ -15,16 +30,7 @@ def gen_additive_noise_data(noise, f, N_train=1000, N_val=1000, N_test=1000, x_m
     X = X.reshape((-1, 1))
     Y = Y.reshape((-1, 1))
 
-    xscaler = StandardScaler()
-    yscaler = StandardScaler()
-
-    Xtransformed = xscaler.fit_transform(X)
-    Ytransformed = yscaler.fit_transform(Y)
-
-    X_train, X_test, Y_train, Y_test = train_test_split(Xtransformed, Ytransformed, test_size=N_test, random_state=0)
-    X_train, X_val, Y_train, Y_val = train_test_split(X_train, Y_train, test_size=N_val, random_state=0)
-
-    return X_train, X_test, X_val, Y_val, Y_train, Y_test, xscaler, yscaler
+    return standardise_and_cut(X, Y, N_train, N_val, N_test)
 
 def gen_switching(p, offset, scale=1, x_switch_min=2.5, N_train=1000, N_val=1000, N_test=1000, x_min=0, x_max=5):
     x_switch_max = x_switch_min + p*(x_max-x_min)
@@ -41,14 +47,25 @@ def gen_switching(p, offset, scale=1, x_switch_min=2.5, N_train=1000, N_val=1000
     X = X.reshape((-1, 1))
     Y = Y.reshape((-1, 1))
 
-    xscaler = StandardScaler()
-    yscaler = StandardScaler()
+    return standardise_and_cut(X, Y, N_train, N_val, N_test)
 
-    Xtransformed = xscaler.fit_transform(X)
-    Ytransformed = yscaler.fit_transform(Y)
+def gen_bimodal(main_dist=norm, alpha=0.5, mu1=-1, mu2=1, s1=1, s2=1, N_train=1000, N_val=1000, N_test=1000):
+    # same experiment as mixture model of LinCDE paper
+    X = np.random.uniform(-1, 1, (N_train+N_val+N_test, 20))
+    Y = np.zeros(X.shape[0])
+    for i, xi in enumerate(X):
+        if xi[1] > 0.2:
+            Y[i] = np.random.normal(0.25*xi[0], 0.3)
+        else:
+            a = np.random.binomial(1, 0.5)
+            y1 = np.random.normal(0.25*xi[0] - 0.5, 0.25 * (0.25*xi[2] + 0.5)**2)
+            y2 = np.random.normal(0.25*xi[0] + 0.5, 0.25 * (0.25*xi[2] - 0.5)**2)
 
-    X_train, X_test, Y_train, Y_test = train_test_split(Xtransformed, Ytransformed, test_size=N_test, random_state=0)
-    X_train, X_val, Y_train, Y_val = train_test_split(X_train, Y_train, test_size=N_val, random_state=0)
+            Y[i] = a * y1 + (1-a) * y2
 
-    return X_train, Y_train, X_val, Y_val, X_test, Y_test, xscaler, yscaler
+    Y = Y.reshape((-1, 1))
 
+    return standardise_and_cut(X, Y, N_train, N_val, N_test)   
+
+def get_uci_cement():
+    df = pd.read_csv('https://archive.ics.uci.edu/ml/machine-learning-databases/car/car.data')

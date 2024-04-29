@@ -24,11 +24,11 @@ def plot_expectation(reg, X_train, X_test, Y_train, Y_test, xscaler, yscaler):
     '''
     postprocess = 'centering'
 
-    pred = reg.predict(X_train, postprocess=postprocess).reshape(-1, 1)
-    pred_test = reg.predict(X_test, postprocess=postprocess).reshape(-1, 1)
+    pred = reg.conditional_expectation(X_train, Y_train, postprocess=postprocess).reshape(-1, 1)
+    pred_test = reg.conditional_expectation(X_test, Y_train, postprocess=postprocess).reshape(-1, 1)
 
     X_out_of_sample = xscaler.transform(np.random.uniform(5,10, size=100).reshape(-1,1))
-    pred_oos = reg.predict(X_out_of_sample, postprocess=postprocess).reshape(-1, 1)
+    pred_oos = reg.conditional_expectation(X_out_of_sample, Y_train, postprocess=postprocess).reshape(-1, 1)
 
     fig, axs = plt.subplots(ncols=3, figsize=(16, 5))
     axes = axs.flatten()

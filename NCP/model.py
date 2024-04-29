@@ -119,7 +119,7 @@ class NCPOperator(Module):
         Y_sampling = ensure_torch(Y_sampling)            
 
         # observable is a vector to scalar function
-        fY = torch.stack([observable(x_i) for x_i in torch.unbind(Y_sampling, dim=-1)], dim=-1).flatten() # Pytorch equivalent of numpy.apply_along_axis
+        fY = torch.stack([observable(y_i) for y_i in torch.unbind(Y_sampling, dim=-1)], dim=-1).flatten() # Pytorch equivalent of numpy.apply_along_axis
         candidates = torch.argsort(fY)
         probas = torch.cumsum(torch.ones(fY.shape[0]), -1) / fY.shape[0]  # vector of [k/n], k \in [n]
 

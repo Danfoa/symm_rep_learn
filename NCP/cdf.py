@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from typing import Optional, Callable, Union
+from typing import Union
 from NCP.utils import tonp, frnp
 from sklearn.isotonic import IsotonicRegression
 from sklearn.neighbors import KernelDensity
