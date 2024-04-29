@@ -9,11 +9,16 @@ def standardise_and_cut(X, Y, N_train, N_val, N_test):
     xscaler = StandardScaler()
     yscaler = StandardScaler()
 
-    Xtransformed = xscaler.fit_transform(X)
-    Ytransformed = yscaler.fit_transform(Y)
-
-    X_train, X_test, Y_train, Y_test = train_test_split(Xtransformed, Ytransformed, test_size=N_test, random_state=0)
+    X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=N_test, random_state=0)
     X_train, X_val, Y_train, Y_val = train_test_split(X_train, Y_train, test_size=N_val, random_state=0)
+
+    X_train = xscaler.fit_transform(X_train)
+    Y_train = yscaler.fit_transform(Y_train)
+
+    X_val = xscaler.transform(X_val)
+    Y_val = xscaler.transform(Y_val)
+    X_test = xscaler.transform(X_test)
+    Y_test = xscaler.transform(Y_test)
 
     return X_train, Y_train, X_val, Y_val, X_test, Y_test, xscaler, yscaler   
 
