@@ -2,7 +2,6 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from scipy.stats import norm
-import pandas as pd
 
 def standardise_and_cut(X, Y, N_train, N_val, N_test):
 
@@ -16,9 +15,9 @@ def standardise_and_cut(X, Y, N_train, N_val, N_test):
     Y_train = yscaler.fit_transform(Y_train)
 
     X_val = xscaler.transform(X_val)
-    Y_val = xscaler.transform(Y_val)
+    Y_val = yscaler.transform(Y_val)
     X_test = xscaler.transform(X_test)
-    Y_test = xscaler.transform(Y_test)
+    Y_test = yscaler.transform(Y_test)
 
     return X_train, Y_train, X_val, Y_val, X_test, Y_test, xscaler, yscaler   
 
@@ -72,5 +71,12 @@ def gen_bimodal(main_dist=norm, alpha=0.5, mu1=-1, mu2=1, s1=1, s2=1, N_train=10
 
     return standardise_and_cut(X, Y, N_train, N_val, N_test)   
 
-def get_uci_cement():
-    df = pd.read_csv('https://archive.ics.uci.edu/ml/machine-learning-databases/car/car.data')
+def get_conditional_bimodal_cdf(x, y_vals):
+    if x[1]>0.2:
+        return norm.cdf(y_vals, loc=0.25*x[0], scale=0.3)
+    
+    else:
+        mode1 = norm.cdf(y_vals, loc=0.25*x[0] - 0.5, scale=0.25 * (0.25*x[2] + 0.5)**2)
+        mode2 = norm.cdf(y_vals, loc=0.25*x[0] + 0.5, scale=0.25 * (0.25*x[2] - 0.5)**2)
+
+        return 0.5*mode1 + 0.5*mode2

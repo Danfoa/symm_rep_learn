@@ -1,5 +1,5 @@
 import torch
-from torch.nn import Module, Linear, Dropout, ReLU, Sequential
+from torch.nn import Module, Linear, Dropout, ReLU, Sequential, Conv2d, MaxPool2d
 
 class SingularLayer(Module):
     def __init__(self, d):
@@ -42,6 +42,34 @@ class MLP(Module):
                 layers.append(IterativeWhitening(output_shape))
         self.model = Sequential(*layers)
 
+    def forward(self, x):
+        return self.model(x)
+    
+class ConvMLP(Module):
+    # convolutional network for 28 by 28 images (TODO: debug needed for non rgb)
+    def __init__(self, n_hidden, layer_size, output_shape, dropout=0., rgb=False, iterative_whitening=False):
+        super(ConvMLP, self).__init__()
+        if rgb:
+            conv1 = Conv2d(3, 6, 5)
+        else:
+            conv1 = Conv2d(1, 6, 5)
+        pool = MaxPool2d(2, 2)
+        conv2 = Conv2d(6, 16, 5)
+
+        if rgb:
+            input_shape = 6 * 5 * 5
+        else:
+            input_shape = 6 * 5 * 5
+
+        mlp = MLP(input_shape, 
+                  n_hidden, 
+                  layer_size, 
+                  output_shape, 
+                  dropout,
+                  iterative_whitening)
+        
+        self.model = Sequential(conv1, pool, conv2, mlp)
+    
     def forward(self, x):
         return self.model(x)
 
