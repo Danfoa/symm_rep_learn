@@ -1,7 +1,7 @@
 import numpy as np
 import statsmodels.api as sm
 
-from cde.utils.async_executor import execute_batch_async_pdf
+from NCP.cde_fork.utils.async_executor import execute_batch_async_pdf
 from .BaseDensityEstimator import BaseDensityEstimator
 
 MULTIPROC_THRESHOLD = 10**4
@@ -31,7 +31,7 @@ class ConditionalKernelDensityEstimation(BaseDensityEstimator):
           Princeton University Press. (2007)
   """
 
-  def __init__(self, name='CKDE', ndim_x=None, ndim_y=None, bandwidth='cv_ml', n_jobs=-1, random_seed=None):
+  def __init__(self, name='CKDE', ndim_x=None, ndim_y=None, bandwidth='normal_reference', n_jobs=-1, random_seed=None):
     self.random_state = np.random.RandomState(seed=random_seed)
     self.name = name
     self.ndim_x = ndim_x

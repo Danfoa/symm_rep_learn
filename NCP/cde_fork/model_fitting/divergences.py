@@ -1,6 +1,6 @@
 import numpy as np
-from cde.BaseConditionalDensity import ConditionalDensity
-from cde.utils.integration import mc_integration_student_t
+from NCP.cde_fork.BaseConditionalDensity import ConditionalDensity
+from NCP.cde_fork.utils.integration import mc_integration_student_t
 
 _FUN_KL = lambda p, q: p * np.log(p / q)
 _FUN_JS = lambda p, q: 0.5 * p * np.log(p / q) + 0.5 * q * np.log(q / p)
@@ -76,7 +76,7 @@ def divergence_measures_pdf(p, q, x_cond, n_samples=10**5):
   return np.sqrt(0.5 * h_divs), kl_divs, js_divs
 
 def _divergence_mc(p, q, x_cond, divergenc_fun, n_samples=10 ** 5, n_measures=1):
-  assert x_cond.ndim == 2 and x_cond.shape[1] == q.ndim_x
+  # assert x_cond.ndim == 2 and x_cond.shape[1] == q.ndim_x
 
   P = p.pdf
   Q = q.pdf

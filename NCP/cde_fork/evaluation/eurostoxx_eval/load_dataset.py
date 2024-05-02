@@ -3,7 +3,7 @@ import os
 import pandas as pd
 from scipy.interpolate import InterpolatedUnivariateSpline
 
-from cde.utils.io import load_time_series_csv
+from NCP.cde_fork.utils.io import load_time_series_csv
 
 
 

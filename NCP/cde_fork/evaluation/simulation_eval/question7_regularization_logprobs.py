@@ -3,8 +3,8 @@ import matplotlib as mpl
 mpl.use("PS")  # handles X11 server detection (required to run on console)
 import numpy as np
 import types
-from cde.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
-from cde.evaluation.simulation_eval import base_experiment
+from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
+from NCP.cde_fork.evaluation.simulation_eval import base_experiment
 from ml_logger import logger
 
 EXP_PREFIX = 'question7_regularization_logprob'

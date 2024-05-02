@@ -5,13 +5,13 @@ import copy
 import traceback
 
 """ do not remove, imports required for globals() call """
-from cde.density_estimator import LSConditionalDensityEstimation, KernelMixtureNetwork, MixtureDensityNetwork, ConditionalKernelDensityEstimation, NeighborKernelDensityEstimation, NormalizingFlowEstimator
-from cde.density_simulation import EconDensity, GaussianMixture, ArmaJump, JumpDiffusionModel, SkewNormal, LinearGaussian, LinearStudentT
-from cde.model_fitting.GoodnessOfFitLogProb import GoodnessOfFitLogProb
-from cde.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
-from cde.model_fitting.ConfigRunner import load_dumped_estimators, _hash_task_dict, _create_configurations, _add_seeds_to_sim_params
-from cde.utils import io
-from cde.utils.async_executor import AsyncExecutor
+from NCP.cde_fork.density_estimator import LSConditionalDensityEstimation, KernelMixtureNetwork, MixtureDensityNetwork, ConditionalKernelDensityEstimation, NeighborKernelDensityEstimation, NormalizingFlowEstimator
+from NCP.cde_fork.density_simulation import EconDensity, GaussianMixture, ArmaJump, JumpDiffusionModel, SkewNormal, LinearGaussian, LinearStudentT
+from NCP.cde_fork.model_fitting.GoodnessOfFitLogProb import GoodnessOfFitLogProb
+from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
+from NCP.cde_fork.model_fitting.ConfigRunner import load_dumped_estimators, _hash_task_dict, _create_configurations, _add_seeds_to_sim_params
+from NCP.cde_fork.utils import io
+from NCP.cde_fork.utils.async_executor import AsyncExecutor
 from ml_logger import logger
 import tensorflow as tf
 import os

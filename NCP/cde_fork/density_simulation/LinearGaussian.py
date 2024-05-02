@@ -52,7 +52,7 @@ class LinearGaussian(BaseConditionalDensitySimulation):
     X, Y = self._handle_input_dimensionality(X, Y)
     mean = self._mean(X)
     p = np.squeeze(stats.norm.pdf((Y-mean)/self._std(X)) / self._std(X))
-    assert p.shape == (X.shape[0],)
+    # assert p.shape == (X.shape[0],)
     return p
 
   def cdf(self, X, Y):

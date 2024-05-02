@@ -1,7 +1,7 @@
-from cde.density_estimator import MixtureDensityNetwork, ConditionalKernelDensityEstimation, \
+from NCP.cde_fork.density_estimator import MixtureDensityNetwork, ConditionalKernelDensityEstimation, \
   NeighborKernelDensityEstimation, LSConditionalDensityEstimation
 
-from cde.density_simulation import LinearGaussian
+from NCP.cde_fork.density_simulation import LinearGaussian
 
 import numpy as np
 import os

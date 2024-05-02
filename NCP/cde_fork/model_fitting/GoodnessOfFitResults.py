@@ -7,8 +7,8 @@ import copy
 import matplotlib.pyplot as plt
 from matplotlib.pyplot import cm
 from collections import OrderedDict
-from cde.utils import io
-#from cde.model_fitting.ConfigRunner import ConfigRunner
+from NCP.cde_fork.utils import io
+#from NCP.cde_fork.model_fitting.ConfigRunner import ConfigRunner
 
 
 class GoodnessOfFitResults:

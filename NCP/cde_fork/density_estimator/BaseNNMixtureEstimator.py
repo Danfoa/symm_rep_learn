@@ -3,9 +3,9 @@ from sklearn.mixture import GaussianMixture
 import numpy as np
 import tensorflow as tf
 
-from cde.density_estimator.BaseNNEstimator import BaseNNEstimator
-from cde.utils.tf_utils.map_inference import MAP_inference
-from cde.utils.tf_utils.adamW import AdamWOptimizer
+from NCP.cde_fork.density_estimator.BaseNNEstimator import BaseNNEstimator
+from NCP.cde_fork.utils.tf_utils.map_inference import MAP_inference
+from NCP.cde_fork.utils.tf_utils.adamW import AdamWOptimizer
 
 
 class BaseNNMixtureEstimator(BaseNNEstimator):

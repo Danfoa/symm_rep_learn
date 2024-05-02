@@ -8,10 +8,10 @@ import pandas as pd
 import itertools
 from multiprocessing import Manager
 
-from cde.density_estimator.MDN import MixtureDensityNetwork
-from cde.density_estimator.KMN import KernelMixtureNetwork
-from cde.density_simulation.LinearGaussian import LinearGaussian
-from cde.utils.async_executor import AsyncExecutor
+from NCP.cde_fork.density_estimator.MDN import MixtureDensityNetwork
+from NCP.cde_fork.density_estimator.KMN import KernelMixtureNetwork
+from NCP.cde_fork.density_simulation.LinearGaussian import LinearGaussian
+from NCP.cde_fork.utils.async_executor import AsyncExecutor
 
 
 dir_path = os.path.dirname(os.path.realpath(__file__))

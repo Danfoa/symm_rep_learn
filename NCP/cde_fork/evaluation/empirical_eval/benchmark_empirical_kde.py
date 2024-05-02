@@ -1,5 +1,5 @@
-from cde.evaluation.empirical_eval.experiment_util import run_benchmark_train_test_fit_cv, run_benchmark_train_test_fit_cv_ml
-import cde.evaluation.empirical_eval.datasets as datasets
+from NCP.cde_fork.evaluation.empirical_eval.experiment_util import run_benchmark_train_test_fit_cv, run_benchmark_train_test_fit_cv_ml
+import NCP.cde_fork.evaluation.empirical_eval.datasets as datasets
 from ml_logger import logger
 import config
 import pandas as pd

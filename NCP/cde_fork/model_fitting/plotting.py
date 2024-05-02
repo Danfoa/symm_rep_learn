@@ -1,10 +1,10 @@
-from cde.density_simulation import *
-from cde.density_estimator import *
-from cde.evaluation.simulation_eval import base_experiment
+from NCP.cde_fork.density_simulation import *
+from NCP.cde_fork.density_estimator import *
+from NCP.cde_fork.evaluation.simulation_eval import base_experiment
 from ml_logger import logger
-from cde.utils.misc import take_of_type
-from cde.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
-import cde.model_fitting.ConfigRunner as ConfigRunner
+from NCP.cde_fork.utils.misc import take_of_type
+from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
+import NCP.cde_fork.model_fitting.ConfigRunner as ConfigRunner
 import tensorflow as tf
 import os
 import pickle

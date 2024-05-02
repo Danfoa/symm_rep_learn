@@ -3,8 +3,8 @@
 #
 
 
-from cde.utils.tf_utils.parameterized import Parameterized
-import cde.utils.tf_utils.layers as L
+from NCP.cde_fork.utils.tf_utils.parameterized import Parameterized
+import NCP.cde_fork.utils.tf_utils.layers as L
 import itertools
 
 

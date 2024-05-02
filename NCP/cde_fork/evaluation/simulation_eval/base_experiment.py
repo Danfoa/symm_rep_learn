@@ -1,7 +1,7 @@
 import argparse
 
-from cde.model_fitting.ConfigRunner import ConfigRunner
-from cde.model_fitting.ConfigRunnerLogProb import ConfigRunnerLogProb
+from NCP.cde_fork.model_fitting.ConfigRunner import ConfigRunner
+from NCP.cde_fork.model_fitting.ConfigRunnerLogProb import ConfigRunnerLogProb
 
 
 RESULTS_FILE = 'results.pkl'
