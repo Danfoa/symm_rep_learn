@@ -1,6 +1,7 @@
 import torch
 from sklearn.isotonic import IsotonicRegression
 from typing import NamedTuple
+from torch.utils.data import Dataset
 
 def tonp(x):
     return x.detach().cpu().numpy()
@@ -39,7 +40,7 @@ def sqrtmh(A: torch.Tensor):
 
 def random_split(X, Y, n):
     """
-    Randomly splits the data X into n partitions with approximately equal size.
+    Randomly splits the data X into n partitions with equal size.
 
     Parameters:
         X (array-like): The input data.
@@ -118,3 +119,18 @@ def filter_reduced_rank_svals(values, vectors):
     vectors = torch.real(vectors)
     values = torch.real(values)
     return values, vectors
+
+
+class RegressionDataset(Dataset):
+    def __init__(self, X, Y):
+        self.X = X
+        self.Y = Y
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, idx):
+        return self.X[idx], self.Y[idx]
+
+    def __getitems__(self, idx_list):
+        return self.X[idx_list], self.Y[idx_list]

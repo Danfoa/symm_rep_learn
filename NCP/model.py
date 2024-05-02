@@ -13,26 +13,6 @@ def ensure_torch(x):
     else:
         return frnp(x)
 
-class CustomImageDataset(Dataset):
-    def __init__(self, annotations_file, img_dir, transform=None, target_transform=None):
-        self.img_labels = pd.read_csv(annotations_file)
-        self.img_dir = img_dir
-        self.transform = transform
-        self.target_transform = target_transform
-
-    def __len__(self):
-        return len(self.img_labels)
-
-    def __getitem__(self, idx):
-        img_path = os.path.join(self.img_dir, self.img_labels.iloc[idx, 0])
-        image = read_image(img_path)
-        label = self.img_labels.iloc[idx, 1]
-        if self.transform:
-            image = self.transform(image)
-        if self.target_transform:
-            label = self.target_transform(label)
-        return image, label
-        
 class NCPOperator(Module):
     def __init__(self, U_operator:Module, V_operator:Module, U_operator_kwargs:dict, V_operator_kwargs:dict):
 
@@ -116,7 +96,7 @@ class NCPOperator(Module):
 
     def cdf(self, X, Y_sampling, observable=lambda x: x, postprocess=None):
         X = ensure_torch(X)
-        Y_sampling = ensure_torch(Y_sampling)            
+        Y_sampling = ensure_torch(Y_sampling)
 
         # observable is a vector to scalar function
         fY = torch.stack([observable(y_i) for y_i in torch.unbind(Y_sampling, dim=-1)], dim=-1).flatten() # Pytorch equivalent of numpy.apply_along_axis
@@ -145,8 +125,8 @@ class NCPOperator(Module):
 
     def _compute_data_statistics(self, X, Y):
         sigma = torch.sqrt(torch.exp(-self.S.weights ** 2))
-        Ux = self.U(X)
-        Vy = self.V(Y)
+        Ux = self.U(X.type_as(sigma))
+        Vy = self.V(Y.type_as(sigma))
         self._mean_Ux = torch.mean(Ux, axis=0)
         self._mean_Vy = torch.mean(Vy, axis=0)
 
@@ -198,26 +178,29 @@ class NCPModule(L.LightningModule):
     def configure_optimizers(self):
         kw = self.opt_kwargs | {"lr": self.lr}
         return self._optimizer(self.parameters(), **kw)
-    def training_step(self, batch, batch_idx):
-        X, Y = batch
-        # X, Y = X.reshape(-1, 1), Y.reshape(-1, 1)
 
+    def training_step(self, batch, batch_idx):
+        if self.current_epoch == 0:
+            self.batch = batch
+
+        X, Y = batch
         loss = self.loss_fn
         l = loss(X, Y, self.model)
         self.log('train_loss', l, on_step=False, on_epoch=True, prog_bar=True)
         self.train_loss.append(l.detach().cpu().numpy())
 
-        if self.current_epoch == self.trainer.max_epochs - 1:
-            self.model._compute_data_statistics(X, Y)
-
         return l
 
     def validation_step(self, batch, batch_idx):
         X, Y = batch
-        # X, Y = X.reshape(-1, 1), Y.reshape(-1, 1)
 
         loss = self.loss_fn
         l = loss(X, Y, self.model)
         self.log('val_loss', l, on_step=False, on_epoch=True, prog_bar=True)
         self.val_loss.append(l.detach().cpu().numpy())
         return l
+
+    def on_fit_end(self):
+        X, Y = self.batch
+        self.model._compute_data_statistics(X, Y)
+        del self.batch
