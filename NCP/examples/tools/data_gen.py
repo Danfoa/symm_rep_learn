@@ -80,3 +80,14 @@ def get_conditional_bimodal_cdf(x, y_vals):
         mode2 = norm.cdf(y_vals, loc=0.25*x[0] + 0.5, scale=0.25 * (0.25*x[2] - 0.5)**2)
 
         return 0.5*mode1 + 0.5*mode2
+    
+    
+def get_conditional_bimodal_pdf(x, y_vals):
+    if x[1]>0.2:
+        return norm.pdf(y_vals, loc=0.25*x[0], scale=0.3)
+    
+    else:
+        mode1 = norm.pdf(y_vals, loc=0.25*x[0] - 0.5, scale=0.25 * (0.25*x[2] + 0.5)**2)
+        mode2 = norm.pdf(y_vals, loc=0.25*x[0] + 0.5, scale=0.25 * (0.25*x[2] - 0.5)**2)
+
+        return 0.5*mode1 + 0.5*mode2
