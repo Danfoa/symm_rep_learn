@@ -11,6 +11,6 @@ X <- as.matrix(args[1])
 Y <- as.matrix(args[2])
 verbose <- as.logical(args[3])
 
-Y.pred = LinCDE.boost(X = X, y = Y, verbose = F)
+Y_pred <- LinCDE.boost(X = X, y = Y, verbose = F)
 
-write.csv(mY.pred, "/temp/matrix.csv")
+write.csv(Y_pred, "/temp/matrix.csv")

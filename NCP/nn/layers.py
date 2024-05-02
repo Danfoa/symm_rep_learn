@@ -50,28 +50,31 @@ class ConvMLP(Module):
     def __init__(self, n_hidden, layer_size, output_shape, dropout=0., rgb=False, iterative_whitening=False):
         super(ConvMLP, self).__init__()
         if rgb:
-            conv1 = Conv2d(3, 6, 5)
+            self.conv1 = Conv2d(3, 6, 5)
         else:
-            conv1 = Conv2d(1, 6, 5)
-        pool = MaxPool2d(2, 2)
-        conv2 = Conv2d(6, 16, 5)
+            self.conv1 = Conv2d(1, 6, 5)
+        self.pool = MaxPool2d(2, 2)
+        self.conv2 = Conv2d(6, 16, 5)
+
+        self.act = ReLU()
 
         if rgb:
             input_shape = 6 * 5 * 5
         else:
-            input_shape = 6 * 5 * 5
+            input_shape = 16 * 4 * 4
 
-        mlp = MLP(input_shape, 
+        self.mlp = MLP(input_shape, 
                   n_hidden, 
                   layer_size, 
                   output_shape, 
                   dropout,
                   iterative_whitening)
         
-        self.model = Sequential(conv1, pool, conv2, mlp)
-    
     def forward(self, x):
-        return self.model(x)
+        x = self.pool(self.act(self.conv1(x)))
+        x = self.pool(self.act(self.conv2(x)))
+        x = torch.flatten(x, 1)
+        return self.mlp(x)
 
 class IterativeWhitening(Module):
     # Algorithm 1 of https://arxiv.org/pdf/1904.03441.pdf

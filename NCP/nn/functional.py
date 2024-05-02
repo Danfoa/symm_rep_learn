@@ -18,7 +18,6 @@ from NCP.utils import cross_cov, random_split
 
 def cme_score_cov(X:torch.Tensor, Y:torch.Tensor, NCP:NCPOperator, gamma:float):
     X1, X2, Y1, Y2 = random_split(X, Y, 2)
-
     U1 = NCP.S(NCP.U(X1))
     U2 = NCP.S(NCP.U(X2))
     V1 = NCP.S(NCP.V(Y1))
