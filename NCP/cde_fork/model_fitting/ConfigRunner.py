@@ -5,12 +5,12 @@ import copy
 import traceback
 
 """ do not remove, imports required for globals() call """
-from cde.density_estimator import LSConditionalDensityEstimation, KernelMixtureNetwork, MixtureDensityNetwork, ConditionalKernelDensityEstimation, NeighborKernelDensityEstimation, NormalizingFlowEstimator
-from cde.density_simulation import EconDensity, GaussianMixture, ArmaJump, JumpDiffusionModel, SkewNormal, LinearGaussian, LinearStudentT
-from cde.model_fitting.GoodnessOfFit import GoodnessOfFit, sample_x_cond
-from cde.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
-from cde.utils import io
-from cde.utils.async_executor import AsyncExecutor
+from NCP.cde_fork.density_estimator import LSConditionalDensityEstimation, KernelMixtureNetwork, MixtureDensityNetwork, ConditionalKernelDensityEstimation, NeighborKernelDensityEstimation, NormalizingFlowEstimator
+from NCP.cde_fork.density_simulation import EconDensity, GaussianMixture, ArmaJump, JumpDiffusionModel, SkewNormal, LinearGaussian, LinearStudentT
+from NCP.cde_fork.model_fitting.GoodnessOfFit import GoodnessOfFit, sample_x_cond
+from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
+from NCP.cde_fork.utils import io
+from NCP.cde_fork.utils.async_executor import AsyncExecutor
 from ml_logger import logger
 import hashlib
 import base64

@@ -6,11 +6,11 @@ import itertools
 import warnings
 from multiprocessing import Manager
 
-from cde.utils.tf_utils.layers_powered import LayersPowered
-import cde.utils.tf_utils.layers as L
-from cde.utils.serializable import Serializable
-from cde.utils.async_executor import AsyncExecutor
-from cde.density_estimator.BaseDensityEstimator import BaseDensityEstimator
+from NCP.cde_fork.utils.tf_utils.layers_powered import LayersPowered
+import NCP.cde_fork.utils.tf_utils.layers as L
+from NCP.cde_fork.utils.serializable import Serializable
+from NCP.cde_fork.utils.async_executor import AsyncExecutor
+from NCP.cde_fork.density_estimator.BaseDensityEstimator import BaseDensityEstimator
 
 
 class BaseNNEstimator(LayersPowered, Serializable, BaseDensityEstimator):

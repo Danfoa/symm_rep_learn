@@ -4,9 +4,9 @@ from scipy.stats import multivariate_normal
 import scipy.optimize as optimize
 import warnings
 
-from cde.utils.misc import norm_along_axis_1
+from NCP.cde_fork.utils.misc import norm_along_axis_1
 from .BaseDensityEstimator import BaseDensityEstimator
-from cde.utils.async_executor import execute_batch_async_pdf
+from NCP.cde_fork.utils.async_executor import execute_batch_async_pdf
 from scipy.special import logsumexp
 
 _MULTIPROC_THRESHOLD = 10 ** 4
@@ -76,6 +76,9 @@ class NeighborKernelDensityEstimation(BaseDensityEstimator):
     self.has_cdf = False
 
     self.fitted = True
+
+  def cdf(self, X, Y, step):
+    return np.cumsum(self.pdf(X, Y) * step, axis=-1)
 
   def pdf(self, X, Y):
     """ Predicts the conditional probability density p(y|x). Requires the model to be fitted.

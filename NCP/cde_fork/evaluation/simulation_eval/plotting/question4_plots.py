@@ -1,7 +1,7 @@
 from ml_logger import logger
 
-from cde.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
-from cde.evaluation.simulation_eval import base_experiment
+from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
+from NCP.cde_fork.evaluation.simulation_eval import base_experiment
 import matplotlib.pyplot as plt
 
 from matplotlib.pyplot import cm

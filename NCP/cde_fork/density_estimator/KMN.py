@@ -8,15 +8,15 @@ import sklearn
 import tensorflow as tf
 import edward as ed
 from edward.models import Categorical, Mixture, MultivariateNormalDiag
-from cde.utils.tf_utils.network import MLP
-import cde.utils.tf_utils.layers as L
-from cde.utils.tf_utils.layers_powered import LayersPowered
-from cde.utils.serializable import Serializable
+from NCP.cde_fork.utils.tf_utils.network import MLP
+import NCP.cde_fork.utils.tf_utils.layers as L
+from NCP.cde_fork.utils.tf_utils.layers_powered import LayersPowered
+from NCP.cde_fork.utils.serializable import Serializable
 #import matplotlib.pyplot as plt
 
 
-from cde.utils.center_point_select import sample_center_points
-from cde.density_estimator.BaseNNMixtureEstimator import BaseNNMixtureEstimator
+from NCP.cde_fork.utils.center_point_select import sample_center_points
+from NCP.cde_fork.density_estimator.BaseNNMixtureEstimator import BaseNNMixtureEstimator
 
 import logging
 logging.getLogger("tensorflow").setLevel(logging.ERROR)
@@ -60,7 +60,7 @@ class KernelMixtureNetwork(BaseNNMixtureEstimator):
                random_seed=None):
 
     Serializable.quick_init(self, locals())
-    self._check_uniqueness_of_scope(name)
+    # self._check_uniqueness_of_scope(name)
 
     self.name = name
     self.ndim_x = ndim_x

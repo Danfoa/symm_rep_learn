@@ -157,7 +157,8 @@ class Layer(object):
         raise NotImplementedError
 
     def add_param_plain(self, spec, shape, name, **tags):
-        with tf.variable_scope(self.name, reuse=self.variable_reuse):
+        # with tf.variable_scope(self.name, reuse=self.variable_reuse):
+        with tf.variable_scope(self.name, reuse=tf.AUTO_REUSE):
             tags['trainable'] = tags.get('trainable', True)
             if 'regularizable' not in tags:
                 tags['regularizable'] = tags.get('regularizable', True)

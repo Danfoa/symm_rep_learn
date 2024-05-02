@@ -3,10 +3,10 @@ import numpy as np
 import scipy.stats as stats
 from scipy.special import logsumexp
 
-from cde.utils.center_point_select import sample_center_points
-from cde.utils.misc import norm_along_axis_1
+from NCP.cde_fork.utils.center_point_select import sample_center_points
+from NCP.cde_fork.utils.misc import norm_along_axis_1
 from .BaseDensityEstimator import BaseDensityEstimator
-from cde.utils.async_executor import execute_batch_async_pdf
+from NCP.cde_fork.utils.async_executor import execute_batch_async_pdf
 
 MULTIPROC_THRESHOLD = 10**4
 
@@ -124,6 +124,25 @@ class LSConditionalDensityEstimation(BaseDensityEstimator):
       return execute_batch_async_pdf(self._pdf, X, Y, n_jobs=self.n_jobs)
     else:
       return self._pdf(X, Y)
+
+  def cdf(self, X, Y, dx):
+    """ Predicts the conditional density p(y|x). Requires the model to be fitted.
+
+       Args:
+         X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
+         Y: numpy array of y targets - shape: (n_samples, n_dim_y)
+
+       Returns:
+          conditional probability density p(y|x) - numpy array of shape (n_query_samples, )
+
+     """
+    assert self.fitted, "model must be fitted for predictions"
+
+    X, Y = self._handle_input_dimensionality(X, Y)
+
+    pdf = self._pdf(X, Y)
+    return np.cumsum(pdf * dx, axis=-1)
+    # return pdf = self._pdf(X, Y)
 
   def log_pdf(self, X, Y):
     """ Predicts the conditional log-probability log p(y|x). Requires the model to be fitted.

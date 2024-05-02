@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 
 
-def sample_center_points(Y, method='all', k=100, keep_edges=False, parallelize=False, random_state=None):
+def sample_center_points(Y, method='all', k=100, keep_edges=False, parallelize=True, random_state=None):
     """ function to define kernel centers with various downsampling alternatives
 
     Args:

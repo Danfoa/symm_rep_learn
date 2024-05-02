@@ -1,13 +1,13 @@
 import numpy as np
 import tensorflow as tf
 
-import cde.utils.tf_utils.layers as L
-from cde.utils.tf_utils.layers_powered import LayersPowered
-from cde.utils.tf_utils.network import MLP
-from cde.utils.tf_utils.adamW import AdamWOptimizer
+import NCP.cde_fork.utils.tf_utils.layers as L
+from NCP.cde_fork.utils.tf_utils.layers_powered import LayersPowered
+from NCP.cde_fork.utils.tf_utils.network import MLP
+from NCP.cde_fork.utils.tf_utils.adamW import AdamWOptimizer
 from .BaseNNEstimator import BaseNNEstimator
 from .normalizing_flows import FLOWS
-from cde.utils.serializable import Serializable
+from NCP.cde_fork.utils.serializable import Serializable
 
 
 class NormalizingFlowEstimator(BaseNNEstimator):
@@ -40,7 +40,7 @@ class NormalizingFlowEstimator(BaseNNEstimator):
                  weight_decay=0.0, weight_normalization=True, data_normalization=True, dropout=0.0, l2_reg=0.0, l1_reg=0.0,
                  random_seed=None):
         Serializable.quick_init(self, locals())
-        self._check_uniqueness_of_scope(name)
+        # self._check_uniqueness_of_scope(name)
 
 
         self.name = name

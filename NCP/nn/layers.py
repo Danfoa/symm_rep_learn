@@ -10,20 +10,20 @@ class SingularLayer(Module):
         return x * torch.exp(-self.weights**2)
 
 class MLPBlock(Module):
-    def __init__(self, input_size, output_size, dropout=0.):
+    def __init__(self, input_size, output_size, dropout=0., activation=ReLU):
         super(MLPBlock, self).__init__()
         self.linear = Linear(input_size, output_size)
         self.dropout = Dropout(dropout)
-        self.relu = ReLU()
+        self.activation = activation()
 
     def forward(self, x):
         out = self.linear(x)
         out = self.dropout(out)
-        out = self.relu(out)
+        out = self.activation(out)
         return out
 
 class MLP(Module):
-    def __init__(self, input_shape, n_hidden, layer_size, output_shape, dropout=0., iterative_whitening=False):
+    def __init__(self, input_shape, n_hidden, layer_size, output_shape, dropout=0., activation=ReLU, iterative_whitening=False):
         super(MLP, self).__init__()
         if isinstance(layer_size, int):
             layer_size = [layer_size]*n_hidden
@@ -33,9 +33,9 @@ class MLP(Module):
             layers = []
             for layer in range(n_hidden):
                 if layer == 0:
-                    layers.append(MLPBlock(input_shape, layer_size[layer], dropout))
+                    layers.append(MLPBlock(input_shape, layer_size[layer], dropout, activation))
                 else:
-                    layers.append(MLPBlock(layer_size[layer-1], layer_size[layer], dropout))
+                    layers.append(MLPBlock(layer_size[layer-1], layer_size[layer], dropout, activation))
 
             layers.append(Linear(layer_size[-1], output_shape, bias=False))
             if iterative_whitening:
@@ -44,10 +44,10 @@ class MLP(Module):
 
     def forward(self, x):
         return self.model(x)
-    
+
 class ConvMLP(Module):
     # convolutional network for 28 by 28 images (TODO: debug needed for non rgb)
-    def __init__(self, n_hidden, layer_size, output_shape, dropout=0., rgb=False, iterative_whitening=False):
+    def __init__(self, n_hidden, layer_size, output_shape, dropout=0., rgb=False, activation=ReLU, iterative_whitening=False):
         super(ConvMLP, self).__init__()
         if rgb:
             self.conv1 = Conv2d(3, 6, 5)
@@ -63,11 +63,12 @@ class ConvMLP(Module):
         else:
             input_shape = 16 * 4 * 4
 
-        self.mlp = MLP(input_shape, 
-                  n_hidden, 
-                  layer_size, 
-                  output_shape, 
+        mlp = MLP(input_shape,
+                  n_hidden,
+                  layer_size,
+                  output_shape,
                   dropout,
+                  activation,
                   iterative_whitening)
         
     def forward(self, x):

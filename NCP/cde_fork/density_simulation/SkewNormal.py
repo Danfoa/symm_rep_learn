@@ -62,9 +62,9 @@ class SkewNormal(BaseConditionalDensitySimulation):
 
         locs, scales, skews = self._loc_scale_skew_mapping(X)
 
-        P = np.zeros(X.shape[0])
+        P = np.zeros((X.shape[0],Y.shape[-1]))
         for i in range(X.shape[0]):
-            P[i] = stats.skewnorm.pdf(Y[i], skews[i], loc=locs[i], scale=scales[i])
+            P[i] = np.array(stats.skewnorm.pdf(Y[i], skews[i], loc=locs[i], scale=scales[i]))
         return P
 
     def cdf(self, X, Y):
@@ -81,9 +81,9 @@ class SkewNormal(BaseConditionalDensitySimulation):
 
         locs, scales, skews = self._loc_scale_skew_mapping(X)
 
-        P = np.zeros(X.shape[0])
+        P = np.zeros((X.shape[0],Y.shape[-1]))
         for i in range(X.shape[0]):
-            P[i] = stats.skewnorm.cdf(Y[i], skews[i], loc=locs[i], scale=scales[i])
+            P[i] = np.array(stats.skewnorm.cdf(Y[i], skews[i], loc=locs[i], scale=scales[i]))
         return P
 
     def simulate_conditional(self, X):

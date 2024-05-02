@@ -1,12 +1,12 @@
-from cde.density_estimator import KernelMixtureNetwork, ConditionalKernelDensityEstimation, MixtureDensityNetwork, \
+from NCP.cde_fork.density_estimator import KernelMixtureNetwork, ConditionalKernelDensityEstimation, MixtureDensityNetwork, \
     NeighborKernelDensityEstimation, LSConditionalDensityEstimation, NormalizingFlowEstimator
-from cde.evaluation.eurostoxx_eval.load_dataset import make_overall_eurostoxx_df, target_feature_split
+from NCP.cde_fork.evaluation.eurostoxx_eval.load_dataset import make_overall_eurostoxx_df, target_feature_split
 
 from sklearn.model_selection import cross_validate
-from cde.density_estimator import LSConditionalDensityEstimation, KernelMixtureNetwork, MixtureDensityNetwork, \
+from NCP.cde_fork.density_estimator import LSConditionalDensityEstimation, KernelMixtureNetwork, MixtureDensityNetwork, \
     ConditionalKernelDensityEstimation, NeighborKernelDensityEstimation, NormalizingFlowEstimator
 
-from cde.model_fitting.ConfigRunner import _create_configurations
+from NCP.cde_fork.model_fitting.ConfigRunner import _create_configurations
 import numpy as np
 import time
 import pandas as pd
@@ -14,7 +14,7 @@ import argparse
 import itertools
 from collections import OrderedDict
 from multiprocessing import Manager
-from cde.utils.async_executor import AsyncExecutor
+from NCP.cde_fork.utils.async_executor import AsyncExecutor
 
 VALIDATION_PORTION = 0.2
 

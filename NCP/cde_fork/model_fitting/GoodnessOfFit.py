@@ -4,10 +4,10 @@ import logging
 import matplotlib.pyplot as plt
 from ml_logger import logger
 
-from cde.density_estimator.BaseDensityEstimator import BaseDensityEstimator
-from cde.density_simulation import BaseConditionalDensitySimulation
-from cde.model_fitting.GoodnessOfFitSingleResult import GoodnessOfFitSingleResult
-from cde.model_fitting.divergences import divergence_measures_pdf
+from NCP.cde_fork.density_estimator.BaseDensityEstimator import BaseDensityEstimator
+from NCP.cde_fork.density_simulation import BaseConditionalDensitySimulation
+from NCP.cde_fork.model_fitting.GoodnessOfFitSingleResult import GoodnessOfFitSingleResult
+from NCP.cde_fork.model_fitting.divergences import divergence_measures_pdf
 
 
 class GoodnessOfFit:

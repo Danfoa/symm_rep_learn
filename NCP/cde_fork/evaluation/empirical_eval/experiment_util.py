@@ -1,5 +1,5 @@
 from multiprocessing import Manager
-from cde.utils.async_executor import AsyncExecutor, LoopExecutor
+from NCP.cde_fork.utils.async_executor import AsyncExecutor, LoopExecutor
 import numpy as np
 import tensorflow as tf
 import pandas as pd
@@ -9,10 +9,10 @@ from ml_logger import logger
 import itertools
 
 
-from cde.density_estimator import LSConditionalDensityEstimation, KernelMixtureNetwork, MixtureDensityNetwork, \
+from NCP.cde_fork.density_estimator import LSConditionalDensityEstimation, KernelMixtureNetwork, MixtureDensityNetwork, \
     ConditionalKernelDensityEstimation, NeighborKernelDensityEstimation, NormalizingFlowEstimator
 
-from cde.evaluation.empirical_eval.datasets import BostonHousing
+from NCP.cde_fork.evaluation.empirical_eval.datasets import BostonHousing
 
 def run_benchmark_train_test_fit_cv(dataset, model_dict, seed=27, n_jobs_inner=-1, n_jobc_outer=1, n_train_valid_splits=1,
                                     shuffle_splits=True, n_eval_seeds=1, n_folds=5):

@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 
-from cde.utils.serializable import Serializable
-from cde.utils.tf_utils.tensor_utils import flatten_tensors, unflatten_tensors
+from NCP.cde_fork.utils.serializable import Serializable
+from NCP.cde_fork.utils.tf_utils.tensor_utils import flatten_tensors, unflatten_tensors
 import tensorflow as tf
 
 
