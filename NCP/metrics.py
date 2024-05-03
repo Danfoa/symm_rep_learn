@@ -73,7 +73,7 @@ def kolmogorov_smirnov(x, y, values=None, smooth=True):
         y = smooth_cdf(values, y)
     return np.max(np.abs(x-y))
 
-def compute_metrics(x, y, metrics, smooth=True, values=None):
+def compute_metrics(x, y, metrics='all', smooth=True, values=None):
     """
     Compute specified metrics for two probability distributions.
 
