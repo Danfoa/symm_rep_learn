@@ -1,5 +1,4 @@
 import torch
-from sklearn.isotonic import IsotonicRegression
 from typing import NamedTuple
 from torch.utils.data import Dataset
 
@@ -8,11 +7,6 @@ def tonp(x):
 
 def frnp(x, device=None):
     return torch.Tensor(x).to(device)
-
-def smooth_cdf(values, cdf):
-    scdf = IsotonicRegression(y_min=0., y_max=cdf.max()).fit_transform(values, cdf)
-    scdf = scdf/scdf.max()
-    return scdf
 
 # Sorting and parsing
 class TopKReturnType(NamedTuple):
