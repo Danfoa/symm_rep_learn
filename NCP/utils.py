@@ -1,7 +1,5 @@
 import torch
-from typing import NamedTuple, Tuple
-from torch import Tensor
-from torch.utils.data import Dataset, TensorDataset
+from typing import NamedTuple
 
 def tonp(x):
     return x.detach().cpu().numpy()
@@ -92,8 +90,8 @@ def filter_reduced_rank_svals(values, vectors):
     eps = 2 * torch.finfo(torch.get_default_dtype()).eps
     # Filtering procedure.
     # Create a mask which is True when the real part of the eigenvalue is negative or the imaginary part is nonzero
-    is_invalid = torch.logical_or(torch.abs(torch.real(values)) <= eps,
-                                  torch.imag(vectors) != 0
+    is_invalid = torch.logical_or(torch.real(values) <= eps,
+                                  torch.imag(values) != 0
                                   if torch.is_complex(values)
                                   else torch.zeros(len(values), device=values.device))
     # Check if any is invalid take the first occurrence of a True value in the mask and filter everything after that
