@@ -31,16 +31,27 @@ def kullback_leibler(x,y, values=None, bin_length=1, smooth=True):
     eps = 1e-8
     x_hist = cdf_to_hist(x, values, smooth, bin_length)
     y_hist = cdf_to_hist(y, values, smooth, bin_length)
+    # overriding the zero values to eps to avoid np.log(0) = -inf, not sure if this is the best way to handle this
     x_hist = np.where(x_hist == 0, eps, x_hist)
     y_hist = np.where(y_hist == 0, eps, y_hist)
-    # overriding the zero values to eps to avoid np.log(0) = -inf, not sure if this is the best way to handle this
+    # normalizing the histograms to avoid negative KL divergence
+    x_hist = x_hist / np.sum(x_hist)
+    y_hist = y_hist / np.sum(y_hist)
     return np.sum(x_hist * (np.log(x_hist)-np.log(y_hist)))
 
 # Added Jensen-Shannon divergence as defined in [https://en.wikipedia.org/wiki/Jensen–Shannon_divergence]
 def jensen_shannon(x,y, values=None, bin_length=1, smooth=True):
+    eps = 1e-8
     x_hist = cdf_to_hist(x, values, smooth, bin_length)
     y_hist = cdf_to_hist(y, values, smooth, bin_length)
+    # overriding the zero values to eps to avoid np.log(0) = -inf, not sure if this is the best way to handle this
+    x_hist = np.where(x_hist == 0, eps, x_hist)
+    y_hist = np.where(y_hist == 0, eps, y_hist)
+    # normalizing the histograms to avoid negative KL divergence
+    x_hist = x_hist / np.sum(x_hist)
+    y_hist = y_hist / np.sum(y_hist)
     m = (x_hist + y_hist) / 2
+    return (np.sum(x_hist * (np.log(x_hist)-np.log(m))) + np.sum(y_hist * (np.log(y_hist)-np.log(m)))) * 0.5
     return (np.sum(rel_entr(x_hist, m)) + np.sum(rel_entr(y_hist, m))) * 0.5
 
 # Added total variation distance as defined in [https://en.wikipedia.org/wiki/Total_variation_distance_of_probability_measures]
@@ -97,7 +108,7 @@ def compute_metrics(x, y, metrics='all', smooth=True, values=None):
         'wasserstein1': wasserstein1,
         'kolmogorov_smirnov': kolmogorov_smirnov,
         'total_variation': total_variation,
-        'jensen_shannon_dv': jensen_shannon
+        'jensen_shannon': jensen_shannon
     }
 
     if 'all' in metrics:
