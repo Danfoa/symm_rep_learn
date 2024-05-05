@@ -1,3 +1,6 @@
+# comment after first use
+
+# options(repos = list(CRAN="http://cran.rstudio.com/"))
 # install.packages("devtools")
 # devtools::install_github("ZijunGao/LinCDE", build_vignettes = TRUE)
 
@@ -7,10 +10,14 @@ library(LinCDE)
 # - location of the data (in str)
 # - quantile for outlier test (int, in percent)
 args <- commandArgs(trailingOnly = TRUE)
-X <- as.matrix(args[1])
-Y <- as.matrix(args[2])
-verbose <- as.logical(args[3])
+X <- read.csv("temp/xtrain.csv")
+Y <- as.vector(t(read.csv("temp/ytrain.csv")))
+xtest <- read.csv("temp/xtest.csv")
+ydiscr <- as.vector(read.csv("temp/ydiscr.csv"))
+verbose <- as.logical(args[1])
 
-Y_pred <- LinCDE.boost(X = X, y = Y, verbose = F)
+model = LinCDE.boost(X = X, y = Y, verbose = F)
 
-write.csv(Y_pred, "/temp/matrix.csv")
+estDens <- predict(object=model, X=xtest, Y=ydiscr)$cellProb
+
+write.csv(estDens, paste(getwd(), "/temp/matrix.csv", sep=''), row.names = FALSE)

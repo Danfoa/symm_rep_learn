@@ -5,9 +5,21 @@ import pandas as pd
 
 # WARNING: only works for code executed from example folder
 
-def lincde(X, Y, verbose='F'):
+def lincde(X, Y, Xtest, ydiscr, verbose='F'):
+    # try:
     print(os.getcwd())
-    os.system(f'Rscript tools/lincde.R {X} {Y} {verbose}')
-    Y_pred = pd.read_csv("temp/matrix.csv")
+    pd.DataFrame(X).to_csv('temp/xtrain.csv', index=False)
+    pd.DataFrame(Y).to_csv('temp/ytrain.csv', index=False)
+    pd.DataFrame(Xtest).to_csv('temp/xtest.csv', index=False)
+    pd.DataFrame(ydiscr).to_csv('temp/ydiscr.csv', index=False)
+
+    os.system(f'Rscript tools/lincde.R {verbose}')
+    Y_pred = pd.read_csv("temp/matrix.csv").to_numpy()
+    os.remove("temp/xtrain.csv")
+    os.remove("temp/ytrain.csv")
+    os.remove("temp/xtest.csv")
+    os.remove("temp/ydiscr.csv")
     os.remove("temp/matrix.csv")
-    return(Y_pred.to_numpy())
+    return(Y_pred)
+    # except:
+    #     print("lincde failed, try installing R package")
