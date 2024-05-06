@@ -1,6 +1,5 @@
 #%% Importing libraries
-import sys, os
-# sys.path.append('/media/gturri/deploy/NCP/')
+import os
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -69,11 +68,9 @@ def run_experiment(density_estimator, density_estimator_kwargs, density_simulato
                                        yscaler.inverse_transform(ys)).squeeze()
 
                 if model.has_cdf:
-                    pred_cdf = model.cdf(xscaler.inverse_transform(np.ones_like(ys) * xi),
-                                           yscaler.inverse_transform(ys)).squeeze()
+                    pred_cdf = model.cdf(np.ones_like(ys) * xi, ys).squeeze()
                 else:
-                    pred_pdf = model.pdf(xscaler.inverse_transform(np.ones_like(ys) * xi),
-                                           yscaler.inverse_transform(ys)).squeeze()
+                    pred_pdf = model.pdf(np.ones_like(ys) * xi, ys).squeeze()
                     pred_cdf = pdf2cdf(pred_pdf, step)
 
                 computed_metrics = compute_metrics(true_cdf.squeeze(), pred_cdf.squeeze(), metrics='all', smooth=True,
@@ -151,14 +148,17 @@ if __name__ == '__main__':
 
     if args.model == 'KMN':
         density_estimator = KernelMixtureNetwork
-        density_estimator_kwargs = {'name': 'kmn', 'x_noise_std': 0.2, 'y_noise_std': 0.1}
+        # density_estimator_kwargs = {'name': 'kmn', 'x_noise_std': 0.2, 'y_noise_std': 0.1}
+        density_estimator_kwargs = {'name': 'kmn'}
     elif args.model == 'NFlow':
         density_estimator = NormalizingFlowEstimator
-        # density_estimator_kwargs = {'name': 'nflow', 'hidden_sizes': (32, 32), 'hidden_nonlinearity': tf.nn.relu}
-        density_estimator_kwargs = {'name': 'nflow', 'hidden_sizes': (32, 32), 'hidden_nonlinearity': tf.tanh}
+        density_estimator_kwargs = {'name': 'nflow', 'hidden_sizes': (32, 32), 'hidden_nonlinearity': tf.nn.relu}
+        # density_estimator_kwargs = {'name': 'nflow', 'hidden_sizes': (32, 32), 'hidden_nonlinearity': tf.tanh}
+        # density_estimator_kwargs = {'name': 'nflow', 'hidden_sizes': (16, 16), 'hidden_nonlinearity': tf.tanh}
     elif args.model == 'MDN':
         density_estimator = MixtureDensityNetwork
-        density_estimator_kwargs = {'name': 'mdn', 'x_noise_std': 0.2, 'y_noise_std': 0.1}
+        # density_estimator_kwargs = {'name': 'mdn', 'x_noise_std': 0.2, 'y_noise_std': 0.1}
+        density_estimator_kwargs = {'name': 'mdn'}
     elif args.model == 'LSCDE':
         density_estimator = LSConditionalDensityEstimation
         density_estimator_kwargs = {'name': 'lscde'}
