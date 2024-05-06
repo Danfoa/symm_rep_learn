@@ -14,12 +14,13 @@ def lincde(X, Y, Xtest, ydiscr, verbose='F'):
     pd.DataFrame(ydiscr).to_csv('temp/ydiscr.csv', index=False)
 
     os.system(f'Rscript tools/lincde.R {verbose}')
-    Y_pred = pd.read_csv("temp/matrix.csv").to_numpy()
+    Y_pred = pd.read_csv("temp/pdf.csv").to_numpy()
+    Y_discr = pd.read_csv("temp/ys.csv").to_numpy()
     os.remove("temp/xtrain.csv")
     os.remove("temp/ytrain.csv")
     os.remove("temp/xtest.csv")
     os.remove("temp/ydiscr.csv")
     os.remove("temp/matrix.csv")
-    return(Y_pred)
+    return(Y_discr, Y_pred)
     # except:
     #     print("lincde failed, try installing R package")

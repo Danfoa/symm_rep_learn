@@ -18,6 +18,9 @@ verbose <- as.logical(args[1])
 
 model = LinCDE.boost(X = X, y = Y, verbose = F)
 
-estDens <- predict(object=model, X=xtest, Y=ydiscr)$cellProb
+prediction <- predict(object=model, X=xtest, Y=ydiscr)
+estDens <- prediction$cellProb
+ys <- prediction$yDiscretized
 
-write.csv(estDens, paste(getwd(), "/temp/matrix.csv", sep=''), row.names = FALSE)
+write.csv(estDens, paste(getwd(), "/temp/pdf.csv", sep=''), row.names = FALSE)
+write.csv(ys, paste(getwd(), "/temp/ys.csv", sep=''), row.names = FALSE)
