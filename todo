@@ -1,0 +1,11 @@
+[ ] coverage and interval length on UCI regression
+
+gregoire
+[ ] set value prediction example on mnist 
+[ ] add normalising flows pytorch
+[ ] add ddpm pytorch
+[ ] pdf/cdf generation given trained ddpm
+[ ] add normalising flow and ddpm to notebooks + compute distances
+
+giacomo
+[ ] tables comparing metrics and methods on synthetic data (with standard deviation)
