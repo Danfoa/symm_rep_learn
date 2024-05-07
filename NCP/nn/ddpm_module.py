@@ -58,8 +58,3 @@ class DDPMModule(L.LightningModule):
         self.log('val_loss', l, on_step=False, on_epoch=True, prog_bar=True)
         self.val_loss.append(l.detach().cpu().numpy())
         return l
-
-    def on_fit_end(self):
-        X, Y = self.batch
-        self.model._compute_data_statistics(X, Y)
-        del self.batch

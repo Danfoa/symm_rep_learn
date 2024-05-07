@@ -2,6 +2,7 @@ import torch
 from NCP.nn.functional import cme_score_cov, cme_score_Ustat
 from NCP.nn.layers import SingularLayer
 from NCP.model import NCPOperator
+from NCP.nn.diffusion_conditional import DDPM
 
 class CMELoss():
     def __init__(
@@ -40,3 +41,14 @@ class CMELoss():
             return cme_score_cov(X, Y, NCP, self.gamma)
         else:
             return cme_score_Ustat(X, Y, NCP, self.metric_deformation, self.center)
+        
+class DDPMLoss():
+    def __init__(self,
+            mode: str = "split",
+            gamma:float = 0.,
+            metric_deformation: float = 1.0,
+            center: bool = True):
+        pass
+
+    def __call__(self, X:torch.Tensor, Y:torch.Tensor, ddpm: DDPM):
+        return ddpm(X, Y)
