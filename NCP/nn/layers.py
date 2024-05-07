@@ -63,7 +63,7 @@ class ConvMLP(Module):
         else:
             input_shape = 16 * 4 * 4
 
-        mlp = MLP(input_shape,
+        self.mlp = MLP(input_shape,
                   n_hidden,
                   layer_size,
                   output_shape,
