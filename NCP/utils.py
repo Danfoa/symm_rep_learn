@@ -42,12 +42,11 @@ def random_split(X, Y, n):
     Returns:
         list: List of partitions.
     """
-    batch_size = X.shape[0]
     res = (X.shape[0] % n)
     if res != 0:
         X = X[:-res]
         Y = Y[:-res]
-
+    batch_size = X.shape[0]
     idxs = torch.randperm(batch_size) # Randomly shuffle the indices
     X, Y = X[idxs], Y[idxs] # Shuffle the data
 
