@@ -6,33 +6,34 @@ import pandas as pd
 import argparse
 import torch
 from torch.optim import Adam
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 import lightning as L
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from lightning.pytorch.callbacks.model_checkpoint import ModelCheckpoint
-from torch.nn import Tanh, ReLU
+from torch.nn import GELU, ReLU
 from NCP.nn.layers import MLP
 from NCP.utils import frnp, FastTensorDataLoader
 from NCP.nn.losses import CMELoss
 from NCP.model import NCPOperator, NCPModule
 from NCP.metrics import compute_metrics
-from NCP.cdf import compute_marginal
+from NCP.cdf import compute_marginal, integrate_pdf
 from tqdm import tqdm
 from NCP.cde_fork.density_simulation import LinearGaussian, LinearStudentT, ArmaJump, SkewNormal, EconDensity, GaussianMixture
 import warnings
 warnings.filterwarnings("ignore", ".*does not have many workers.*")
 
-# function to convert pdf into cdf
-def pdf2cdf(pdf, step):
-    return np.cumsum(pdf * step, -1)
+class CustomModelCheckpoint(ModelCheckpoint):
+    def on_save_checkpoint(self, trainer, pl_module, checkpoint):
+        X, Y = trainer.model.batch
+        trainer.model.model._compute_data_statistics(X, Y)
+        torch.save(trainer.model.model, trainer.checkpoint_callback.dirpath + '/best_model.pt')
 
 def run_experiment(density_simulator, density_simulator_kwargs):
     filename = density_simulator().__class__.__name__ + '_NCP_results.pkl'
     n_training_samples = [100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000]
     gamma = 1e-3
     epochs = int(1e4)
-    n_val = int(1e4)
+    n_val = int(1e3)
     lr = 1e-3
 
     if os.path.isfile(filename):
@@ -42,12 +43,13 @@ def run_experiment(density_simulator, density_simulator_kwargs):
 
     for n in tqdm(n_training_samples, desc='Training samples', total=len(n_training_samples)):
         density = density_simulator(**density_simulator_kwargs)
-        X, Y = density.simulate(n_samples=n + n_val)
-        X = X.reshape((-1, 1))
-        Y = Y.reshape((-1, 1))
+        X, Y = density.simulate(n_samples=n_training_samples[-1] + n_val)
+        if X.ndim == 1:
+            X = X.reshape((-1, 1))
+            Y = Y.reshape((-1, 1))
+        X_train, X_val, Y_train, Y_val = X[:n], X[-n_val:], Y[:n], Y[-n_val:]
         xscaler = StandardScaler()
         yscaler = StandardScaler()
-        X_train, X_val, Y_train, Y_val = train_test_split(X, Y, test_size=n_val, random_state=0)
         X_train = xscaler.fit_transform(X_train)
         Y_train = yscaler.fit_transform(Y_train)
         X_val = xscaler.transform(X_val)
@@ -62,20 +64,20 @@ def run_experiment(density_simulator, density_simulator_kwargs):
             'input_shape': X_train.shape[-1],
             'output_shape': 100,
             'n_hidden': 2,
-            'layer_size': 32,
+            'layer_size': 64,
             'dropout': 0,
             'iterative_whitening': False,
-            'activation': ReLU
+            'activation': GELU
         }
 
         V_operator_kwargs = {
             'input_shape': Y_train.shape[-1],
             'output_shape': 100,
             'n_hidden': 2,
-            'layer_size': 32,
+            'layer_size': 64,
             'dropout': 0,
             'iterative_whitening': False,
-            'activation': ReLU
+            'activation': GELU
         }
 
         optimizer_kwargs = {
@@ -87,7 +89,7 @@ def run_experiment(density_simulator, density_simulator_kwargs):
             'gamma': gamma
         }
 
-        for seed in tqdm(range(5), desc='Seed', total=5):
+        for seed in tqdm(range(10), desc='Seed', total=10):
             # print(f'Running with {n} samples - seed {seed}')
             if len(results_df) > 0:
                 if len(results_df[(results_df['n_samples'] == n) & (results_df['seed'] == seed)]) > 0:
@@ -111,34 +113,51 @@ def run_experiment(density_simulator, density_simulator_kwargs):
             train_dl = FastTensorDataLoader(X_train_torch, Y_train_torch, batch_size=len(X_train_torch), shuffle=False)
             val_dl = FastTensorDataLoader(X_val_torch, Y_val_torch, batch_size=len(X_val_torch), shuffle=False)
 
-            early_stop = EarlyStopping(monitor="val_loss", patience=100, mode="min")
+            early_stop = EarlyStopping(monitor="val_loss", patience=200, mode="min")
+            ckpt_path = "checkpoints/" + density.__class__.__name__ + "_NCP_" + str(n) + "_" + str(seed)
+            if not os.path.exists(ckpt_path):
+                os.makedirs(ckpt_path)
+            checkpoint_callback = CustomModelCheckpoint(save_top_k=1, monitor="val_loss", mode="min", dirpath=ckpt_path)
+
+            logger_path = "lightning_logs/" + density.__class__.__name__ + "_DDPM_" + str(n) + "_" + str(seed)
+            if not os.path.exists(logger_path):
+                os.makedirs(logger_path)
+
             trainer = L.Trainer(**{
                 'accelerator': 'cuda',
                 'max_epochs': epochs,
                 'log_every_n_steps': 0,
                 'enable_progress_bar': False,
                 'devices': 1,
-                'enable_checkpointing': False,
+                'enable_checkpointing': True,
                 'num_sanity_val_steps': 0,
                 'enable_model_summary': False,
+                'check_val_every_n_epoch': 10,
                 'logger': False,
-            }, callbacks=[early_stop])
+            # }, callbacks=[early_stop])
+            }, callbacks=[early_stop, checkpoint_callback])
 
             # timing the training
             start = time.perf_counter()
             trainer.fit(NCP_module, train_dataloaders=train_dl, val_dataloaders=val_dl)
             fit_time = time.perf_counter() - start
+            best_model = torch.load(checkpoint_callback.dirpath + '/best_model.pt').to('cpu')
 
-            print('N epochs: {0}'.format(NCP_module.current_epoch))
-            print('Training loss: {0}'.format(NCP_module.train_loss[-1]))
-            print('Validation loss: {0}'.format(NCP_module.val_loss[-1]))
+            print('N epochs: {0}'.format(NCP_module.current_epoch - early_stop.patience))
+            print('Training loss: {0}'.format(NCP_module.train_loss[-early_stop.patience]))
+            print('Validation loss: {0}'.format(NCP_module.val_loss[-early_stop.patience]))
             print('Fit time: {0}'.format(fit_time))
 
             # Computing results
-            x_grid = np.percentile(X_train, np.linspace(10, 90, num=10))
-            p1, p99 = np.percentile(Y_train, [1, 99])
-            ys, step = np.linspace(p1, p99, num=1000, retstep=True)
-            ys = frnp(ys.reshape(-1, 1))
+            n_sampling = 19
+            if density.__class__.__name__ == 'GaussianMixture':
+                x_grid = np.zeros((density.ndim_x * n_sampling, density.ndim_x))
+                for i in range(density.ndim_x):
+                    x_grid[i * n_sampling:(i + 1) * n_sampling, i] = np.percentile(X_train[:, i], np.linspace(5, 95, num=n_sampling))
+            else:
+                x_grid = np.percentile(X_train, np.linspace(5, 95, num=n_sampling))
+            ys, step = np.linspace(Y_train.min(), Y_train.max(), num=1000, retstep=True)
+            ys = ys.reshape(-1, 1)
 
             p_y = compute_marginal(bandwidth='scott').fit(Y_train)
 
@@ -146,10 +165,11 @@ def run_experiment(density_simulator, density_simulator_kwargs):
             for postprocess in [None, 'centering', 'whitening']:
                 scores = []
                 for xi in x_grid:
-                    fys, pred_pdf = model.pdf(frnp([[xi]]), frnp(ys), postprocess=postprocess, p_y=p_y)
-                    pred_cdf = pdf2cdf(pred_pdf, step)
+                    xi = xi.reshape(1, -1)
+                    fys, pred_pdf = best_model.pdf(frnp(xi), frnp(ys), postprocess=postprocess, p_y=p_y)
+                    pred_cdf = integrate_pdf(pred_pdf, ys)
 
-                    true_cdf = density.cdf(xscaler.inverse_transform(np.ones_like(ys) * xi),
+                    true_cdf = density.cdf(np.tile(xscaler.inverse_transform(xi), (len(ys),1)),
                                            yscaler.inverse_transform(ys)).squeeze()
                     computed_metrics = compute_metrics(true_cdf, pred_cdf, smooth=True, values=fys)
                     computed_metrics['x'] = xi
@@ -184,10 +204,10 @@ if __name__ == '__main__':
         density_simulator_kwargs = {'std': 1, 'heteroscedastic': True, 'random_seed': random_seed}
     elif args.dataset == 'gaussian_mixture':
         density_simulator = GaussianMixture
-        density_simulator_kwargs = {'n_kernels': 5, 'ndim_x': 1, 'ndim_y': 1, 'means_std': 1.5, 'random_seed': random_seed}
+        density_simulator_kwargs = {'n_kernels': 5, 'ndim_x': 5, 'ndim_y': 1, 'means_std': 1.5, 'random_seed': random_seed}
     elif args.dataset == 'linear_gaussian':
         density_simulator = LinearGaussian
-        density_simulator_kwargs = {'ndim_x': 1, 'mu': 0.0, 'mu_slope': 0.005, 'std': 0.01, 'std_slope': 0.002, 'random_seed': random_seed}
+        density_simulator_kwargs = {'ndim_x': 1, 'std': 0.1, 'random_seed': random_seed}
     elif args.dataset == 'arma_jump':
         density_simulator = ArmaJump
         density_simulator_kwargs = {'c': 0.1, 'arma_a1': 0.9, 'std': 0.05, 'jump_prob': 0.05, 'random_seed': random_seed}
