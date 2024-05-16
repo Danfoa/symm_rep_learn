@@ -18,11 +18,10 @@ def setup_plots():
 
     plt.rcParams.update(tex_fonts)  
 
-def plot_expectation(reg, X_train, X_test, Y_train, Y_test, xscaler, yscaler):
+def plot_expectation(reg, X_train, X_test, Y_train, Y_test, xscaler, yscaler, postprocess='centering'):
     '''
     expectation plots for in sample and out of sample data
     '''
-    postprocess = 'centering'
 
     pred = reg.conditional_expectation(X_train, Y_train, postprocess=postprocess).reshape(-1, 1)
     pred_test = reg.conditional_expectation(X_test, Y_train, postprocess=postprocess).reshape(-1, 1)

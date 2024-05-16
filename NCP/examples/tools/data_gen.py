@@ -55,7 +55,7 @@ def gen_switching(p, offset, scale=1, x_switch_min=2.5, N_train=1000, N_val=1000
 
 def gen_bimodal(main_dist=norm, alpha=0.5, mu1=-1, mu2=1, s1=1, s2=1, N_train=1000, N_val=1000, N_test=1000):
     # same experiment as mixture model of LinCDE paper
-    X = np.random.uniform(-1, 1, (N_train+N_val+N_test, 20))
+    X = np.random.uniform(-1, 1, (N_train+N_val+N_test, 10))
     Y = np.zeros(X.shape[0])
     for i, xi in enumerate(X):
         if xi[1] > 0.2:

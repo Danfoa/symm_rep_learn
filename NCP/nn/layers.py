@@ -1,10 +1,14 @@
 import torch
+import numpy as np
 from torch.nn import Module, Linear, Dropout, ReLU, Sequential, Conv2d, MaxPool2d
 
 class SingularLayer(Module):
     def __init__(self, d):
         super(SingularLayer, self).__init__()
-        self.weights = torch.nn.Parameter(torch.Tensor(torch.normal(mean=0.,std=2./d,size=(d,))), requires_grad=True)
+        #self.weights = torch.nn.Parameter(torch.Tensor(torch.normal(mean=0.,std=2./d,size=(d,))), requires_grad=True)
+        high = np.sqrt(np.log(4)- np.log(3))
+        low = np.sqrt(np.log(4))
+        self.weights = torch.nn.Parameter(torch.Tensor(low+(high-low)*torch.rand(d,)), requires_grad=True)
 
     def forward(self, x):
         return x * torch.exp(-self.weights**2)

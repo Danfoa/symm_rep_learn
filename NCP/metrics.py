@@ -18,6 +18,8 @@ def cdf_to_hist(x, fx=None, smooth=True, bin_length=1):
 
 def smooth_cdf(values, cdf): # Moved smooth_cdf here from NCP/utils.py
     scdf = IsotonicRegression(y_min=0., y_max=cdf.max()).fit_transform(values, cdf)
+    if scdf.max() <= 0:
+        return np.zeros(values.shape)
     scdf = scdf/scdf.max()
     return scdf
 

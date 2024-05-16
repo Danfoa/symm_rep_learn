@@ -3,6 +3,11 @@ from NCP.nn.layers import SingularLayer
 from NCP.model import NCPOperator
 from NCP.utils import cross_cov, random_split
 
+def robust_cov(X, tol=1e-5):
+    C = torch.cov(X)
+    Cp = 0.5*(C @ C.T)
+    return Cp #+ tol
+
 # def cme_score(x1:torch.Tensor, x2:torch.Tensor, y1:torch.Tensor, y2:torch.Tensor, S:SingularLayer, gamma:float):
 #     loss = 0.5 * ( torch.sum(S(x1 * y2)**2, dim=1) + torch.sum(S(x2 * y1)**2, dim=1) )
 #     loss -= torch.sum(S((x1 - x2) * (y1 - y2)), dim=1)
@@ -24,10 +29,10 @@ def cme_score_cov(X:torch.Tensor, Y:torch.Tensor, NCP:NCPOperator, gamma:float):
     V2 = NCP.S(NCP.V(Y2))
 
     # centered covariance matrices
-    cov_U1 = torch.cov(U1.T)
-    cov_U2 = torch.cov(U2.T)
-    cov_V1 = torch.cov(V1.T)
-    cov_V2 = torch.cov(V2.T)
+    cov_U1 = robust_cov(U1.T)
+    cov_U2 = robust_cov(U2.T)
+    cov_V1 = robust_cov(V1.T)
+    cov_V2 = robust_cov(V2.T)
 
     cov_U1V1 = cross_cov(U1.T, V1.T, centered=True)
     cov_U2V2 = cross_cov(U2.T, V2.T, centered=True)

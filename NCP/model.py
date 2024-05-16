@@ -84,9 +84,12 @@ class NCPOperator(Module):
         Y_sampling = ensure_torch(Y_sampling)
 
         Ux, sigma, Vy = self.postprocess_UV(X, Y_sampling, postprocess)
+        fY = observable(Y_sampling)
+        bias = torch.mean(fY, axis=0)
 
-        fY = torch.outer(torch.squeeze(observable(Y_sampling)), torch.ones(Vy.shape[-1]))
-        bias = torch.mean(fY)
+        fY = fY.unsqueeze(-1).repeat((1,1,Vy.shape[-1]))
+        Vy = Vy.unsqueeze(1).repeat((1, fY.shape[1], 1))
+        Ux = Ux.repeat((1, fY.shape[1], 1))
 
         Vy_fY = torch.mean(Vy * fY, axis=0)
         sigma_U_fY_VY = sigma * Ux * Vy_fY
