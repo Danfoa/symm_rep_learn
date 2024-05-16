@@ -106,3 +106,7 @@ class compute_marginal(KernelDensity):
         log_probability = self.score_samples(np.array(x).reshape(-1, 1))
         probability = np.exp(log_probability)
         return frnp(probability)
+
+from scipy.integrate import cumulative_trapezoid
+def integrate_pdf(pdf, values):
+    return cumulative_trapezoid(pdf.squeeze(), x=values.squeeze(), initial=0)
