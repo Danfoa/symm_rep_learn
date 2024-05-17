@@ -103,7 +103,9 @@ class compute_marginal(KernelDensity):
     def __call__(self, x):
         if torch.is_tensor(x):
             x = tonp(x)
-        log_probability = self.score_samples(np.array(x).reshape(-1, 1))
+        if x.ndim == 1:
+            x = x.reshape(-1, 1)
+        log_probability = self.score_samples(np.array(x))
         probability = np.exp(log_probability)
         return frnp(probability)
 

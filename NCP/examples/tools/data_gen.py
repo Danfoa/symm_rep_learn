@@ -91,3 +91,40 @@ def get_conditional_bimodal_pdf(x, y_vals):
         mode2 = norm.pdf(y_vals, loc=0.25*x[0] + 0.5, scale=0.25 * (0.25*x[2] - 0.5)**2)
 
         return 0.5*mode1 + 0.5*mode2
+
+
+class LGGMD():
+    def __init__(self, main_dist=norm, alpha=0.5, mu1=-1, mu2=1, s1=1, s2=1, ndim_x=20, random_seed=0):
+        self.main_dist = main_dist
+        self.alpha = alpha
+        self.mu1 = mu1
+        self.mu2 = mu2
+        self.s1 = s1
+        self.s2 = s2
+        self.ndim_x = ndim_x
+        self.ndim_y = 1
+        self.random_seed = random_seed
+
+    def simulate(self, n_samples=1000):
+        np.random.seed(self.random_seed)
+        X = np.random.uniform(-1, 1, (n_samples, self.ndim_x))
+        Y = np.zeros(X.shape[0])
+        for i, xi in enumerate(X):
+            if xi[1] > 0.2:
+                Y[i] = np.random.normal(0.25 * xi[0], 0.3)
+            else:
+                a = np.random.binomial(1, 0.5)
+                y1 = np.random.normal(0.25 * xi[0] - 0.5, 0.25 * (0.25 * xi[2] + 0.5) ** 2)
+                y2 = np.random.normal(0.25 * xi[0] + 0.5, 0.25 * (0.25 * xi[2] - 0.5) ** 2)
+
+                Y[i] = a * y1 + (1 - a) * y2
+
+        Y = Y.reshape((-1, 1))
+
+        return X, Y
+
+    def pdf(self, x, y):
+        return get_conditional_bimodal_pdf(x.squeeze(), y.squeeze())
+
+    def cdf(self, x, y):
+        return get_conditional_bimodal_cdf(x.squeeze(), y.squeeze())
