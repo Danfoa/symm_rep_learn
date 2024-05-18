@@ -3,7 +3,6 @@ import torch
 
 from NCP.nn.layers import SingularLayer
 from NCP.utils import tonp, frnp, sqrtmh, cross_cov, filter_reduced_rank_svals
-from torch.utils.data import Dataset
 import lightning as L
 from copy import deepcopy
 
@@ -120,11 +119,11 @@ class NCPOperator(Module):
 
     def pdf(self, X, Y_sampling, p_y=lambda x:x, observable=lambda x: x, postprocess=None):
         # observable is a vector to scalar function
-        fY = torch.stack([observable(x_i) for x_i in torch.unbind(Y_sampling, dim=-1)], dim=-1).flatten() # Pytorch equivalent of numpy.apply_along_axis
-        candidates = torch.argsort(fY)
+        fY = torch.stack([observable(x_i) for x_i in torch.unbind(Y_sampling, dim=-1)], dim=-1) # Pytorch equivalent of numpy.apply_along_axis
+        fY_sorted, _ = torch.sort(fY, dim=0)
 
-        pdf = (1 + self.forward(X, Y_sampling, postprocess)) * p_y(fY[candidates])
-        return tonp(fY[candidates].flatten()), tonp(pdf)
+        pdf = (1 + self.forward(X, Y_sampling, postprocess)) * p_y(fY_sorted)
+        return tonp(fY_sorted), tonp(pdf)
 
     def _compute_data_statistics(self, X, Y):
         sigma = torch.sqrt(torch.exp(-self.S.weights ** 2))
@@ -190,7 +189,7 @@ class NCPModule(L.LightningModule):
         loss = self.loss_fn
         l = loss(X, Y, self.model)
         self.log('train_loss', l, on_step=False, on_epoch=True, prog_bar=True)
-        self.train_loss.append(l.detach().cpu().numpy())
+        self.train_loss.append(tonp(l))
 
         return l
 
@@ -200,7 +199,7 @@ class NCPModule(L.LightningModule):
         loss = self.loss_fn
         l = loss(X, Y, self.model)
         self.log('val_loss', l, on_step=False, on_epoch=True, prog_bar=True)
-        self.val_loss.append(l.detach().cpu().numpy())
+        self.val_loss.append(tonp(l))
         return l
 
     def on_fit_end(self):
