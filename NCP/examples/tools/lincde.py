@@ -5,22 +5,22 @@ import pandas as pd
 
 # WARNING: only works for code executed from example folder
 
-def lincde(X, Y, Xtest, ydiscr, verbose='F'):
+def lincde(X, Y, Xtest, ydiscr, verbose='F', folder_location=''):
     # try:
     print(os.getcwd())
-    pd.DataFrame(X).to_csv('temp/xtrain.csv', index=False)
-    pd.DataFrame(Y).to_csv('temp/ytrain.csv', index=False)
-    pd.DataFrame(Xtest).to_csv('temp/xtest.csv', index=False)
-    pd.DataFrame(ydiscr).to_csv('temp/ydiscr.csv', index=False)
+    pd.DataFrame(X).to_csv(folder_location+'temp/xtrain.csv', index=False)
+    pd.DataFrame(Y).to_csv(folder_location+'temp/ytrain.csv', index=False)
+    pd.DataFrame(Xtest).to_csv(folder_location+'temp/xtest.csv', index=False)
+    pd.DataFrame(ydiscr).to_csv(folder_location+'temp/ydiscr.csv', index=False)
 
     os.system(f'Rscript tools/lincde.R {verbose}')
-    Y_pred = pd.read_csv("temp/pdf.csv").to_numpy()
-    Y_discr = pd.read_csv("temp/ys.csv").to_numpy()
-    os.remove("temp/xtrain.csv")
-    os.remove("temp/ytrain.csv")
-    os.remove("temp/xtest.csv")
-    os.remove("temp/ydiscr.csv")
-    os.remove("temp/matrix.csv")
+    Y_pred = pd.read_csv(folder_location+"temp/pdf.csv").to_numpy()
+    Y_discr = pd.read_csv(folder_location+"temp/ys.csv").to_numpy()
+    os.remove(folder_location+"temp/xtrain.csv")
+    os.remove(folder_location+"temp/ytrain.csv")
+    os.remove(folder_location+"temp/xtest.csv")
+    os.remove(folder_location+"temp/ydiscr.csv")
+    os.remove(folder_location+"temp/matrix.csv")
     return(Y_discr, Y_pred)
     # except:
     #     print("lincde failed, try installing R package")

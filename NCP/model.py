@@ -89,7 +89,7 @@ class NCPOperator(Module):
 
         fY = fY.unsqueeze(-1).repeat((1,1,Vy.shape[-1]))
         Vy = Vy.unsqueeze(1).repeat((1, fY.shape[1], 1))
-        Ux = Ux.repeat((1, fY.shape[1], 1))
+        Ux = Ux.unsqueeze(1).repeat((1, fY.shape[1], 1))
 
         Vy_fY = torch.mean(Vy * fY, axis=0)
         sigma_U_fY_VY = sigma * Ux * Vy_fY
