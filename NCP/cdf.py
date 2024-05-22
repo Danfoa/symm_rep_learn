@@ -116,6 +116,7 @@ def integrate_pdf(pdf, values):
     return cumulative_trapezoid(pdf.squeeze(), x=values.squeeze(), initial=0)
 
 def find_best_quantile(x, cdf, alpha):
+    x = x.flatten()
     t0 = 0
     t1 = 1
     best_t0 = 0
@@ -164,7 +165,7 @@ def quantile_regression(model, X, y_discr, alpha=0.01, postprocess='centering', 
     return find_best_quantile(x, cdf, alpha=alpha)
 
 def quantile_regression_from_cdf(x, cdf, alpha):
-    return find_best_quantile(x, cdf, alpha=alpha/2)
+    return find_best_quantile(x, cdf, alpha=alpha)
 
 def compute_coverage(quantiles, values):
     cntr = 0

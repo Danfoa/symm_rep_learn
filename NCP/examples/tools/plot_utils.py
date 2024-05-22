@@ -53,13 +53,4 @@ def plot_expectation(reg, X_train, X_test, Y_train, Y_test, xscaler, yscaler, po
     axes[1].plot(Xs.flatten()[sorted], Xs.flatten()[sorted]**2, 'red')
     axes[1].legend(['data points', 'predicted expectation', 'true expectation'])
     axes[1].set_title(f'Test data (mse = {round(mean_squared_error(Xs**2, yscaler.inverse_transform(pred_test)), 4)})')
-
-    Xs = xscaler.inverse_transform(X_out_of_sample)
-    sorted = np.argsort(Xs.flatten())
-    axes[2].plot(Xs.flatten()[sorted], 
-                yscaler.inverse_transform(pred_oos).flatten()[sorted], 'b', alpha=0.5)
-    axes[2].plot(Xs.flatten()[sorted], Xs.flatten()[sorted]**2, 'red')
-    axes[2].legend(['predicted expectation', 'true expectation'])
-    axes[2].set_title(f'Out of sample data (mse = {round(mean_squared_error(Xs**2, yscaler.inverse_transform(pred_oos)), 4)})')
-
     plt.show()
