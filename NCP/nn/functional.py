@@ -37,7 +37,7 @@ def cme_score_cov(X:torch.Tensor, Y:torch.Tensor, NCP:NCPOperator, gamma:float):
     cov_U1V1 = cross_cov(U1.T, V1.T, centered=True)
     cov_U2V2 = cross_cov(U2.T, V2.T, centered=True)
 
-    loss = (0.5 * (torch.trace(cov_U1@cov_V2) + torch.trace(cov_U2@cov_V1))
+    loss = (0.5 * (torch.sum(cov_U1*cov_V2) + torch.sum(cov_U2*cov_V1))
             - torch.trace(cov_U1V1) - torch.trace(cov_U2V2))
 
     if gamma > 0:
@@ -54,8 +54,8 @@ def cme_score_cov(X:torch.Tensor, Y:torch.Tensor, NCP:NCPOperator, gamma:float):
         uc_cov_V2 = cov_V2 + V2_mean @ V2_mean.T
 
         loss_on = 0.5 * (
-                torch.trace(uc_cov_U1@uc_cov_U2) - torch.trace(uc_cov_U1) - torch.trace(uc_cov_U2)
-                + torch.trace(uc_cov_V1@uc_cov_V2) - torch.trace(uc_cov_V1) - torch.trace(uc_cov_V2)
+                torch.sum(uc_cov_U1*uc_cov_U2) - torch.trace(uc_cov_U1) - torch.trace(uc_cov_U2)
+                + torch.sum(uc_cov_V1*uc_cov_V2) - torch.trace(uc_cov_V1) - torch.trace(uc_cov_V2)
         ) + d
         return loss + gamma * loss_on
     else:
