@@ -1,5 +1,5 @@
 import torch
-from NCP.nn.functional import cme_score_cov, cme_score_Ustat
+from NCP.nn.functional import cme_score_cov, cme_score_Ustat, cme_score_opti
 from NCP.nn.layers import SingularLayer
 from NCP.model import NCPOperator
 from NCP.nn.diffusion_conditional import DDPM
@@ -39,7 +39,7 @@ class CMELoss():
             S (SingularLayer): .
         """
         if self.mode == "split":
-            return cme_score_cov(X, Y, NCP, self.gamma)
+            return cme_score_opti(X, Y, NCP, self.gamma)
         else:
             return cme_score_Ustat(X, Y, NCP, self.metric_deformation, self.center)
         

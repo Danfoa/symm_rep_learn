@@ -60,6 +60,33 @@ def cme_score_cov(X:torch.Tensor, Y:torch.Tensor, NCP:NCPOperator, gamma:float):
         return loss + gamma * loss_on
     else:
         return loss
+    
+
+def cme_score_opti(X:torch.Tensor, Y:torch.Tensor, NCP:NCPOperator, gamma:float):
+    X1, X2, Y1, Y2 = random_split(X, Y, 2)
+    U1 = NCP.U(X1)
+    U2 = NCP.U(X2)
+    V1 = NCP.V(Y1)
+    V2 = NCP.V(Y2)
+
+    l1 = 0.5 * (U1 * NCP.S(V2)).sum(dim=1) ** 2
+    l2 = 0.5 * (U2 * NCP.S(V1)).sum(dim=1) ** 2
+    l3 = ((U1 - U2) * NCP.S(V1 - V2)).sum(dim=1)
+
+    L = torch.mean(l1 + l2 - l3)
+
+    if gamma > 0 :
+        r1 = (U1 * U2).sum(dim=1)**2
+        r2 = ((U1 - U2)**2).sum(dim=1)
+        r3 = (V1 * V2).sum(dim=1)**2
+        r4 = ((V1 - V2)**2).sum(dim=1)
+        r5 = 2*U1.shape[1]
+
+        R = torch.mean(r1 - r2 + r3 - r4 + r5)
+
+        return L + gamma * R
+
+    return L
 
 def cme_score_Ustat(
         X: torch.Tensor,
