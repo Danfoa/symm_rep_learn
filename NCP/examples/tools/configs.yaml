@@ -1,0 +1,42 @@
+# Data generation parameters
+rng_seed: 42
+eta: 0.05
+classes: 5
+train_samples: 1001
+test_samples: 1001
+val_ratio: 0.2
+
+# experiment parameters
+eval_up_to_t: 15
+n_repits: 10
+delta: 0.05
+data_path: ''
+
+# Model parameters
+reduced_rank: True
+dpnet_max_epochs: 50
+dpnet_lr: 0.0009 
+dpnet_metric_deformation: 1
+dpnet_center_covariances: False
+dpnet_relaxed: False
+
+# Oracle parameters
+conv1_out_channels: 16
+conv1_kernel_size: 5
+conv1_stride: 1
+conv1_padding: 2
+
+maxpool1_kernel_size: 2
+
+conv2_out_channels: 32
+conv2_kernel_size: 5
+conv2_stride: 1
+conv2_padding: 2
+
+maxpool2_kernel_size: 2
+
+fc_input_size: 1568 # 32 * 7 * 7
+
+oracle_epochs: 20
+oracle_lr: 0.01
+oracle_batch_size: 64
