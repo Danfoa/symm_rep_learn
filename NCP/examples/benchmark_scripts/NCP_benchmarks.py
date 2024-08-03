@@ -43,63 +43,66 @@ def run_experiment(density_simulator, density_simulator_kwargs):
         results_df = pd.DataFrame()
 
     for n in tqdm(n_training_samples, desc='Training samples', total=len(n_training_samples)):
-        density = density_simulator(**density_simulator_kwargs)
-        X, Y = density.simulate(n_samples=n_training_samples[-1] + n_val)
-        if density_simulator().__class__.__name__ == "ArmaJump":
-            np.random.seed(density_simulator_kwargs['random_seed'])
-            idx = np.random.permutation(len(X))
-            X, Y = X[idx], Y[idx]
-        if X.ndim == 1:
-            X = X.reshape((-1, 1))
-        if Y.ndim == 1:
-            Y = Y.reshape((-1, 1))
-        X_train, X_val, Y_train, Y_val = X[:n], X[-n_val:], Y[:n], Y[-n_val:]
-        xscaler = StandardScaler()
-        yscaler = StandardScaler()
-        X_train = xscaler.fit_transform(X_train)
-        Y_train = yscaler.fit_transform(Y_train)
-        X_val = xscaler.transform(X_val)
-        Y_val = yscaler.transform(Y_val)
-
-        X_train_torch = frnp(X_train)
-        Y_train_torch = frnp(Y_train)
-        X_val_torch = frnp(X_val)
-        Y_val_torch = frnp(Y_val)
-
-        U_operator_kwargs = {
-            'input_shape': X_train.shape[-1],
-            'output_shape': 100,
-            'n_hidden': 2,
-            'layer_size': 64,
-            'dropout': 0,
-            'iterative_whitening': False,
-            'activation': GELU
-        }
-
-        V_operator_kwargs = {
-            'input_shape': Y_train.shape[-1],
-            'output_shape': 100,
-            'n_hidden': 2,
-            'layer_size': 64,
-            'dropout': 0,
-            'iterative_whitening': False,
-            'activation': GELU
-        }
-
-        optimizer_kwargs = {
-            'lr': lr
-        }
-
-        loss_kwargs = {
-            'mode': 'split',
-            'gamma': gamma
-        }
 
         for seed in tqdm(range(10), desc='Seed', total=10):
             print(f'Running with {n} samples - seed {seed}')
             if len(results_df) > 0:
                 if len(results_df[(results_df['n_samples'] == n) & (results_df['seed'] == seed)]) > 0:
                     continue
+
+            density_simulator_kwargs['random_seed'] = seed
+            density = density_simulator(**density_simulator_kwargs)
+            X, Y = density.simulate(n_samples=n_training_samples[-1] + n_val)
+            if density_simulator().__class__.__name__ == "ArmaJump":
+                np.random.seed(density_simulator_kwargs['random_seed'])
+                idx = np.random.permutation(len(X))
+                X, Y = X[idx], Y[idx]
+            if X.ndim == 1:
+                X = X.reshape((-1, 1))
+            if Y.ndim == 1:
+                Y = Y.reshape((-1, 1))
+            X_train, X_val, Y_train, Y_val = X[:n], X[-n_val:], Y[:n], Y[-n_val:]
+            xscaler = StandardScaler()
+            yscaler = StandardScaler()
+            X_train = xscaler.fit_transform(X_train)
+            Y_train = yscaler.fit_transform(Y_train)
+            X_val = xscaler.transform(X_val)
+            Y_val = yscaler.transform(Y_val)
+
+            X_train_torch = frnp(X_train)
+            Y_train_torch = frnp(Y_train)
+            X_val_torch = frnp(X_val)
+            Y_val_torch = frnp(Y_val)
+
+            U_operator_kwargs = {
+                'input_shape': X_train.shape[-1],
+                'output_shape': 100,
+                'n_hidden': 2,
+                'layer_size': 64,
+                'dropout': 0,
+                'iterative_whitening': False,
+                'activation': GELU
+            }
+
+            V_operator_kwargs = {
+                'input_shape': Y_train.shape[-1],
+                'output_shape': 100,
+                'n_hidden': 2,
+                'layer_size': 64,
+                'dropout': 0,
+                'iterative_whitening': False,
+                'activation': GELU
+            }
+
+            optimizer_kwargs = {
+                'lr': lr
+            }
+
+            loss_kwargs = {
+                'mode': 'cov',
+                'gamma': gamma
+            }
+
 
             L.seed_everything(seed)
 
@@ -206,7 +209,7 @@ def run_experiment(density_simulator, density_simulator_kwargs):
 
             results = pd.DataFrame(results)
             results_df = pd.concat([results_df, results], ignore_index=True)
-            results_df.to_pickle(filename)
+            results_df.to_pickle('results/' + filename)
 
 if __name__ == '__main__':
     random_seed = 42

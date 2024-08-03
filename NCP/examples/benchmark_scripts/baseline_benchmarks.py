@@ -28,20 +28,17 @@ def reset_keras():
     sess = get_session()
     clear_session()
     sess.close()
-    sess = get_session()
-
     try:
-        del model # this is from global space - change this as you need
+        del model
     except:
         pass
-
-    # print(gc.collect()) # if it does something you should see a number as output
 
     # use the same config as you used to create the session
     config = tf.ConfigProto()
     config.gpu_options.per_process_gpu_memory_fraction = 1
     config.gpu_options.visible_device_list = "0"
     set_session(tf.Session(config=config))
+
 def run_experiment(density_estimator, density_estimator_kwargs, density_simulator, density_simulator_kwargs):
     filename = density_simulator().__class__.__name__ + '_' + density_estimator.__name__ + '_results.pkl'
     n_training_samples = [100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000]
@@ -52,33 +49,31 @@ def run_experiment(density_estimator, density_estimator_kwargs, density_simulato
         results_df = pd.DataFrame()
 
     for n in tqdm(n_training_samples, desc='Training samples', total=len(n_training_samples)):
-        density = density_simulator(**density_simulator_kwargs)
-        X, Y = density.simulate(n_samples=n_training_samples[-1] + n_val)
-        if density_simulator().__class__.__name__ == "ArmaJump":
-            np.random.seed(density_simulator_kwargs['random_seed'])
-            idx = np.random.permutation(len(X))
-            X, Y = X[idx], Y[idx]
-        if X.ndim == 1:
-            X = X.reshape((-1, 1))
-        if Y.ndim == 1:
-            Y = Y.reshape((-1, 1))
-        X_train, X_val, Y_train, Y_val = X[:n], X[-n_val:], Y[:n], Y[-n_val:]
-        xscaler = StandardScaler()
-        yscaler = StandardScaler()
-        X_train = xscaler.fit_transform(X_train)
-        Y_train = yscaler.fit_transform(Y_train)
-        X_val = xscaler.transform(X_val)
-        Y_val = yscaler.transform(Y_val)
-
         random_seeds = np.arange(10)
-        if density_estimator.__name__ in ['NeighborKernelDensityEstimation', 'ConditionalKernelDensityEstimation']:
-            random_seeds = [0]
         for seed in tqdm(random_seeds, desc='Seed', total=len(random_seeds)):
             if len(results_df) > 0:
                 if len(results_df[(results_df['n_samples'] == n) & (results_df['seed'] == seed)]) > 0:
                     continue
 
-            # print(f'Running with {n} samples - seed {seed}')
+            print(f'Running with {n} samples - seed {seed}')
+            density_simulator_kwargs['random_seed'] = seed
+            density = density_simulator(**density_simulator_kwargs)
+            X, Y = density.simulate(n_samples=n_training_samples[-1] + n_val)
+            if density_simulator().__class__.__name__ == "ArmaJump":
+                np.random.seed(density_simulator_kwargs['random_seed'])
+                idx = np.random.permutation(len(X))
+                X, Y = X[idx], Y[idx]
+            if X.ndim == 1:
+                X = X.reshape((-1, 1))
+            if Y.ndim == 1:
+                Y = Y.reshape((-1, 1))
+            X_train, X_val, Y_train, Y_val = X[:n], X[-n_val:], Y[:n], Y[-n_val:]
+            xscaler = StandardScaler()
+            yscaler = StandardScaler()
+            X_train = xscaler.fit_transform(X_train)
+            Y_train = yscaler.fit_transform(Y_train)
+            X_val = xscaler.transform(X_val)
+            Y_val = yscaler.transform(Y_val)
 
             density_estimator_kwargs['random_seed'] = seed
             density_estimator_kwargs['ndim_x'] = density.ndim_x
@@ -145,7 +140,7 @@ def run_experiment(density_estimator, density_estimator_kwargs, density_simulato
 
                 result = pd.DataFrame(result)
                 results_df = pd.concat([results_df, result], ignore_index=True)
-                results_df.to_pickle(filename)
+                results_df.to_pickle('results/'+filename)
 
             # resetting keras
             reset_keras()
@@ -187,20 +182,10 @@ if __name__ == '__main__':
 
     if args.model == 'KMN':
         density_estimator = KernelMixtureNetwork
-        # density_estimator_kwargs = {'name': 'kmn', 'x_noise_std': 0.2, 'y_noise_std': 0.1}
         density_estimator_kwargs = {'name': 'kmn', 'x_noise_std': 0.2, 'y_noise_std': 0.1, 'hidden_sizes': (64, 64),
                                     'hidden_nonlinearity': tf.nn.relu, 'n_training_epochs': int(1e5)}
-    elif args.model == 'NFlow':
-        density_estimator = NormalizingFlowEstimator
-        # density_estimator_kwargs = {'name': 'nflow', 'hidden_sizes': (32, 32), 'hidden_nonlinearity': tf.nn.tanh,
-        #                             'n_training_epochs': int(5e3)}
-        density_estimator_kwargs = {'name': 'nflow', 'hidden_sizes': (64, 64), 'hidden_nonlinearity': tf.nn.relu,
-                                    'n_training_epochs': int(1e5)}
-        # density_estimator_kwargs = {'name': 'nflow', 'hidden_sizes': (32, 32), 'hidden_nonlinearity': tf.tanh}
-        # density_estimator_kwargs = {'name': 'nflow', 'hidden_sizes': (16, 16), 'hidden_nonlinearity': tf.tanh}
     elif args.model == 'MDN':
         density_estimator = MixtureDensityNetwork
-        # density_estimator_kwargs = {'name': 'mdn', 'x_noise_std': 0.2, 'y_noise_std': 0.1}
         density_estimator_kwargs = {'name': 'mdn', 'x_noise_std': 0.2, 'y_noise_std': 0.1, 'hidden_sizes': (64, 64),
                                     'hidden_nonlinearity': tf.nn.relu, 'n_training_epochs': int(1e5)}
     elif args.model == 'LSCDE':
