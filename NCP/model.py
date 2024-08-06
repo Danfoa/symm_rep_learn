@@ -96,14 +96,18 @@ class NCPOperator(Module):
 
         return tonp(bias + val)
 
-    def cdf(self, X, Y_sampling, observable=lambda x: x, postprocess=None):
+    def cdf(self, X, Y_sampling, probas=None, observable=lambda x: x, postprocess=None):
+        # for continious, sample Y_sampling
         X = ensure_torch(X)
         Y_sampling = ensure_torch(Y_sampling)
 
         # observable is a vector to scalar function
         fY = torch.stack([observable(y_i) for y_i in torch.unbind(Y_sampling, dim=-1)], dim=-1).flatten() # Pytorch equivalent of numpy.apply_along_axis
         candidates = torch.argsort(fY)
-        probas = torch.cumsum(torch.ones(fY.shape[0]), -1) / fY.shape[0]  # vector of [k/n], k \in [n]
+        if probas is None:
+            emp_cdf = torch.cumsum(torch.ones(fY.shape[0]), -1) / fY.shape[0]  # vector of [k/n], k \in [n]
+        else:
+            emp_cdf = np.cumsum(probas)
 
         Ux, sigma, Vy = self.postprocess_UV(X, Y_sampling, postprocess)
         Ux = Ux.flatten()
@@ -113,7 +117,7 @@ class NCPOperator(Module):
         for i, val in enumerate(fY[candidates]):
             Ify = torch.outer((fY <= val), torch.ones(Vy.shape[1]))  # indicator function of fY < fY[i], put into shape (n_sample, latent_dim)
             EVyFy = torch.mean(Vy * Ify, axis=0)  # for all latent dim, compute E (Vy * fY)
-            cdf[i] = probas[i] + torch.sum(sigma * Ux * EVyFy)
+            cdf[i] = emp_cdf[i] + torch.sum(sigma * Ux * EVyFy)
 
         return tonp(fY[candidates].flatten()), tonp(cdf)
 
