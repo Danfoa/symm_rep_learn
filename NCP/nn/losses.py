@@ -18,13 +18,13 @@ class CMELoss():
         Args:
             gamma (float): penalisation parameter.
         """
-        available_modes = ["split", "U_stat"]
+        available_modes = ["split", "cov", "U_stat"]
         if mode not in available_modes:
             raise ValueError(f"Unknown mode {mode}. Available modes are {available_modes}")
         else:
             self.mode = mode
 
-        if mode == "split":
+        if self.mode in ["split", "cov"]:
             self.gamma = gamma
         else:
             self.metric_deformation = metric_deformation
@@ -40,6 +40,8 @@ class CMELoss():
         """
         if self.mode == "split":
             return cme_score_opti(X, Y, NCP, self.gamma)
+        if self.mode == "cov":
+            return cme_score_cov(X, Y, NCP, self.gamma)
         else:
             return cme_score_Ustat(X, Y, NCP, self.metric_deformation, self.center)
         
@@ -64,3 +66,18 @@ class NFLoss():
     
     def __call__(self, X:torch.Tensor, Y:torch.Tensor, model: MultiscaleFlow):
         return model.forward_kld(Y, X)
+
+
+class KMNLoss():
+    def __init__(self,
+                 mode: str = "split",
+                 gamma: float = 0.,
+                 metric_deformation: float = 1.0,
+                 center: bool = True):
+        pass
+
+    def __call__(self, X, Y, model):
+        out = model(X)
+        weights = out[:, 0:-1]
+        sigma = torch.unsqueeze(out[:, -1], dim=1)
+        return model.mdn_loss_function(weights, sigma, Y)
