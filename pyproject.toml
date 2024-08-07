@@ -12,9 +12,7 @@ readme = "README.md"
 requires-python = ">=3.6"
 
 authors = [
-  {name = "Pietro Novelli", email = "pietronvll@gmail.com" },
-  {name = "Grégroire Pacreau", email = "gregoire.pacreau@polytechnique.edu"},
-  {name = "Giacomo Turri", email = "giacomo.turri@iit.it"}
+
 ]
 dependencies = [
   "torch"
