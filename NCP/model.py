@@ -100,6 +100,7 @@ class NCPOperator(Module):
         # for continious, sample Y_sampling
         X = ensure_torch(X)
         Y_sampling = ensure_torch(Y_sampling)
+        probas = ensure_torch(probas)
 
         # observable is a vector to scalar function
         fY = torch.stack([observable(y_i) for y_i in torch.unbind(Y_sampling, dim=-1)], dim=-1).flatten() # Pytorch equivalent of numpy.apply_along_axis
@@ -107,7 +108,7 @@ class NCPOperator(Module):
         if probas is None:
             emp_cdf = torch.cumsum(torch.ones(fY.shape[0]), -1) / fY.shape[0]  # vector of [k/n], k \in [n]
         else:
-            emp_cdf = np.cumsum(probas)
+            emp_cdf = torch.cumsum(probas)
 
         Ux, sigma, Vy = self.postprocess_UV(X, Y_sampling, postprocess)
         Ux = Ux.flatten()
