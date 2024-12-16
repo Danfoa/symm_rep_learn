@@ -1,9 +1,9 @@
 from contextlib import contextmanager
 
-from NCP.cde_fork.utils.serializable import Serializable
-from NCP.cde_fork.utils.tf_utils.tensor_utils import flatten_tensors, unflatten_tensors
 import tensorflow as tf
 
+from NCP.cde_fork.utils.serializable import Serializable
+from NCP.cde_fork.utils.tf_utils.tensor_utils import flatten_tensors, unflatten_tensors
 
 load_params = True
 
@@ -24,14 +24,12 @@ class Parameterized(object):
         self._cached_assign_placeholders = {}
 
     def get_params_internal(self, **tags):
-        """
-        Internal method to be implemented which does not perform caching
+        """Internal method to be implemented which does not perform caching
         """
         raise NotImplementedError
 
     def _get_params(self, **tags):
-        """
-        Get the list of parameters, filtered by the provided tags.
+        """Get the list of parameters, filtered by the provided tags.
         Some common tags include 'regularizable' and 'trainable'
         """
         tag_tuple = tuple(sorted(list(tags.items()), key=lambda x: x[0]))

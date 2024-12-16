@@ -1,7 +1,8 @@
 import os
 import pickle
-import pandas as pd
 from datetime import datetime
+
+import pandas as pd
 
 
 def store_dataframe(dataframe, output_dir, file_name=None):
@@ -63,7 +64,7 @@ def get_full_path(output_dir, suffix=".pickle", file_name=None):
 
 
 def load_time_series_csv(file_path, delimiter=',', time_format=None, time_columns=None):
-  """ Loads a .csv time series file (e.g. EuroStoxx50) as a pandas dataframe and applies some basic formatting.
+  """Loads a .csv time series file (e.g. EuroStoxx50) as a pandas dataframe and applies some basic formatting.
   The basic formatting includes:
   a) if no time column is available in the .csv, calling this function sorts the data according to the first column
   b) if a time column is available (i.e. some column containing the string 'time'), the function tries to re-arrange the column into an

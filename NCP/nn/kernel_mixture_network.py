@@ -2,15 +2,15 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+from sklearn.cluster import AgglomerativeClustering, KMeans
 from torch.autograd import Variable
-from sklearn.cluster import KMeans, AgglomerativeClustering
-from NCP.utils import to_np, from_np
+
+from NCP.utils import from_np, to_np
+
 
 def sample_center_points(y, method='all', k=100, keep_edges=False):
+    """Function to define kernel centers with various downsampling alternatives
     """
-    function to define kernel centers with various downsampling alternatives
-    """
-
     # make sure y is 1D
     y = to_np(y)
     y = y.ravel()

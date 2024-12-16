@@ -1,5 +1,6 @@
-from tqdm import tqdm
 import lightning as L
+from tqdm import tqdm
+
 
 # Class for preventing the wall of text
 # https://github.com/Lightning-AI/pytorch-lightning/issues/15283

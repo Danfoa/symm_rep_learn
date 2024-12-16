@@ -1,8 +1,9 @@
-from urllib.request import urlretrieve
 import os
-import pandas as pd
-import numpy as np
 from datetime import datetime
+from urllib.request import urlretrieve
+
+import numpy as np
+import pandas as pd
 
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../data'))
 
@@ -165,7 +166,7 @@ class NCYTaxiDropoffPredict(Dataset):
         if not os.path.isfile(data_file_path_processed):
             df = super(NCYTaxiDropoffPredict, self).get_df().dropna()
             print("save processed NYC data as csv to %s" % data_file_path_processed)
-            df.to_csv(data_file_path_processed)            
+            df.to_csv(data_file_path_processed)
 
         print("loading %s" % data_file_path_processed)
         df = pd.read_csv(data_file_path_processed)

@@ -1,10 +1,11 @@
-import scipy.stats as stats
 import numpy as np
+import scipy.stats as stats
+
 from .BaseConditionalDensitySimulation import BaseConditionalDensitySimulation
 
 
 class ArmaJump(BaseConditionalDensitySimulation):
-  """ AR(1) model with jump component
+  """AR(1) model with jump component
 
   Args:
     c: constant return component of AR(1)
@@ -41,7 +42,7 @@ class ArmaJump(BaseConditionalDensitySimulation):
     self.can_sample = True
 
   def pdf(self, X, Y):
-    """ Conditional probability density function p(y|x) of the underlying probability model
+    """Conditional probability density function p(y|x) of the underlying probability model
 
     Args:
       X: x to be conditioned on - numpy array of shape (n_points, ndim_x)
@@ -56,22 +57,22 @@ class ArmaJump(BaseConditionalDensitySimulation):
            self.jump_prob * stats.norm.pdf(Y - (mean + self.jump_mean), scale=2*self.std).flatten()
 
   def cdf(self, X, Y):
-    """ Conditional cumulated probability density function P(Y < y | x) of the underlying probability model
+    """Conditional cumulated probability density function P(Y < y | x) of the underlying probability model
 
-        Args:
-          X: x to be conditioned on - numpy array of shape (n_points, ndim_x)
-          Y: y target values for witch the cdf shall be evaluated - numpy array of shape (n_points, ndim_y)
+    Args:
+      X: x to be conditioned on - numpy array of shape (n_points, ndim_x)
+      Y: y target values for witch the cdf shall be evaluated - numpy array of shape (n_points, ndim_y)
 
-        Returns:
-         P(Y < y | x) cumulated density values for the provided X and Y - numpy array of shape (n_points, )
-        """
+    Returns:
+     P(Y < y | x) cumulated density values for the provided X and Y - numpy array of shape (n_points, )
+    """
     X, Y = self._handle_input_dimensionality(X, Y)
     mean = self.arma_c * (1 - self.arma_a1) + self.arma_a1 * X
     return (1-self.jump_prob) * stats.norm.cdf(Y - mean, scale=self.std).flatten() + \
            self.jump_prob * stats.norm.cdf(Y - (mean + self.jump_mean), scale=2*self.std).flatten()
 
   def simulate_conditional(self, X):
-    """ Draws random samples from the conditional distribution
+    """Draws random samples from the conditional distribution
 
     Args:
       X: x to be conditioned on when drawing a sample from y ~ p(y|x) - numpy array of shape (n_samples, ndim_x)
@@ -90,13 +91,13 @@ class ArmaJump(BaseConditionalDensitySimulation):
     return X, np.select([jump_bernoulli, np.bitwise_not(jump_bernoulli)], [y_jump, y_ar])
 
   def simulate(self, x_0=0, n_samples=1000, burn_in=100):
-    """ Draws random samples from the unconditional distribution p(x,y)
+    """Draws random samples from the unconditional distribution p(x,y)
 
-       Args:
-         n_samples: (int) number of samples to be drawn from the conditional distribution
+    Args:
+      n_samples: (int) number of samples to be drawn from the conditional distribution
 
-       Returns:
-         (X,Y) - random samples drawn from p(x,y) - numpy arrays of shape (n_samples, ndim_x) and (n_samples, ndim_y)
+    Returns:
+      (X,Y) - random samples drawn from p(x,y) - numpy arrays of shape (n_samples, ndim_x) and (n_samples, ndim_y)
     """
     self.eps = self.random_state.normal(scale=self.std, size=n_samples + burn_in + 1)
 
@@ -112,14 +113,13 @@ class ArmaJump(BaseConditionalDensitySimulation):
     return x[burn_in:n_samples + burn_in], x[burn_in+1:n_samples + burn_in + 1]
 
   def mean_(self, x_cond, n_samples=None):
-    """ Conditional mean of the distribution
+    """Conditional mean of the distribution
     Args:
       x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
 
     Returns:
       Means E[y|x] corresponding to x_cond - numpy array of shape (n_values, ndim_y)
     """
-
     means = np.zeros((x_cond.shape[0], self.ndim_y))
     for i in range(x_cond.shape[0]):
       mean = self.arma_c * (1 - self.arma_a1) + self.arma_a1 * x_cond[i]
@@ -127,15 +127,14 @@ class ArmaJump(BaseConditionalDensitySimulation):
     return means
 
   def covariance(self, x_cond, n_samples=None):
-    """ Covariance of the distribution conditioned on x_cond
+    """Covariance of the distribution conditioned on x_cond
 
-      Args:
-        x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
+    Args:
+      x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
 
-      Returns:
-        Covariances Cov[y|x] corresponding to x_cond - numpy array of shape (n_values, ndim_y, ndim_y)
+    Returns:
+      Covariances Cov[y|x] corresponding to x_cond - numpy array of shape (n_values, ndim_y, ndim_y)
     """
-
     covs=np.zeros((x_cond.shape[0], self.ndim_y, self.ndim_y))
     for i in range(x_cond.shape[0]):
       c1 = self.jump_prob * self.jump_std ** 2 + (1-self.jump_prob) * self.std ** 2

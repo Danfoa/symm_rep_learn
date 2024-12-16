@@ -1,11 +1,10 @@
 import matplotlib as mpl
 
 mpl.use("PS")  # handles X11 server detection (required to run on console)
+
 import numpy as np
-import types
-from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
+
 from NCP.cde_fork.evaluation.simulation_eval import base_experiment
-from ml_logger import logger
 
 EXP_PREFIX = 'question7_regularization_logprob'
 RESULTS_FILE = 'results.pkl'
@@ -248,5 +247,5 @@ def question7():
 
 if __name__ == '__main__':
     estimator_params, simulators_params, observations = question7()
-    load = base_experiment.launch_logprob_experiment(estimator_params, simulators_params, observations, EXP_PREFIX, 
+    load = base_experiment.launch_logprob_experiment(estimator_params, simulators_params, observations, EXP_PREFIX,
                                                      n_seeds=5, n_test_samples=2*10**5)

@@ -1,5 +1,6 @@
 import matplotlib as mpl
 import numpy as np
+
 mpl.use("PS") #handles X11 server detection (required to run on console)
 
 from NCP.cde_fork.evaluation.simulation_eval import base_experiment

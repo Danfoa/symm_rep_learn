@@ -2,37 +2,38 @@ import numpy as np
 import tensorflow as tf
 
 import NCP.cde_fork.utils.tf_utils.layers as L
+from NCP.cde_fork.utils.serializable import Serializable
+from NCP.cde_fork.utils.tf_utils.adamW import AdamWOptimizer
 from NCP.cde_fork.utils.tf_utils.layers_powered import LayersPowered
 from NCP.cde_fork.utils.tf_utils.network import MLP
-from NCP.cde_fork.utils.tf_utils.adamW import AdamWOptimizer
+
 from .BaseNNEstimator import BaseNNEstimator
 from .normalizing_flows import FLOWS
-from NCP.cde_fork.utils.serializable import Serializable
 
 
 class NormalizingFlowEstimator(BaseNNEstimator):
-    """ Normalizing Flow Estimator
+    """Normalizing Flow Estimator
 
-        Args:
-            name: (str) name space of the network (should be unique in code, otherwise tensorflow namespace collisions may arise)
-            ndim_x: (int) dimensionality of x variable
-            ndim_y: (int) dimensionality of y variable
-            flows_type: (tuple of strings) The chain of individual flows that together make up the full flow. The
-                        individual flows can be any of: *affine*, *planar*, *radial*, *identity*. They will be applied in order
-                        going from the base distribution to the transformed distribution.
-            n_flows: (int) number of radial flows - if flows_type is set, this parameter is ignored
-            hidden_sizes: (tuple of int) sizes of the hidden layers of the neural network
-            hidden_nonlinearity: (tf function) nonlinearity of the hidden layers
-            n_training_epochs: (int) Number of epochs for training
-            x_noise_std: (optional) standard deviation of Gaussian noise over the the training data X -> regularization through noise
-            y_noise_std: (optional) standard deviation of Gaussian noise over the the training data Y -> regularization through noise
-            adaptive_noise_fn: (callable) that takes the number of samples and the data dimensionality as arguments and returns
-                                   the noise std as float - if used, the x_noise_std and y_noise_std have no effect
-            weight_decay: (float) the amount of decoupled (http://arxiv.org/abs/1711.05101) weight decay to apply
-            weight_normalization: (boolean) whether weight normalization shall be used for the neural network
-            data_normalization: (boolean) whether to normalize the data (X and Y) to exhibit zero-mean and uniform-std
-            dropout: (float) the probability of switching off nodes during training
-            random_seed: (optional) seed (int) of the random number generators used
+    Args:
+        name: (str) name space of the network (should be unique in code, otherwise tensorflow namespace collisions may arise)
+        ndim_x: (int) dimensionality of x variable
+        ndim_y: (int) dimensionality of y variable
+        flows_type: (tuple of strings) The chain of individual flows that together make up the full flow. The
+                    individual flows can be any of: *affine*, *planar*, *radial*, *identity*. They will be applied in order
+                    going from the base distribution to the transformed distribution.
+        n_flows: (int) number of radial flows - if flows_type is set, this parameter is ignored
+        hidden_sizes: (tuple of int) sizes of the hidden layers of the neural network
+        hidden_nonlinearity: (tf function) nonlinearity of the hidden layers
+        n_training_epochs: (int) Number of epochs for training
+        x_noise_std: (optional) standard deviation of Gaussian noise over the the training data X -> regularization through noise
+        y_noise_std: (optional) standard deviation of Gaussian noise over the the training data Y -> regularization through noise
+        adaptive_noise_fn: (callable) that takes the number of samples and the data dimensionality as arguments and returns
+                               the noise std as float - if used, the x_noise_std and y_noise_std have no effect
+        weight_decay: (float) the amount of decoupled (http://arxiv.org/abs/1711.05101) weight decay to apply
+        weight_normalization: (boolean) whether weight normalization shall be used for the neural network
+        data_normalization: (boolean) whether to normalize the data (X and Y) to exhibit zero-mean and uniform-std
+        dropout: (float) the probability of switching off nodes during training
+        random_seed: (optional) seed (int) of the random number generators used
     """
 
     def __init__(self, name, ndim_x, ndim_y, flows_type=None, n_flows=10, hidden_sizes=(16, 16),
@@ -100,15 +101,13 @@ class NormalizingFlowEstimator(BaseNNEstimator):
         self._build_model()
 
     def fit(self, X, Y, random_seed=None, verbose=True, eval_set=None, **kwargs):
-        """
-        Fit the model with to the provided data
+        """Fit the model with to the provided data
 
         :param X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
         :param Y: numpy array of y targets - shape: (n_samples, n_dim_y)
         :param eval_set: (tuple) eval/test dataset - tuple (X_test, Y_test)
         :param verbose: (boolean) controls the verbosity of console output
         """
-
         X, Y = self._handle_input_dimensionality(X, Y, fitting=True)
 
         if eval_set:
@@ -139,8 +138,7 @@ class NormalizingFlowEstimator(BaseNNEstimator):
         self.fitted = True
 
     def reset_fit(self):
-        """
-        Resets all tensorflow objects and enables this model to be fitted anew
+        """Resets all tensorflow objects and enables this model to be fitted anew
         """
         tf.reset_default_graph()
         self._build_model()
@@ -169,8 +167,7 @@ class NormalizingFlowEstimator(BaseNNEstimator):
         }
 
     def _build_model(self):
-        """
-        implementation of the flow model
+        """Implementation of the flow model
         """
         with tf.variable_scope(self.name):
             # adds placeholders, data normalization and data noise to graph as desired. Also sets up a placeholder

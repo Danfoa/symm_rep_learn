@@ -1,10 +1,10 @@
 import tensorflow as tf
+
 from .BaseNormalizingFlow import BaseNormalizingFlow
 
 
 class InvertedRadialFlow(BaseNormalizingFlow):
-    """
-    Implements a bijector x = y + (alpha * beta * (y - y_0)) / (alpha + abs(y - y_0)).
+    """Implements a bijector x = y + (alpha * beta * (y - y_0)) / (alpha + abs(y - y_0)).
 
     Args:
         params: Tensor shape (?, n_dims+2). This will be split into the parameters
@@ -19,8 +19,7 @@ class InvertedRadialFlow(BaseNormalizingFlow):
     _gamma = None
 
     def __init__(self, params, n_dims, validate_args=False, name='InvertedRadialFlow'):
-        """
-        Parameter shapes (assuming you're transforming a distribution over d-space):
+        """Parameter shapes (assuming you're transforming a distribution over d-space):
 
         shape alpha = (?, 1)
         shape beta = (?, 1)
@@ -40,8 +39,7 @@ class InvertedRadialFlow(BaseNormalizingFlow):
 
     @staticmethod
     def get_param_size(n_dims):
-        """
-        :param n_dims:  The dimension of the distribution to be transformed by the flow
+        """:param n_dims:  The dimension of the distribution to be transformed by the flow
         :return: (int) The dimension of the parameter space for the flow
         """
         return 1 + 1 + n_dims
@@ -53,8 +51,7 @@ class InvertedRadialFlow(BaseNormalizingFlow):
         return 1. / (self._alpha + r)
 
     def _inverse(self, z):
-        """
-        Runs a forward pass through the bijector
+        """Runs a forward pass through the bijector
         """
         z = InvertedRadialFlow._handle_input_dimensionality(z)
         r = self._r(z)
@@ -62,8 +59,7 @@ class InvertedRadialFlow(BaseNormalizingFlow):
         return z + (self._alpha * self._beta * h) * (z - self._gamma)
 
     def _ildj(self, z):
-        """
-        Computes the ln of the absolute determinant of the jacobian
+        """Computes the ln of the absolute determinant of the jacobian
         """
         z = InvertedRadialFlow._handle_input_dimensionality(z)
         r = self._r(z)
@@ -75,21 +71,18 @@ class InvertedRadialFlow(BaseNormalizingFlow):
 
     @staticmethod
     def _alpha_circ(alpha):
-        """
-        Method for constraining the alpha parameter to meet the invertibility requirements
+        """Method for constraining the alpha parameter to meet the invertibility requirements
         """
         return tf.nn.softplus(alpha)
 
     @staticmethod
     def _beta_circ(beta):
-        """
-        Method for constraining the beta parameter to meet the invertibility requirements
+        """Method for constraining the beta parameter to meet the invertibility requirements
         """
         return tf.exp(beta) - 1.
 
     def forward(self, x):
-        """
-        We don't require sampling and it would be slow, therefore it is not implemented
+        """We don't require sampling and it would be slow, therefore it is not implemented
 
         :raise NotImplementedError:
         """

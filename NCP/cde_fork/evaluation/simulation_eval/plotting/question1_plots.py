@@ -1,13 +1,11 @@
-from ml_logger import logger
 
-from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
-from NCP.cde_fork.evaluation.simulation_eval import base_experiment
-import NCP.cde_fork.model_fitting.ConfigRunner as ConfigRunner
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import pickle
+from ml_logger import logger
 
+from NCP.cde_fork.evaluation.simulation_eval import base_experiment
+from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
 
 EXP_PREFIX = 'question1_noise_reg_x_v1'
 RESULTS_FILE = 'results.pkl'

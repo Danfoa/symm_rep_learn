@@ -4,16 +4,16 @@
 
 # -*- coding: utf-8 -*-
 import functools
-import numpy as np
 import math
+from collections import OrderedDict, deque
+from difflib import get_close_matches
+from inspect import getfullargspec
+from itertools import chain
+from warnings import warn
+
+import numpy as np
 import tensorflow as tf
 from tensorflow.python.training import moving_averages
-from collections import OrderedDict
-from collections import deque
-from itertools import chain
-from inspect import getfullargspec
-from difflib import get_close_matches
-from warnings import warn
 
 
 class G(object):
@@ -84,12 +84,14 @@ def conv_output_length(input_length, filter_size, stride, pad=0):
         ``'same'`` pads with half the filter size on both sides (one less on
         the second side for an even filter size). When ``stride=1``, this
         results in an output size equal to the input size.
-    Returns
+
+    Returns:
     -------
     int or None
         The output size corresponding to the given convolution parameters, or
         ``None`` if `input_size` is ``None``.
-    Raises
+
+    Raises:
     ------
     ValueError
         When an invalid padding is specified, a `ValueError` is raised.
@@ -249,8 +251,7 @@ class MergeLayer(Layer):
 
 
 class ConcatLayer(MergeLayer):
-    """
-    Concatenates multiple inputs along the specified axis. Inputs should have
+    """Concatenates multiple inputs along the specified axis. Inputs should have
     the same shape except for the dimension specified in axis, which can have
     different sizes.
     Parameters
@@ -340,7 +341,7 @@ class OrthogonalInitializer(object):
 
 
 class VariableLayer(Layer):
-    """ Layer to wrap tf.Variable objects -> ignores incoming layer shape"""
+    """Layer to wrap tf.Variable objects -> ignores incoming layer shape"""
     def __init__(self, incoming, shape, variable,
                  trainable=True, **kwargs):
         super(VariableLayer, self).__init__(incoming, **kwargs)
@@ -462,8 +463,7 @@ class BaseConvLayer(Layer):
                  untie_biases=False,
                  W=XavierUniformInitializer(), b=tf.zeros_initializer(),
                  nonlinearity=tf.nn.relu, n=None, **kwargs):
-        """
-        Input is assumed to be of shape batch*height*width*channels
+        """Input is assumed to be of shape batch*height*width*channels
         """
         super(BaseConvLayer, self).__init__(incoming, **kwargs)
         if nonlinearity is None:
@@ -504,7 +504,8 @@ class BaseConvLayer(Layer):
 
     def get_W_shape(self):
         """Get the shape of the weight matrix `W`.
-        Returns
+
+        Returns:
         -------
         tuple of int
             The shape of the weight matrix.
@@ -518,7 +519,7 @@ class BaseConvLayer(Layer):
         elif self.pad == 'VALID':
             pad = (0,) * self.n
         else:
-            import ipdb;
+            import ipdb
             ipdb.set_trace()
             raise NotImplementedError
 
@@ -544,8 +545,7 @@ class BaseConvLayer(Layer):
         return self.nonlinearity(activation)
 
     def convolve(self, input, **kwargs):
-        """
-        Symbolically convolves `input` with ``self.W``, producing an output of
+        """Symbolically convolves `input` with ``self.W``, producing an output of
         shape ``self.output_shape``. To be implemented by subclasses.
         Parameters
         ----------
@@ -553,7 +553,8 @@ class BaseConvLayer(Layer):
             The input minibatch to convolve
         **kwargs
             Any additional keyword arguments from :meth:`get_output_for`
-        Returns
+
+        Returns:
         -------
         Theano tensor
             `input` convolved according to the configuration of this layer,
@@ -657,8 +658,7 @@ def spatial_expected_softmax(x, temp=1):
 
 
 class SpatialExpectedSoftmaxLayer(Layer):
-    """
-    Computes the softmax across a spatial region, separately for each channel, followed by an expectation operation.
+    """Computes the softmax across a spatial region, separately for each channel, followed by an expectation operation.
     """
 
     def __init__(self, incoming, **kwargs):
@@ -709,16 +709,14 @@ class SpatialExpectedSoftmaxLayer(Layer):
 
 class DropoutLayer(Layer):
     def __init__(self, incoming, p, rescale=False, **kwargs):
-        """
-        :param p: probability of setting the output of a node to 0. Should be a tf placeholder
+        """:param p: probability of setting the output of a node to 0. Should be a tf placeholder
         """
         super(DropoutLayer, self).__init__(incoming, **kwargs)
         self.p = p
         self.rescale = rescale
 
     def get_output_for(self, input, deterministic=False, **kwargs):
-        """
-        Parameters
+        """Parameters
         ----------
         input : tensor
             output from the previous layer
@@ -765,8 +763,7 @@ class GaussianNoiseLayer(Layer):
 # TODO: add Conv3DLayer
 
 class FlattenLayer(Layer):
-    """
-    A layer that flattens its input. The leading ``outdim-1`` dimensions of
+    """A layer that flattens its input. The leading ``outdim-1`` dimensions of
     the output will have the same shape as the input. The remaining dimensions
     are collapsed into the last dimension.
     Parameters
@@ -775,7 +772,8 @@ class FlattenLayer(Layer):
         The layer feeding into this layer, or the expected input shape.
     outdim : int
         The number of dimensions in the output.
-    See Also
+
+    See Also:
     --------
     flatten  : Shortcut
     """
@@ -1016,8 +1014,7 @@ def apply_ln(layer):
 
 
 class GRULayer(Layer):
-    """
-    A gated recurrent unit implements the following update mechanism:
+    """A gated recurrent unit implements the following update mechanism:
     Reset gate:        r(t) = f_r(x(t) @ W_xr + h(t-1) @ W_hr + b_r)
     Update gate:       u(t) = f_u(x(t) @ W_xu + h(t-1) @ W_hu + b_u)
     Cell gate:         c(t) = f_c(x(t) @ W_xc + r(t) * (h(t-1) @ W_hc) + b_c)
@@ -1154,8 +1151,7 @@ class GRUStepLayer(MergeLayer):
 
 
 class TfGRULayer(Layer):
-    """
-    Use TensorFlow's built-in GRU implementation
+    """Use TensorFlow's built-in GRU implementation
     """
 
     def __init__(self, incoming, num_units, hidden_nonlinearity, horizon=None, hidden_init_trainable=False,
@@ -1227,8 +1223,7 @@ class TfGRULayer(Layer):
 
 
 class PseudoLSTMLayer(Layer):
-    """
-    A Pseudo LSTM unit implements the following update mechanism:
+    """A Pseudo LSTM unit implements the following update mechanism:
 
     Incoming gate:     i(t) = σ(W_hi @ h(t-1)) + W_xi @ x(t) + b_i)
     Forget gate:       f(t) = σ(W_hf @ h(t-1)) + W_xf @ x(t) + b_f)
@@ -1415,8 +1410,7 @@ class PseudoLSTMLayer(Layer):
 
 
 class LSTMLayer(Layer):
-    """
-    A LSTM unit implements the following update mechanism:
+    """A LSTM unit implements the following update mechanism:
 
     Incoming gate:     i(t) = f_i(x(t) @ W_xi + h(t-1) @ W_hi + w_ci * c(t-1) + b_i)
     Forget gate:       f(t) = f_f(x(t) @ W_xf + h(t-1) @ W_hf + w_cf * c(t-1) + b_f)
@@ -1494,14 +1488,12 @@ class LSTMLayer(Layer):
         self.norm_params = dict()
 
     def step(self, hcprev, x):
+        """Incoming gate:     i(t) = f_i(x(t) @ W_xi + h(t-1) @ W_hi + w_ci * c(t-1) + b_i)
+        Forget gate:       f(t) = f_f(x(t) @ W_xf + h(t-1) @ W_hf + w_cf * c(t-1) + b_f)
+        Cell gate:         c(t) = f(t) * c(t - 1) + i(t) * f_c(x(t) @ W_xc + h(t-1) @ W_hc + b_c)
+        Out gate:          o(t) = f_o(x(t) @ W_xo + h(t-1) W_ho + w_co * c(t) + b_o)
+        New hidden state:  h(t) = o(t) * f_h(c(t))
         """
-            Incoming gate:     i(t) = f_i(x(t) @ W_xi + h(t-1) @ W_hi + w_ci * c(t-1) + b_i)
-            Forget gate:       f(t) = f_f(x(t) @ W_xf + h(t-1) @ W_hf + w_cf * c(t-1) + b_f)
-            Cell gate:         c(t) = f(t) * c(t - 1) + i(t) * f_c(x(t) @ W_xc + h(t-1) @ W_hc + b_c)
-            Out gate:          o(t) = f_o(x(t) @ W_xo + h(t-1) W_ho + w_co * c(t) + b_o)
-            New hidden state:  h(t) = o(t) * f_h(c(t))
-        """
-
         hprev = hcprev[:, :self.num_units]
         cprev = hcprev[:, self.num_units:]
 
@@ -1586,8 +1578,7 @@ class LSTMStepLayer(MergeLayer):
 
 
 class TfBasicLSTMLayer(Layer):
-    """
-    Use TensorFlow's built-in (basic) LSTM implementation
+    """Use TensorFlow's built-in (basic) LSTM implementation
     """
 
     def __init__(self, incoming, num_units, hidden_nonlinearity, horizon=None, hidden_init_trainable=False,
@@ -1681,8 +1672,7 @@ class TfBasicLSTMLayer(Layer):
 
 
 def get_all_layers(layer, treat_as_input=None):
-    """
-    :type layer: Layer | list[Layer]
+    """:type layer: Layer | list[Layer]
     :rtype: list[Layer]
     """
     # We perform a depth-first search. We add a layer to the result list only
@@ -1902,7 +1892,8 @@ def unique(l):
     ----------
     l : iterable
         Input iterable to filter of duplicates.
-    Returns
+
+    Returns:
     -------
     list
         A list of elements of `l` without duplicates and in the same order.
@@ -1918,8 +1909,7 @@ def unique(l):
 
 
 def get_all_params(layer, **tags):
-    """
-    :type layer: Layer|list[Layer]
+    """:type layer: Layer|list[Layer]
     """
     layers = get_all_layers(layer)
     params = chain.from_iterable(l.get_params(**tags) for l in layers)

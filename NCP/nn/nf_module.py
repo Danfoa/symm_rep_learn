@@ -1,10 +1,11 @@
 from copy import deepcopy
-import torch
-import lightning as L
 
+import lightning as L
+import torch
 from normflows import ConditionalNormalizingFlow
 
 from NCP.nn.losses import NFLoss
+
 
 class NFModule(L.LightningModule):
     def __init__(

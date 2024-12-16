@@ -4,7 +4,6 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import cm
-from mpl_toolkits.mplot3d import Axes3D
 
 from NCP.cde_fork import ConditionalDensity
 
@@ -21,7 +20,6 @@ class BaseConditionalDensitySimulation(ConditionalDensity):
         Returns:
           p(X|Y) conditional density values for the provided X and Y - numpy array of shape (n_points, )
         """
-
         raise NotImplementedError
 
     def log_pdf(self, X, Y):
@@ -51,7 +49,6 @@ class BaseConditionalDensitySimulation(ConditionalDensity):
         Returns:
          P(Y < y | x) cumulated density values for the provided X and Y - numpy array of shape (n_points, )
         """
-
         raise NotImplementedError
 
     def simulate_conditional(self, X):

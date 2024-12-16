@@ -1,40 +1,41 @@
 import numpy as np
 import tensorflow as tf
 from edward.models import Categorical, Mixture, MultivariateNormalDiag
-from NCP.cde_fork.utils.tf_utils.network import MLP
-import NCP.cde_fork.utils.tf_utils.layers as L
-from NCP.cde_fork.utils.tf_utils.layers_powered import LayersPowered
-from NCP.cde_fork.utils.serializable import Serializable
 
+import NCP.cde_fork.utils.tf_utils.layers as L
+from NCP.cde_fork.utils.serializable import Serializable
+from NCP.cde_fork.utils.tf_utils.layers_powered import LayersPowered
+from NCP.cde_fork.utils.tf_utils.network import MLP
 
 from .BaseNNMixtureEstimator import BaseNNMixtureEstimator
 
+
 class MixtureDensityNetwork(BaseNNMixtureEstimator):
-  """ Mixture Density Network Estimator
+  """Mixture Density Network Estimator
 
-    See "Mixture Density networks", Bishop 1994
+  See "Mixture Density networks", Bishop 1994
 
-    Args:
-        name: (str) name space of MDN (should be unique in code, otherwise tensorflow namespace collitions may arise)
-        ndim_x: (int) dimensionality of x variable
-        ndim_y: (int) dimensionality of y variable
-        n_centers: Number of Gaussian mixture components
-        hidden_sizes: (tuple of int) sizes of the hidden layers of the neural network
-        hidden_nonlinearity: (tf function) nonlinearity of the hidden layers
-        n_training_epochs: Number of epochs for training
-        x_noise_std: (optional) standard deviation of Gaussian noise over the the training data X -> regularization through noise
-        y_noise_std: (optional) standard deviation of Gaussian noise over the the training data Y -> regularization through noise
-        adaptive_noise_fn: (callable) that takes the number of samples and the data dimensionality as arguments and returns
-                                   the noise std as float - if used, the x_noise_std and y_noise_std have no effect
-        entropy_reg_coef: (optional) scalar float coefficient for shannon entropy penalty on the mixture component weight distribution
-        weight_decay: (float) the amount of decoupled (http://arxiv.org/abs/1711.05101) weight decay to apply
-        l2_reg: (float) the amount of l2 penalty on neural network weights
-        l1_reg: (float) the amount of l1 penalty on neural network weights
-        weight_normalization: (boolean) whether weight normalization shall be used
-        data_normalization: (boolean) whether to normalize the data (X and Y) to exhibit zero-mean and std
-        dropout: (float) the probability of switching off nodes during training
-        random_seed: (optional) seed (int) of the random number generators used
-    """
+  Args:
+      name: (str) name space of MDN (should be unique in code, otherwise tensorflow namespace collitions may arise)
+      ndim_x: (int) dimensionality of x variable
+      ndim_y: (int) dimensionality of y variable
+      n_centers: Number of Gaussian mixture components
+      hidden_sizes: (tuple of int) sizes of the hidden layers of the neural network
+      hidden_nonlinearity: (tf function) nonlinearity of the hidden layers
+      n_training_epochs: Number of epochs for training
+      x_noise_std: (optional) standard deviation of Gaussian noise over the the training data X -> regularization through noise
+      y_noise_std: (optional) standard deviation of Gaussian noise over the the training data Y -> regularization through noise
+      adaptive_noise_fn: (callable) that takes the number of samples and the data dimensionality as arguments and returns
+                                 the noise std as float - if used, the x_noise_std and y_noise_std have no effect
+      entropy_reg_coef: (optional) scalar float coefficient for shannon entropy penalty on the mixture component weight distribution
+      weight_decay: (float) the amount of decoupled (http://arxiv.org/abs/1711.05101) weight decay to apply
+      l2_reg: (float) the amount of l2 penalty on neural network weights
+      l1_reg: (float) the amount of l1 penalty on neural network weights
+      weight_normalization: (boolean) whether weight normalization shall be used
+      data_normalization: (boolean) whether to normalize the data (X and Y) to exhibit zero-mean and std
+      dropout: (float) the probability of switching off nodes during training
+      random_seed: (optional) seed (int) of the random number generators used
+  """
 
 
   def __init__(self, name, ndim_x, ndim_y, n_centers=10, hidden_sizes=(16, 16), hidden_nonlinearity=tf.nn.tanh,
@@ -82,13 +83,13 @@ class MixtureDensityNetwork(BaseNNMixtureEstimator):
     self._build_model()
 
   def fit(self, X, Y, random_seed=None, verbose=True, eval_set=None, **kwargs):
-    """ Fits the conditional density model with provided data
+    """Fits the conditional density model with provided data
 
-      Args:
-        X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
-        Y: numpy array of y targets - shape: (n_samples, n_dim_y)
-        eval_set: (tuple) eval/test set - tuple (X_test, Y_test)
-        verbose: (boolean) controls the verbosity (console output)
+    Args:
+      X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
+      Y: numpy array of y targets - shape: (n_samples, n_dim_y)
+      eval_set: (tuple) eval/test set - tuple (X_test, Y_test)
+      verbose: (boolean) controls the verbosity (console output)
 
     """
     X, Y = self._handle_input_dimensionality(X, Y, fitting=True)
@@ -109,10 +110,8 @@ class MixtureDensityNetwork(BaseNNMixtureEstimator):
     self.fitted = True
 
   def _build_model(self):
+    """Implementation of the MDN
     """
-    implementation of the MDN
-    """
-
     with tf.variable_scope(self.name):
       # adds placeholders, data_normalization and data_noise if desired. Also adds a placeholder for dropout probability
       self.layer_in_x, self.layer_in_y = self._build_input_layers()

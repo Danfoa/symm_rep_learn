@@ -1,5 +1,5 @@
 from collections import OrderedDict
-import types
+
 
 class GoodnessOfFitSingleResult:
   def __init__(self, estimator_params, probabilistic_model_params, x_cond=None):

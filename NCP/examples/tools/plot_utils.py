@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
-from sklearn.metrics import mean_squared_error
 import numpy as np
+from sklearn.metrics import mean_squared_error
+
 
 def setup_plots():
     tex_fonts = {
@@ -13,16 +14,14 @@ def setup_plots():
         # Make the legend/label fonts a little smaller
         "legend.fontsize": 8,
         "xtick.labelsize": 8,
-        "ytick.labelsize": 8 
+        "ytick.labelsize": 8
     }
 
-    plt.rcParams.update(tex_fonts)  
+    plt.rcParams.update(tex_fonts)
 
 def plot_expectation(reg, X_train, X_test, Y_train, Y_test, xscaler, yscaler, postprocess='centering'):
-    '''
-    expectation plots for in sample and out of sample data
-    '''
-
+    """Expectation plots for in sample and out of sample data
+    """
     pred = reg.conditional_expectation(X_train, Y_train, postprocess=postprocess).reshape(-1, 1)
     pred_test = reg.conditional_expectation(X_test, Y_train, postprocess=postprocess).reshape(-1, 1)
 
@@ -34,10 +33,10 @@ def plot_expectation(reg, X_train, X_test, Y_train, Y_test, xscaler, yscaler, po
 
     Xs = xscaler.inverse_transform(X_train)
     sorted = np.argsort(Xs.flatten())
-    axes[0].scatter(Xs, 
-                    yscaler.inverse_transform(Y_train), 
+    axes[0].scatter(Xs,
+                    yscaler.inverse_transform(Y_train),
                     color='r', alpha=0.01)
-    axes[0].plot(Xs.flatten()[sorted], 
+    axes[0].plot(Xs.flatten()[sorted],
                 yscaler.inverse_transform(pred).flatten()[sorted], 'b', alpha=0.5)
     axes[0].plot(Xs.flatten()[sorted], Xs.flatten()[sorted]**2, 'red')
     axes[0].legend(['data points', 'predicted expectation', 'true expectation'])
@@ -45,10 +44,10 @@ def plot_expectation(reg, X_train, X_test, Y_train, Y_test, xscaler, yscaler, po
 
     Xs = xscaler.inverse_transform(X_test)
     sorted = np.argsort(Xs.flatten())
-    axes[1].scatter(Xs, 
-                    yscaler.inverse_transform(Y_test), 
+    axes[1].scatter(Xs,
+                    yscaler.inverse_transform(Y_test),
                     color='r', alpha=0.1)
-    axes[1].plot(Xs.flatten()[sorted], 
+    axes[1].plot(Xs.flatten()[sorted],
                 yscaler.inverse_transform(pred_test).flatten()[sorted], 'b', alpha=0.5)
     axes[1].plot(Xs.flatten()[sorted], Xs.flatten()[sorted]**2, 'red')
     axes[1].legend(['data points', 'predicted expectation', 'true expectation'])

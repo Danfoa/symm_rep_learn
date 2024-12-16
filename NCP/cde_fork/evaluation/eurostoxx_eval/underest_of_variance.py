@@ -1,18 +1,19 @@
 import matplotlib
+
 matplotlib.use('Agg')
-from matplotlib import pyplot as plt
-import os
-import numpy as np
-import tensorflow as tf
-import pandas as pd
 import itertools
+import os
 from multiprocessing import Manager
 
-from NCP.cde_fork.density_estimator.MDN import MixtureDensityNetwork
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from matplotlib import pyplot as plt
+
 from NCP.cde_fork.density_estimator.KMN import KernelMixtureNetwork
+from NCP.cde_fork.density_estimator.MDN import MixtureDensityNetwork
 from NCP.cde_fork.density_simulation.LinearGaussian import LinearGaussian
 from NCP.cde_fork.utils.async_executor import AsyncExecutor
-
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
 

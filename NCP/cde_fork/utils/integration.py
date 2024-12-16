@@ -1,7 +1,4 @@
-import copy
 import numbers
-import warnings
-from math import exp as _exp
 
 import numpy as np
 import scipy.integrate as integrate
@@ -9,7 +6,6 @@ import scipy.integrate as integrate
 from NCP.cde_fork.utils.distribution import (
     multidim_t_pdf,
     multidim_t_rvs,
-    multivariate_t_rvs,
 )
 
 N_SAMPLES_ADAPT = 10**3

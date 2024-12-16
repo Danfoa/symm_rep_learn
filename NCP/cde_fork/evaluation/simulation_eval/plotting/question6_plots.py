@@ -1,10 +1,10 @@
+import os
+
+import matplotlib.pyplot as plt
 from ml_logger import logger
 
-from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
 from NCP.cde_fork.evaluation.simulation_eval import base_experiment
-import NCP.cde_fork.model_fitting.ConfigRunner as ConfigRunner
-import matplotlib.pyplot as plt
-import os
+from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
 
 EXP_PREFIX = "question6_noise_schedules"
 RESULTS_FILE = "results.pkl"
@@ -86,7 +86,8 @@ plot_list =  [
             },
         ) for estimator in estimators]
 
-from collections import  OrderedDict
+from collections import OrderedDict
+
 plot_list = [plot_list[0], plot_list[3], plot_list[1], plot_list[4], plot_list[2], plot_list[5]]
 plot_dict = OrderedDict(plot_list)
 

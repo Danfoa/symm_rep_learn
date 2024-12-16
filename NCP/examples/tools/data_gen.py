@@ -1,7 +1,8 @@
 import numpy as np
+from scipy.stats import norm
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from scipy.stats import norm
+
 
 def standardise_and_cut(X, Y, N_train, N_val, N_test):
 
@@ -19,13 +20,12 @@ def standardise_and_cut(X, Y, N_train, N_val, N_test):
     X_test = xscaler.transform(X_test)
     Y_test = yscaler.transform(Y_test)
 
-    return X_train, Y_train, X_val, Y_val, X_test, Y_test, xscaler, yscaler   
+    return X_train, Y_train, X_val, Y_val, X_test, Y_test, xscaler, yscaler
 
 def gen_additive_noise_data(noise, f, N_train=1000, N_val=1000, N_test=1000, x_min=0, x_max=5):
-    '''
-    creates a dataset of (X,Y) such that X is uniformly distributed between x_min and x_max and
+    """Creates a dataset of (X,Y) such that X is uniformly distributed between x_min and x_max and
     Y = f(X) + noise
-    '''
+    """
     X = np.random.uniform(x_min, x_max, N_train+N_val+N_test)
     Y = np.zeros(X.shape[0])
     for i, xi in enumerate(X):
@@ -69,23 +69,23 @@ def gen_bimodal(main_dist=norm, alpha=0.5, mu1=-1, mu2=1, s1=1, s2=1, N_train=10
 
     Y = Y.reshape((-1, 1))
 
-    return standardise_and_cut(X, Y, N_train, N_val, N_test)   
+    return standardise_and_cut(X, Y, N_train, N_val, N_test)
 
 def get_conditional_bimodal_cdf(x, y_vals):
     if x[1]>0.2:
         return norm.cdf(y_vals, loc=0.25*x[0], scale=0.3)
-    
+
     else:
         mode1 = norm.cdf(y_vals, loc=0.25*x[0] - 0.5, scale=0.25 * (0.25*x[2] + 0.5)**2)
         mode2 = norm.cdf(y_vals, loc=0.25*x[0] + 0.5, scale=0.25 * (0.25*x[2] - 0.5)**2)
 
         return 0.5*mode1 + 0.5*mode2
-    
-    
+
+
 def get_conditional_bimodal_pdf(x, y_vals):
     if x[1]>0.2:
         return norm.pdf(y_vals, loc=0.25*x[0], scale=0.3)
-    
+
     else:
         mode1 = norm.pdf(y_vals, loc=0.25*x[0] - 0.5, scale=0.25 * (0.25*x[2] + 0.5)**2)
         mode2 = norm.pdf(y_vals, loc=0.25*x[0] + 0.5, scale=0.25 * (0.25*x[2] - 0.5)**2)

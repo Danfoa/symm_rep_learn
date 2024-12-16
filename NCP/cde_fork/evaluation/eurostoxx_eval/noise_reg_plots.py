@@ -1,12 +1,10 @@
-from NCP.cde_fork.density_estimator import MixtureDensityNetwork, ConditionalKernelDensityEstimation, \
-  NeighborKernelDensityEstimation, LSConditionalDensityEstimation
-
-from NCP.cde_fork.density_simulation import LinearGaussian
+import os
 
 import numpy as np
-import os
 from matplotlib import pyplot as plt
 
+from NCP.cde_fork.density_estimator import MixtureDensityNetwork
+from NCP.cde_fork.density_simulation import LinearGaussian
 
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data'))
 SEED = 65

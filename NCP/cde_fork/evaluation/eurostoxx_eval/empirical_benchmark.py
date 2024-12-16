@@ -1,19 +1,13 @@
-from NCP.cde_fork.density_estimator import KernelMixtureNetwork, ConditionalKernelDensityEstimation, MixtureDensityNetwork, \
-    NeighborKernelDensityEstimation, LSConditionalDensityEstimation, NormalizingFlowEstimator
-from NCP.cde_fork.evaluation.eurostoxx_eval.load_dataset import make_overall_eurostoxx_df, target_feature_split
-
-from sklearn.model_selection import cross_validate
-from NCP.cde_fork.density_estimator import LSConditionalDensityEstimation, KernelMixtureNetwork, MixtureDensityNetwork, \
-    ConditionalKernelDensityEstimation, NeighborKernelDensityEstimation, NormalizingFlowEstimator
-
-from NCP.cde_fork.model_fitting.ConfigRunner import _create_configurations
-import numpy as np
-import time
-import pandas as pd
 import argparse
 import itertools
+import time
 from collections import OrderedDict
 from multiprocessing import Manager
+
+import numpy as np
+import pandas as pd
+
+from NCP.cde_fork.evaluation.eurostoxx_eval.load_dataset import make_overall_eurostoxx_df, target_feature_split
 from NCP.cde_fork.utils.async_executor import AsyncExecutor
 
 VALIDATION_PORTION = 0.2
@@ -50,8 +44,7 @@ def cv_param_search(estimator, valid_portion=0.2, n_cv_folds=10, n_jobs=1):
 
 
 def empirical_evaluation(estimator, valid_portion=0.2, moment_r2=True, eval_by_fc=False, fit_by_cv=False):
-    """
-    Fits the estimator and, based on a left out validation splot, computes the
+    """Fits the estimator and, based on a left out validation splot, computes the
     Root Mean Squared Error (RMSE) between realized and estimated mean and std
 
     Args:
@@ -62,7 +55,6 @@ def empirical_evaluation(estimator, valid_portion=0.2, moment_r2=True, eval_by_f
     Returns:
       (likelihood, mu_rmse, std_rmse)
     """
-
     # get data and split into train and valid set
     df_train, df_valid = train_valid_split(valid_portion)
 
@@ -154,7 +146,7 @@ def empirical_benchmark(model_dict, moment_r2=True, eval_by_fc=False, fit_by_cv=
 
 
 def initialize_models(model_dict, verbose=False, model_name_prefix=''):
-    ''' make kartesian product of listed parameters per model '''
+    """Make kartesian product of listed parameters per model"""
     model_configs = {}
     for model_key, conf_dict in model_dict.items():
         model_configs[model_key] = [dict(zip(conf_dict.keys(), value_tuple)) for value_tuple in

@@ -1,8 +1,9 @@
 # Copyright 2017 Hugh Salimbeni, originally from https://github.com/hughsalimbeni/bayesian_benchmarks/blob/master/bayesian_benchmarks/data.py
 
 
-from six.moves import configparser
 import os
+
+from six.moves import configparser
 
 cfg = configparser.ConfigParser()
 dirs = [os.curdir, os.path.dirname(os.path.realpath(__file__)),

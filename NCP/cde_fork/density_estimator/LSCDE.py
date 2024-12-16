@@ -1,17 +1,17 @@
-import itertools
 import numpy as np
 import scipy.stats as stats
 from scipy.special import logsumexp
 
+from NCP.cde_fork.utils.async_executor import execute_batch_async_pdf
 from NCP.cde_fork.utils.center_point_select import sample_center_points
 from NCP.cde_fork.utils.misc import norm_along_axis_1
+
 from .BaseDensityEstimator import BaseDensityEstimator
-from NCP.cde_fork.utils.async_executor import execute_batch_async_pdf
 
 MULTIPROC_THRESHOLD = 10**4
 
 class LSConditionalDensityEstimation(BaseDensityEstimator):
-  """ Least-Squares Density Ratio Estimator
+  """Least-Squares Density Ratio Estimator
 
   http://proceedings.mlr.press/v9/sugiyama10a.html
 
@@ -27,7 +27,7 @@ class LSConditionalDensityEstimation(BaseDensityEstimator):
       keep_edges: if set to True, the extreme y values as centers are kept (for expressiveness)
       n_jobs: (int) number of jobs to launch for calls with large batch sizes
       random_seed: (optional) seed (int) of the random number generators used
-    """
+  """
 
   def __init__(self, name='LSCDE', ndim_x=None, ndim_y=None, center_sampling_method='k_means',
                bandwidth=0.5, n_centers=500, regularization=1.0,
@@ -75,11 +75,11 @@ class LSConditionalDensityEstimation(BaseDensityEstimator):
     assert self.centr_x.shape == (n_locs, self.ndim_x) and self.centr_y.shape == (n_locs, self.ndim_y)
 
   def fit(self, X, Y, **kwargs):
-    """ Fits the conditional density model with provided data
+    """Fits the conditional density model with provided data
 
-      Args:
-        X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
-        Y: numpy array of y targets - shape: (n_samples, n_dim_y)
+    Args:
+      X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
+      Y: numpy array of y targets - shape: (n_samples, n_dim_y)
     """
     # assert that both X an Y are 2D arrays with shape (n_samples, n_dim)
 
@@ -105,16 +105,16 @@ class LSConditionalDensityEstimation(BaseDensityEstimator):
     self.fitted = True
 
   def pdf(self, X, Y):
-    """ Predicts the conditional density p(y|x). Requires the model to be fitted.
+    """Predicts the conditional density p(y|x). Requires the model to be fitted.
 
-       Args:
-         X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
-         Y: numpy array of y targets - shape: (n_samples, n_dim_y)
+    Args:
+      X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
+      Y: numpy array of y targets - shape: (n_samples, n_dim_y)
 
-       Returns:
-          conditional probability density p(y|x) - numpy array of shape (n_query_samples, )
+    Returns:
+       conditional probability density p(y|x) - numpy array of shape (n_query_samples, )
 
-     """
+    """
     assert self.fitted, "model must be fitted for predictions"
 
     X, Y = self._handle_input_dimensionality(X, Y)
@@ -126,16 +126,16 @@ class LSConditionalDensityEstimation(BaseDensityEstimator):
       return self._pdf(X, Y)
 
   def cdf(self, X, Y, dx):
-    """ Predicts the conditional density p(y|x). Requires the model to be fitted.
+    """Predicts the conditional density p(y|x). Requires the model to be fitted.
 
-       Args:
-         X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
-         Y: numpy array of y targets - shape: (n_samples, n_dim_y)
+    Args:
+      X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
+      Y: numpy array of y targets - shape: (n_samples, n_dim_y)
 
-       Returns:
-          conditional probability density p(y|x) - numpy array of shape (n_query_samples, )
+    Returns:
+       conditional probability density p(y|x) - numpy array of shape (n_query_samples, )
 
-     """
+    """
     assert self.fitted, "model must be fitted for predictions"
 
     X, Y = self._handle_input_dimensionality(X, Y)
@@ -145,16 +145,16 @@ class LSConditionalDensityEstimation(BaseDensityEstimator):
     # return pdf = self._pdf(X, Y)
 
   def log_pdf(self, X, Y):
-    """ Predicts the conditional log-probability log p(y|x). Requires the model to be fitted.
+    """Predicts the conditional log-probability log p(y|x). Requires the model to be fitted.
 
-          Args:
-            X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
-            Y: numpy array of y targets - shape: (n_samples, n_dim_y)
+    Args:
+      X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
+      Y: numpy array of y targets - shape: (n_samples, n_dim_y)
 
-          Returns:
-             conditional log-probability density log p(y|x) - numpy array of shape (n_query_samples, )
+    Returns:
+       conditional log-probability density log p(y|x) - numpy array of shape (n_query_samples, )
 
-        """
+    """
     assert self.fitted, "model must be fitted for predictions"
 
     X, Y = self._handle_input_dimensionality(X, Y)
@@ -164,9 +164,9 @@ class LSConditionalDensityEstimation(BaseDensityEstimator):
       return execute_batch_async_pdf(self._log_pdf, X, Y, n_jobs=self.n_jobs)
     else:
       return self._log_pdf(X, Y)
-    
+
   def mean_std(self, X, n_samples=10 ** 6):
-    """ sample from the conditional mixture distributions - requires the model to be fitted
+    """Sample from the conditional mixture distributions - requires the model to be fitted
 
     Args:
       X: values to be conditioned on  - numpy array of shape (n_instances, n_dim_x)
@@ -180,16 +180,16 @@ class LSConditionalDensityEstimation(BaseDensityEstimator):
 
     fact = np.multiply(self.alpha, self._gaussian_kernel(X))
     fact = fact / np.sum(fact, axis=1)[:,None]
-    
+
     mean = fact @ self.centr_y
     print(fact.shape, self.centr_y.shape, mean.shape)
     #return
     expected_variance = self.bandwidth**2
     variance_expectations = (fact @ (self.centr_y**2)) - mean**2
     return (mean, np.sqrt(expected_variance + variance_expectations))
-    
+
   def sample(self, X):
-    """ sample from the conditional mixture distributions - requires the model to be fitted
+    """Sample from the conditional mixture distributions - requires the model to be fitted
 
     Args:
       X: values to be conditioned on when sampling - numpy array of shape (n_instances, n_dim_x)
@@ -229,8 +229,7 @@ class LSConditionalDensityEstimation(BaseDensityEstimator):
     return X_normalized, Y_normalized
 
   def _gaussian_kernel(self, X, Y=None):
-    """
-    if Y is set returns the product of the gaussian kernels for X and Y, else only the gaussian kernel for X
+    """If Y is set returns the product of the gaussian kernels for X and Y, else only the gaussian kernel for X
     :param X: numpy array of size (n_samples, ndim_x)
     :param Y: numpy array of size (n_samples, ndim_y)
     :return: phi -  numpy array of size (n_samples, n_centers)
@@ -238,8 +237,7 @@ class LSConditionalDensityEstimation(BaseDensityEstimator):
     return np.exp(self._log_gaussian_kernel(X, Y))
 
   def _log_gaussian_kernel(self, X, Y=None):
-    """
-    if Y is set returns the sum of the gaussian log-kernels for X and Y, else only the gaussian log-kernel for X
+    """If Y is set returns the sum of the gaussian log-kernels for X and Y, else only the gaussian log-kernel for X
     :param X: numpy array of size (n_samples, ndim_x)
     :param Y: numpy array of size (n_samples, ndim_y)
     :return: phi -  numpy array of size (n_samples, n_centers)

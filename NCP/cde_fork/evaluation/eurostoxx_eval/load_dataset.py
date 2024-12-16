@@ -1,11 +1,10 @@
-import numpy as np
 import os
+
+import numpy as np
 import pandas as pd
 from scipy.interpolate import InterpolatedUnivariateSpline
 
 from NCP.cde_fork.utils.io import load_time_series_csv
-
-
 
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../data'))
 

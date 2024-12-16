@@ -1,10 +1,11 @@
-from NCP.cde_fork.density_estimator.MDN import MixtureDensityNetwork
-from NCP.cde_fork.evaluation.eurostoxx_eval.load_dataset import make_overall_eurostoxx_df, target_feature_split
+import os
 
 import numpy as np
-import os
 import pandas as pd
 from matplotlib import pyplot as plt
+
+from NCP.cde_fork.density_estimator.MDN import MixtureDensityNetwork
+from NCP.cde_fork.evaluation.eurostoxx_eval.load_dataset import make_overall_eurostoxx_df, target_feature_split
 
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data'))
 

@@ -1,5 +1,4 @@
 import numpy as np
-import scipy.stats as stats
 
 from NCP.cde_fork.utils.distribution import (
     batched_univ_t_cdf,
@@ -11,8 +10,7 @@ from .BaseConditionalDensitySimulation import BaseConditionalDensitySimulation
 
 
 class LinearStudentT(BaseConditionalDensitySimulation):
-    """
-    A conditional student-t distribution where
+    """A conditional student-t distribution where
 
     x ~ N(x | 0,I)
     y ~ Student-t(y | dof(x), loc(x), scale(x))
@@ -111,6 +109,7 @@ class LinearStudentT(BaseConditionalDensitySimulation):
 
     def simulate(self, n_samples=1000):
         """Draws random samples from the joint distribution p(x,y)
+
         Args:
           n_samples: (int) number of samples to be drawn from the joint distribution
 

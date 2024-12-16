@@ -1,8 +1,8 @@
+import numpy as np
+from sklearn.decomposition import PCA
+
 from NCP.cde_fork.density_estimator.MDN import MixtureDensityNetwork
 from NCP.cde_fork.evaluation.eurostoxx_eval.load_dataset import make_overall_eurostoxx_df, target_feature_split
-
-from sklearn.decomposition import PCA
-import numpy as np
 
 PCA_FEATURES = False
 

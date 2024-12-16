@@ -1,14 +1,16 @@
-import numpy as np
-import seaborn as sns
 import matplotlib.pyplot as plt
-from NCP.cde_fork.density_estimator import LSConditionalDensityEstimation, NeighborKernelDensityEstimation, KernelMixtureNetwork
-from matplotlib.lines import Line2D
+import numpy as np
 import pandas as pd
-from NCP.cde_fork.density_simulation import GaussianMixture, EconDensity
-from NCP.cde_fork.model_fitting.GoodnessOfFit import GoodnessOfFit
-from NCP.cde_fork.density_simulation.toy_densities import build_toy_dataset, build_toy_dataset2
-from mpl_toolkits.mplot3d import Axes3D
+import seaborn as sns
 from matplotlib import cm
+from matplotlib.lines import Line2D
+
+from NCP.cde_fork.density_estimator import (
+  KernelMixtureNetwork,
+  NeighborKernelDensityEstimation,
+)
+from NCP.cde_fork.density_simulation import EconDensity, GaussianMixture
+from NCP.cde_fork.model_fitting.GoodnessOfFit import GoodnessOfFit
 
 
 def generate_report():

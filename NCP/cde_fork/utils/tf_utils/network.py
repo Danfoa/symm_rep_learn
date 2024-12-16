@@ -2,12 +2,11 @@
 # Code from rllab https://github.com/rll/rllab/tree/master/sandbox
 #
 
-import NCP.cde_fork.utils.tf_utils.layers as L
+
 import tensorflow as tf
-import numpy as np
-import itertools
+
+import NCP.cde_fork.utils.tf_utils.layers as L
 from NCP.cde_fork.utils.serializable import Serializable
-from NCP.cde_fork.utils.tf_utils.parameterized import Parameterized
 from NCP.cde_fork.utils.tf_utils.layers_powered import LayersPowered
 
 
@@ -18,11 +17,9 @@ class MLP(LayersPowered, Serializable):
                  input_var=None, input_layer=None, input_shape=None, batch_normalization=False, weight_normalization=False,
                  dropout_ph=None
                  ):
-        """
-        :param dropout_ph: None if no dropout should be used. Else a scalar placeholder that determines the prob of dropping a node.
+        """:param dropout_ph: None if no dropout should be used. Else a scalar placeholder that determines the prob of dropping a node.
         Remember to set placeholder to Zero during test / eval
         """
-
         Serializable.quick_init(self, locals())
 
         with tf.variable_scope(name):

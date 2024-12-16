@@ -1,5 +1,5 @@
 import numpy as np
-from NCP.cde_fork.BaseConditionalDensity import ConditionalDensity
+
 from NCP.cde_fork.utils.integration import mc_integration_student_t
 
 _FUN_KL = lambda p, q: p * np.log(p / q)
@@ -7,7 +7,7 @@ _FUN_JS = lambda p, q: 0.5 * p * np.log(p / q) + 0.5 * q * np.log(q / p)
 _FUN_HELLINGER_2 = lambda p, q: (np.sqrt(p) - np.sqrt(q))**2
 
 def kl_divergence_pdf(p, q, x_cond, n_samples=10 ** 5):
-  """ Computes the Kullback–Leibler divergence KL[p ; q] via monte carlo integration
+  """Computes the Kullback–Leibler divergence KL[p ; q] via monte carlo integration
   using importance sampling with a student-t proposal distribution
 
   Args:
@@ -22,7 +22,7 @@ def kl_divergence_pdf(p, q, x_cond, n_samples=10 ** 5):
   return _divergence_mc(p, q, x_cond, _FUN_KL, n_samples)
 
 def js_divergence_pdf(p, q, x_cond, n_samples=10 ** 5):
-  """ Computes the Jensen-Shannon divergence JS[p ; q] via monte carlo integration
+  """Computes the Jensen-Shannon divergence JS[p ; q] via monte carlo integration
   using importance sampling with a student-t proposal distribution
 
   Args:
@@ -38,7 +38,7 @@ def js_divergence_pdf(p, q, x_cond, n_samples=10 ** 5):
   return _divergence_mc(p, q, x_cond, divergence_fun, n_samples)
 
 def hellinger_distance_pdf(p, q, x_cond, n_samples=10 ** 5):
-  """ Computes the Hellinger Distance H[p ; q] via monte carlo integration
+  """Computes the Hellinger Distance H[p ; q] via monte carlo integration
   using importance sampling with a student-t proposal distribution
 
   Args:
@@ -54,21 +54,21 @@ def hellinger_distance_pdf(p, q, x_cond, n_samples=10 ** 5):
   return np.sqrt(0.5 * hellinger_squared)
 
 def divergence_measures_pdf(p, q, x_cond, n_samples=10**5):
-  """ Computes the
-      - Hellinger Distance H[p ; q]
-      - Kullback–Leibler divergence KL[p ; q]
-      - Jennsen-Shannon divergence JS[p ; q]
-      via monte carlo integration using importance sampling with a student-t proposal distribution
+  """Computes the
+    - Hellinger Distance H[p ; q]
+    - Kullback–Leibler divergence KL[p ; q]
+    - Jennsen-Shannon divergence JS[p ; q]
+    via monte carlo integration using importance sampling with a student-t proposal distribution
 
-    Args:
-     p: conditional distribution object p(y|x)
-     q: conditional distribution object q(y|x)
-     x_cond: x values to condition on - numpy array of shape (n_values, ndim_x)
-     n_samples: number of samples for monte carlo integration over the y space
+  Args:
+   p: conditional distribution object p(y|x)
+   q: conditional distribution object q(y|x)
+   x_cond: x values to condition on - numpy array of shape (n_values, ndim_x)
+   n_samples: number of samples for monte carlo integration over the y space
 
-    Returns:
-      (hellinger_dists, kl_divs, js_divs) - tuple of numpy arrays of shape (n_values,)
-    """
+  Returns:
+    (hellinger_dists, kl_divs, js_divs) - tuple of numpy arrays of shape (n_values,)
+  """
   fun_div_measures_stack = lambda p, q: np.stack([_FUN_HELLINGER_2(p,q), _FUN_KL(p,q), _FUN_JS(p,q)], axis=1) # np.sqrt(_FUN_HELLINGER_2(p,q))
   div_measure_stack = _divergence_mc(p, q, x_cond, fun_div_measures_stack, n_samples, n_measures=3)
   assert div_measure_stack.shape == (x_cond.shape[0], 3)

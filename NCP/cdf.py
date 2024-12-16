@@ -1,11 +1,14 @@
+from typing import Union
+
+import normflows as nf
 import numpy as np
 import torch
-from typing import Union
-from NCP.utils import to_np, from_np
-from NCP.metrics import smooth_cdf
 from sklearn.isotonic import IsotonicRegression
 from sklearn.neighbors import KernelDensity
-import normflows as nf
+
+from NCP.metrics import smooth_cdf
+from NCP.utils import from_np, to_np
+
 
 def compute_quantile_robust(values:np.ndarray, cdf:np.ndarray, alpha:Union[str, float]='all', isotonic:bool=True, rescaling:bool=True):
     # TODO: correct this code
@@ -31,7 +34,7 @@ def compute_quantile_robust(values:np.ndarray, cdf:np.ndarray, alpha:Union[str, 
                     quantiles[j] = -np.inf
                 quantiles[j] = values[i-1]
                 break
-            
+
         # special case where we exceeded the maximum observed value
         if i == cdf.shape[0] - 1:
             quantiles[j] = np.inf
@@ -111,8 +114,9 @@ class compute_marginal(KernelDensity):
         probability = np.exp(log_probability)
         return from_np(probability)
 
-from scipy.integrate import cumulative_trapezoid
+
 def integrate_pdf(pdf, values):
+    from scipy.integrate import cumulative_trapezoid
     return cumulative_trapezoid(pdf.squeeze(), x=values.squeeze(), initial=0)
 
 def find_best_quantile(x, cdf, alpha):
@@ -134,9 +138,9 @@ def find_best_quantile(x, cdf, alpha):
                 best_size = size
             # moving t1 to the right will only increase the size of the interval, so we can safely move t0 to the right
             t0 += 1
-        
+
         elif t1 == len(cdf)-1:
-            # if x[t0], x[t1] is not a confidence interval with confidence at least level alpha, 
+            # if x[t0], x[t1] is not a confidence interval with confidence at least level alpha,
             #and t1 is already at the right limit of the discretisation, then there remains no more pertinent intervals
             break
         else:

@@ -1,20 +1,29 @@
 #%% Importing libraries
+import argparse
 import os
+
+import flexcode
+import nnkcde
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
-import argparse
-from tqdm import tqdm
-from NCP.metrics import compute_metrics
-from NCP.cde_fork.density_simulation import LinearGaussian, LinearStudentT, ArmaJump, SkewNormal, EconDensity, \
-                                             GaussianMixture
-from NCP.examples.tools.data_gen import LGGMD
-from NCP.cdf import integrate_pdf
 import rfcde
-import nnkcde
-import flexcode
 from flexcode.regression_models import RandomForest
 from lightning import seed_everything
+from sklearn.preprocessing import StandardScaler
+from tqdm import tqdm
+
+from NCP.cde_fork.density_simulation import (
+    ArmaJump,
+    EconDensity,
+    GaussianMixture,
+    LinearGaussian,
+    LinearStudentT,
+    SkewNormal,
+)
+from NCP.cdf import integrate_pdf
+from NCP.examples.tools.data_gen import LGGMD
+from NCP.metrics import compute_metrics
+
 
 def run_experiment(density_estimator, density_estimator_kwargs, density_simulator, density_simulator_kwargs):
     filename = density_simulator().__class__.__name__ + '_' + density_estimator.__name__ + '_results.pkl'

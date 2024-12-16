@@ -1,5 +1,7 @@
-import numpy as np
 import warnings
+
+import numpy as np
+
 
 class AdamOptimizer:
     """Adam optimizer.
@@ -32,7 +34,7 @@ class AdamOptimizer:
         self.initial_decay = decay
 
     def get_update(self, params, grads):
-        """ params and grads are list of numpy arrays
+        """Params and grads are list of numpy arrays
         """
         original_shapes = [x.shape for x in params]
         params = [x.flatten() for x in params]
@@ -76,8 +78,7 @@ class AdamOptimizer:
         return ret
 
 def find_root_newton_method(fun, grad, x0, eps=1e-6, learning_rate=2e-3, max_iter=1e5):
-    """
-    Newton's root finding method in conjunction with the adam optimizer
+    """Newton's root finding method in conjunction with the adam optimizer
 
     Args:
         fun (callable): function f for which f(x) = 0 shall be solved
@@ -118,8 +119,7 @@ def find_root_newton_method(fun, grad, x0, eps=1e-6, learning_rate=2e-3, max_ite
 
 
 def find_root_by_bounding(fun, left, right, eps=1e-8, max_iter=1e4):
-    """
-    Root finding method that uses selective shrinking of a target interval bounded by left and right
+    """Root finding method that uses selective shrinking of a target interval bounded by left and right
     --> other than the newton method, this method only works for for vectorized univariate functions
     Args:
         fun (callable): function f for which f(x) = 0 shall be solved
@@ -128,7 +128,6 @@ def find_root_by_bounding(fun, left, right, eps=1e-8, max_iter=1e4):
         eps (float): tolerance
         max_iter (int): maximum iterations
     """
-
     assert callable(fun)
 
     n_iter = 0

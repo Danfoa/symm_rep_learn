@@ -13,22 +13,16 @@
 # limitations under the License.
 # ==============================================================================
 
-"""
-Implementing proper weight decay for the Adam and momentum optimizer be decoupling the weight
+"""Implementing proper weight decay for the Adam and momentum optimizer be decoupling the weight
 decay from the gradient update.
 """
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
+from __future__ import absolute_import, division, print_function
 
 from tensorflow.python.framework import ops
-from tensorflow.python.training import optimizer
-from tensorflow.python.ops import control_flow_ops
-from tensorflow.python.training import adam
+from tensorflow.python.ops import control_flow_ops, resource_variable_ops, state_ops
+from tensorflow.python.training import adam, optimizer
 from tensorflow.python.training import momentum as momentum_opt
 from tensorflow.python.util.tf_export import tf_export
-from tensorflow.python.ops import state_ops
-from tensorflow.python.ops import resource_variable_ops
 
 
 class DecoupledWeightDecayExtension(object):
@@ -60,6 +54,7 @@ class DecoupledWeightDecayExtension(object):
 
   def __init__(self, weight_decay, **kwargs):
     """Construct the extension class that adds weight decay to an optimizer.
+
     Args:
       weight_decay: A `Tensor` or a floating point value, the factor by which
         a variable is decayed in the update step.
@@ -181,6 +176,7 @@ def extend_with_decoupled_weight_decay(base_optimizer):
   ```
   Args:
     base_optimizer: An optimizer class that inherits from tf.train.Optimizer.
+
   Returns:
     A new optimizer class that inherits from DecoupledWeightDecayExtension
     and base_optimizer.
@@ -234,6 +230,7 @@ class MomentumWOptimizer(DecoupledWeightDecayExtension,
                use_locking=False, name="MomentumW", use_nesterov=False):
     """Construct a new MomentumW optimizer.
     For further information see the documentation of the Momentum Optimizer.
+
     Args:
       weight_decay:  A `Tensor` or a floating point value.  The weight decay.
       learning_rate: A `Tensor` or a floating point value.  The learning rate.
@@ -282,6 +279,7 @@ class AdamWOptimizer(DecoupledWeightDecayExtension, adam.AdamOptimizer):
                epsilon=1e-8, use_locking=False, name="AdamW"):
     """Construct a new AdamW optimizer.
     For further information see the documentation of the Adam Optimizer.
+
     Args:
       weight_decay:  A `Tensor` or a floating point value.  The weight decay.
       learning_rate: A Tensor or a floating point value.  The learning rate.

@@ -1,10 +1,11 @@
 from copy import deepcopy
-import torch
+
 import lightning as L
+import torch
 
 from NCP.nn import kernel_mixture_network
-
 from NCP.nn.losses import KMNLoss
+
 
 class KMNModule(L.LightningModule):
     def __init__(

@@ -1,12 +1,8 @@
+import matplotlib.pyplot as plt
 from ml_logger import logger
 
-from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
 from NCP.cde_fork.evaluation.simulation_eval import base_experiment
-import NCP.cde_fork.model_fitting.ConfigRunner as ConfigRunner
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-
+from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
 
 EXP_PREFIX = 'question2_entropy_reg'
 RESULTS_FILE = 'results.pkl'

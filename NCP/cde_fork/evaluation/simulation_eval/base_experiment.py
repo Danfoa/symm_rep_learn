@@ -3,7 +3,6 @@ import argparse
 from NCP.cde_fork.model_fitting.ConfigRunner import ConfigRunner
 from NCP.cde_fork.model_fitting.ConfigRunnerLogProb import ConfigRunnerLogProb
 
-
 RESULTS_FILE = 'results.pkl'
 
 KEYS_OF_INTEREST = [
@@ -25,8 +24,7 @@ KEYS_OF_INTEREST_LOGPROB = [
 
 
 def launch_experiment(conf_est, conf_sim, observations, exp_prefix, n_mc_samples=10**6, n_x_cond=10, n_seeds=5, tail_measures=False):
-    """
-    :param conf_est: Dict with keys: Name of estimator, value: params for the estimator
+    """:param conf_est: Dict with keys: Name of estimator, value: params for the estimator
     :param conf_sim: Dict with keys: Name of the density simulator, value: params for the simulator
     :param observations: List or scalar that defines how many samples to use from the distribution
     :param exp_prefix: directory to save everything
@@ -36,7 +34,6 @@ def launch_experiment(conf_est, conf_sim, observations, exp_prefix, n_mc_samples
     :param tail_measures:
     :return:
     """
-
     parser = argparse.ArgumentParser(description='Run configuration script')
     parser.add_argument('--parallel', type=bool, default=True)
     parser.add_argument('--n_workers', type=int, default=1)
@@ -57,8 +54,7 @@ def launch_experiment(conf_est, conf_sim, observations, exp_prefix, n_mc_samples
 
 
 def launch_logprob_experiment(conf_est, conf_sim, observations, exp_prefix, n_test_samples=10**5, n_seeds=5):
-    """
-    :param conf_est: Dict with keys: Name of estimator, value: params for the estimator
+    """:param conf_est: Dict with keys: Name of estimator, value: params for the estimator
     :param conf_sim: Dict with keys: Name of the density simulator, value: params for the simulator
     :param observations: List or scalar that defines how many samples to use from the distribution
     :param exp_prefix: directory to save everything
@@ -66,7 +62,6 @@ def launch_logprob_experiment(conf_est, conf_sim, observations, exp_prefix, n_te
     :param n_seeds: number of seeds to use for the simulator
     :return:
     """
-
     parser = argparse.ArgumentParser(description='Run configuration script')
     parser.add_argument('--parallel', type=bool, default=True)
     parser.add_argument('--n_workers', type=int, default=1)

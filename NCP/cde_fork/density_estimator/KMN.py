@@ -2,55 +2,52 @@
 # code skeleton from https://github.com/janvdvegt/KernelMixtureNetwork
 # this version additionally supports fit_by_crossval and multidimentional Y
 #
-import math
+import logging
+
 import numpy as np
-import sklearn
 import tensorflow as tf
-import edward as ed
 from edward.models import Categorical, Mixture, MultivariateNormalDiag
-from NCP.cde_fork.utils.tf_utils.network import MLP
+
 import NCP.cde_fork.utils.tf_utils.layers as L
-from NCP.cde_fork.utils.tf_utils.layers_powered import LayersPowered
-from NCP.cde_fork.utils.serializable import Serializable
-#import matplotlib.pyplot as plt
-
-
-from NCP.cde_fork.utils.center_point_select import sample_center_points
 from NCP.cde_fork.density_estimator.BaseNNMixtureEstimator import BaseNNMixtureEstimator
 
-import logging
+#import matplotlib.pyplot as plt
+from NCP.cde_fork.utils.center_point_select import sample_center_points
+from NCP.cde_fork.utils.serializable import Serializable
+from NCP.cde_fork.utils.tf_utils.layers_powered import LayersPowered
+from NCP.cde_fork.utils.tf_utils.network import MLP
+
 logging.getLogger("tensorflow").setLevel(logging.ERROR)
 tf.logging.set_verbosity(tf.logging.ERROR)
 
 
 class KernelMixtureNetwork(BaseNNMixtureEstimator):
+  """Kernel Mixture Network Estimator
 
-  """ Kernel Mixture Network Estimator
+  https://arxiv.org/abs/1705.07111
 
-      https://arxiv.org/abs/1705.07111
-
-      Args:
-          name: (str) name space of MDN (should be unique in code, otherwise tensorflow namespace collitions may arise)
-          ndim_x: (int) dimensionality of x variable
-          ndim_y: (int) dimensionality of y variable
-          center_sampling_method: String that describes the method to use for finding kernel centers. Allowed values \
+  Args:
+      name: (str) name space of MDN (should be unique in code, otherwise tensorflow namespace collitions may arise)
+      ndim_x: (int) dimensionality of x variable
+      ndim_y: (int) dimensionality of y variable
+      center_sampling_method: String that describes the method to use for finding kernel centers. Allowed values \
                                   [all, random, distance, k_means, agglomerative]
-          n_centers: Number of kernels to use in the output
-          keep_edges: Keep the extreme y values as center to keep expressiveness
-          init_scales: List or scalar that describes (initial) values of bandwidth parameter
-          train_scales: Boolean that describes whether or not to make the scales trainable
-          x_noise_std: (optional) standard deviation of Gaussian noise over the the training data X
-          y_noise_std: (optional) standard deviation of Gaussian noise over the the training data Y
-          adaptive_noise_fn: (callable) that takes the number of samples and the data dimensionality as arguments and returns
-                           the noise std as float - if used, the x_noise_std and y_noise_std have no effect
-          entropy_reg_coef: (optional) scalar float coefficient for shannon entropy penalty on the mixture component weight distribution
-          weight_decay: (float) the amount of decoupled (http://arxiv.org/abs/1711.05101) weight decay to apply
-          l2_reg: (float) the amount of l2 penalty on neural network weights
-          l1_reg: (float) the amount of l1 penalty on neural network weights
-          weight_normalization: boolean specifying whether weight normalization shall be used
-          data_normalization: (boolean) whether to normalize the data (X and Y) to exhibit zero-mean and std
-          dropout: (float) the probability of switching off nodes during training
-          random_seed: (optional) seed (int) of the random number generators used
+      n_centers: Number of kernels to use in the output
+      keep_edges: Keep the extreme y values as center to keep expressiveness
+      init_scales: List or scalar that describes (initial) values of bandwidth parameter
+      train_scales: Boolean that describes whether or not to make the scales trainable
+      x_noise_std: (optional) standard deviation of Gaussian noise over the the training data X
+      y_noise_std: (optional) standard deviation of Gaussian noise over the the training data Y
+      adaptive_noise_fn: (callable) that takes the number of samples and the data dimensionality as arguments and returns
+                       the noise std as float - if used, the x_noise_std and y_noise_std have no effect
+      entropy_reg_coef: (optional) scalar float coefficient for shannon entropy penalty on the mixture component weight distribution
+      weight_decay: (float) the amount of decoupled (http://arxiv.org/abs/1711.05101) weight decay to apply
+      l2_reg: (float) the amount of l2 penalty on neural network weights
+      l1_reg: (float) the amount of l1 penalty on neural network weights
+      weight_normalization: boolean specifying whether weight normalization shall be used
+      data_normalization: (boolean) whether to normalize the data (X and Y) to exhibit zero-mean and std
+      dropout: (float) the probability of switching off nodes during training
+      random_seed: (optional) seed (int) of the random number generators used
   """
 
   def __init__(self, name, ndim_x, ndim_y, center_sampling_method='k_means', n_centers=50, keep_edges=True,
@@ -112,13 +109,13 @@ class KernelMixtureNetwork(BaseNNMixtureEstimator):
     self._build_model()
 
   def fit(self, X, Y, eval_set=None, verbose=True):
-    """ Fits the conditional density model with provided data
+    """Fits the conditional density model with provided data
 
-      Args:
-        X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
-        Y: numpy array of y targets - shape: (n_samples, n_dim_y)
-        eval_set: (tuple) eval/test set - tuple (X_test, Y_test)
-        verbose: (boolean) controls the verbosity (console output)
+    Args:
+      X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
+      Y: numpy array of y targets - shape: (n_samples, n_dim_y)
+      eval_set: (tuple) eval/test set - tuple (X_test, Y_test)
+      verbose: (boolean) controls the verbosity (console output)
     """
     X, Y = self._handle_input_dimensionality(X, Y, fitting=True)
 
@@ -149,8 +146,7 @@ class KernelMixtureNetwork(BaseNNMixtureEstimator):
       print("optimal scales: {}".format(self.sess.run(self.scales)))
 
   def _build_model(self):
-    """
-    implementation of the KMN
+    """Implementation of the KMN
     """
     with tf.variable_scope(self.name):
       # add placeholders, data_normalization and data_noise if desired. Also sets up the placeholder for dropout prob

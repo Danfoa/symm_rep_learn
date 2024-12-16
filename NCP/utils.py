@@ -1,5 +1,7 @@
-import torch
 from typing import NamedTuple
+
+import torch
+
 
 def to_np(x):
     return x.detach().cpu().numpy()
@@ -24,7 +26,8 @@ def sqrt_hermitian(A: torch.Tensor):
     # Credits to
     """Compute the square root of a Symmetric or Hermitian positive definite matrix or batch of matrices.
     Credits to  `https://github.com/pytorch/pytorch/issues/25481#issuecomment-1032789228
-    <https://github.com/pytorch/pytorch/issues/25481#issuecomment-1032789228>`_."""
+    <https://github.com/pytorch/pytorch/issues/25481#issuecomment-1032789228>`_.
+    """
     L, Q = torch.linalg.eigh(A)
     zero = torch.zeros((), device=L.device, dtype=L.dtype)
     threshold = L.max(-1).values * L.size(-1) * torch.finfo(L.dtype).eps
@@ -32,8 +35,7 @@ def sqrt_hermitian(A: torch.Tensor):
     return (Q * L.sqrt().unsqueeze(-2)) @ Q.mH
 
 def random_split(X, Y, n):
-    """
-    Randomly splits the data X into n partitions with equal size.
+    """Randomly splits the data X into n partitions with equal size.
 
     Parameters:
         X (array-like): The input data.
@@ -115,15 +117,13 @@ def filter_reduced_rank_svals(values, vectors):
     return values, vectors
 
 class FastTensorDataLoader:
-    """
-    A DataLoader-like object for a set of tensors that can be much faster than
+    """A DataLoader-like object for a set of tensors that can be much faster than
     TensorDataset + DataLoader because dataloader grabs individual indices of
     the dataset and calls cat (slow).
     Source: https://discuss.pytorch.org/t/dataloader-much-slower-than-manual-batching/27014/6
     """
     def __init__(self, *tensors, batch_size=32, shuffle=False):
-        """
-        Initialize a FastTensorDataLoader.
+        """Initialize a FastTensorDataLoader.
 
         :param *tensors: tensors to store. Must have the same length @ dim 0.
         :param batch_size: batch size to load.

@@ -1,19 +1,20 @@
 # Copyright 2017 Hugh Salimbeni, originally from https://github.com/hughsalimbeni/bayesian_benchmarks/blob/master/bayesian_benchmarks/data.py
 
-import numpy as np
-import os
-import pandas
 import logging
-from datetime import datetime
-from scipy.io import loadmat
+import os
 import pickle
 import shutil
-
+from datetime import datetime
 from urllib.request import urlopen
+
+import numpy as np
+import pandas
+from scipy.io import loadmat
+
 logging.getLogger().setLevel(logging.INFO)
 import zipfile
 
-from NCP.examples.tools.paths import DATA_PATH, BASE_SEED
+from NCP.examples.tools.paths import BASE_SEED, DATA_PATH
 
 _ALL_REGRESSION_DATATSETS = {}
 _ALL_CLASSIFICATION_DATATSETS = {}
@@ -226,7 +227,7 @@ class Classification(Dataset):
             return True
 
     def download(self):
-        logging.info('donwloading classification data. WARNING: downloading 195MB file'.format(self.name))
+        logging.info('donwloading classification data. WARNING: downloading 195MB file'.format())
 
         filename = os.path.join(DATA_PATH, 'classification_data.tar.gz')
 
@@ -766,8 +767,7 @@ evaluations = 10
 
 
 class MujocoSoftActorCriticDataset(Dataset):
-    """
-    A single Mujoco data set for one specific environment was created as follows. A soft actor-critic agent [Haarnoja et al.,
+    """A single Mujoco data set for one specific environment was created as follows. A soft actor-critic agent [Haarnoja et al.,
     Soft Actor-Critic: Off-Policy Maximum Entropy Deep Reinforcement Learning with a Stochastic Actor, ICML, 2018] was trained
     for 1 million time steps and 11 policy checkpoints created every 100,000 steps (including step 0) using the implementation
     of [Leibfried et al., A Unified Bellman Optimality Principle Combining Reward Maximization and Empowerment, arXiv, 2019].
@@ -801,8 +801,7 @@ class MujocoSoftActorCriticDataset(Dataset):
         os.remove(filename)
 
     def read_data(self):
-        """
-        `X_raw' stores concatenated observation-action vectors
+        """`X_raw' stores concatenated observation-action vectors
         `Y_raw' stores the difference vectors between the next and the current observation vectors,
                 concatenated with the scalar reward signal
         :return: X_raw [transitions x (observation_dimension + action_dimension)]

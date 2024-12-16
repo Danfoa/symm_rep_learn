@@ -55,7 +55,7 @@ class SkewNormal(BaseConditionalDensitySimulation):
               X: x to be conditioned on - numpy array of shape (n_points, ndim_x)
               Y: y target values for witch the pdf shall be evaluated - numpy array of shape (n_points, ndim_y)
 
-            Returns:
+        Returns:
               p(X|Y) conditional density values for the provided X and Y - numpy array of shape (n_points, )
         """
         X, Y = self._handle_input_dimensionality(X, Y)

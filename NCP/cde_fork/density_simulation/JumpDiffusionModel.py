@@ -1,11 +1,13 @@
 
-import numpy as np
 import math
+
+import numpy as np
+
 from .BaseConditionalDensitySimulation import BaseConditionalDensitySimulation
 
+
 class JumpDiffusionModel(BaseConditionalDensitySimulation):
-  """
-  Jump-Diffustion continous time model by Christoffersen et al. (2016), "Time-varying Crash Risk: The Role of Market Liquiditiy"
+  """Jump-Diffustion continous time model by Christoffersen et al. (2016), "Time-varying Crash Risk: The Role of Market Liquiditiy"
 
   Args:
     random_seed: seed for the random_number generator
@@ -64,16 +66,16 @@ class JumpDiffusionModel(BaseConditionalDensitySimulation):
     raise NotImplementedError
 
   def simulate_conditional(self, X):
-    """ Draws random samples from the conditional distribution
+    """Draws random samples from the conditional distribution
 
-     Args:
-       X: x to be conditioned on when drawing a sample from y ~ p(y|x) - numpy array of shape (n_samples, 3)
-          thereby x is a horizontal stack of V, L and Psi
-          -> x = (V, L, Psi)
+    Args:
+      X: x to be conditioned on when drawing a sample from y ~ p(y|x) - numpy array of shape (n_samples, 3)
+         thereby x is a horizontal stack of V, L and Psi
+         -> x = (V, L, Psi)
 
-     Returns: (X,Y)
-       - X: the x to of the conditional samples (identical with argument X)
-       - Y: Conditional random samples y drawn from p(y|x) - numpy array of shape (n_samples, 1)
+    Returns: (X,Y)
+      - X: the x to of the conditional samples (identical with argument X)
+      - Y: Conditional random samples y drawn from p(y|x) - numpy array of shape (n_samples, 1)
 
     """
     X = self._handle_input_dimensionality(X)
@@ -85,16 +87,15 @@ class JumpDiffusionModel(BaseConditionalDensitySimulation):
     return X, Y
 
   def simulate(self, n_samples=10000):
-    """ Simulates a time-series of n_samples time steps
+    """Simulates a time-series of n_samples time steps
 
-     Args:
-       samples: (int) number of samples to be drawn from the joint distribution P(X,Y)
+    Args:
+      samples: (int) number of samples to be drawn from the joint distribution P(X,Y)
 
-     Returns: (X,Y)
-       - X: horizontal stack of simulated V (spot vol), L (illigudity) and Psi (latent state) - numpy array of shape (n_samples, 3)
-       - Y: log returns drawn from P(Y|X) - numpy array of shape (n_samples, 1)
+    Returns: (X,Y)
+      - X: horizontal stack of simulated V (spot vol), L (illigudity) and Psi (latent state) - numpy array of shape (n_samples, 3)
+      - Y: log returns drawn from P(Y|X) - numpy array of shape (n_samples, 1)
     """
-
     assert n_samples > 0
     N = 1
 

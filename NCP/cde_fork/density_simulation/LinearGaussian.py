@@ -1,11 +1,12 @@
-import scipy.stats as stats
 import numpy as np
-from .BaseConditionalDensitySimulation import BaseConditionalDensitySimulation
+import scipy.stats as stats
 from scipy.stats import norm
 
+from .BaseConditionalDensitySimulation import BaseConditionalDensitySimulation
+
+
 class LinearGaussian(BaseConditionalDensitySimulation):
-  """
-  A simple, Gaussian conditional distribution where
+  """A simple, Gaussian conditional distribution where
 
   x = U(-1,1)
   y = N(y | mean = mu_slope*x+mu, scale = std_slope*x+std)
@@ -40,7 +41,7 @@ class LinearGaussian(BaseConditionalDensitySimulation):
     self.can_sample = True
 
   def pdf(self, X, Y):
-    """ Conditional probability density function p(y|x) of the underlying probability model
+    """Conditional probability density function p(y|x) of the underlying probability model
 
     Args:
       X: x to be conditioned on - numpy array of shape (n_points, ndim_x)
@@ -56,21 +57,21 @@ class LinearGaussian(BaseConditionalDensitySimulation):
     return p
 
   def cdf(self, X, Y):
-    """ Conditional cumulated probability density function P(Y < y | x) of the underlying probability model
+    """Conditional cumulated probability density function P(Y < y | x) of the underlying probability model
 
-       Args:
-         X: x to be conditioned on - numpy array of shape (n_points, ndim_x)
-         Y: y target values for witch the cdf shall be evaluated - numpy array of shape (n_points, ndim_y)
+    Args:
+      X: x to be conditioned on - numpy array of shape (n_points, ndim_x)
+      Y: y target values for witch the cdf shall be evaluated - numpy array of shape (n_points, ndim_y)
 
-       Returns:
-        P(Y < y | x) cumulated density values for the provided X and Y - numpy array of shape (n_points, )
+    Returns:
+     P(Y < y | x) cumulated density values for the provided X and Y - numpy array of shape (n_points, )
     """
     X, Y = self._handle_input_dimensionality(X, Y)
     mean = self._mean(X)
     return np.squeeze(stats.norm.cdf((Y-mean)/self._std(X)))
 
   def simulate_conditional(self, X):
-    """ Draws random samples from the conditional distribution
+    """Draws random samples from the conditional distribution
 
     Args:
       X: x to be conditioned on when drawing a sample from y ~ p(y|x) - numpy array of shape (n_samples, ndim_x)
@@ -86,7 +87,8 @@ class LinearGaussian(BaseConditionalDensitySimulation):
     return X, Y
 
   def simulate(self, n_samples=1000):
-    """ Draws random samples from the joint distribution p(x,y)
+    """Draws random samples from the joint distribution p(x,y)
+
     Args:
       n_samples: (int) number of samples to be drawn from the joint distribution
 
@@ -100,7 +102,7 @@ class LinearGaussian(BaseConditionalDensitySimulation):
     return X, Y
 
   def mean_(self, x_cond, n_samples=None):
-    """ Conditional mean of the distribution
+    """Conditional mean of the distribution
     Args:
       x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
 
@@ -112,13 +114,13 @@ class LinearGaussian(BaseConditionalDensitySimulation):
     return self._mean(x_cond)
 
   def covariance(self, x_cond, n_samples=None):
-    """ Covariance of the distribution conditioned on x_cond
+    """Covariance of the distribution conditioned on x_cond
 
-      Args:
-        x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
+    Args:
+      x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
 
-      Returns:
-        Covariances Cov[y|x] corresponding to x_cond - numpy array of shape (n_values, ndim_y, ndim_y)
+    Returns:
+      Covariances Cov[y|x] corresponding to x_cond - numpy array of shape (n_values, ndim_y, ndim_y)
     """
     assert x_cond.ndim == 2 and x_cond.shape[1] == self.ndim_x
     x_cond = self._handle_input_dimensionality(x_cond)
@@ -126,7 +128,7 @@ class LinearGaussian(BaseConditionalDensitySimulation):
     return covs.reshape((covs.shape[0],self.ndim_y, self.ndim_y))
 
   def value_at_risk(self, x_cond, alpha=0.01, **kwargs):
-    """ Computes the Value-at-Risk (VaR) of the fitted distribution. Only if ndim_y = 1
+    """Computes the Value-at-Risk (VaR) of the fitted distribution. Only if ndim_y = 1
 
     Args:
       x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
@@ -143,16 +145,16 @@ class LinearGaussian(BaseConditionalDensitySimulation):
     return VaR
 
   def conditional_value_at_risk(self, x_cond, alpha=0.01, **kwargs):
-    """ Computes the Conditional Value-at-Risk (CVaR) / Expected Shortfall of the fitted distribution. Only if ndim_y = 1
+    """Computes the Conditional Value-at-Risk (CVaR) / Expected Shortfall of the fitted distribution. Only if ndim_y = 1
 
-       Args:
-         x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
-         alpha: quantile percentage of the distribution
-         n_samples: number of samples for monte carlo model_fitting
+    Args:
+      x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
+      alpha: quantile percentage of the distribution
+      n_samples: number of samples for monte carlo model_fitting
 
-       Returns:
-         CVaR values for each x to condition on - numpy array of shape (n_values)
-       """
+    Returns:
+      CVaR values for each x to condition on - numpy array of shape (n_values)
+    """
     assert self.ndim_y == 1, "Value at Risk can only be computed when ndim_y = 1"
     x_cond = self._handle_input_dimensionality(x_cond)
     assert x_cond.ndim == 2
@@ -164,17 +166,17 @@ class LinearGaussian(BaseConditionalDensitySimulation):
     return CVaR
 
   def tail_risk_measures(self, x_cond, alpha=0.01, n_samples=10 ** 7):
-    """ Computes the Value-at-Risk (VaR) and Conditional Value-at-Risk (CVaR)
+    """Computes the Value-at-Risk (VaR) and Conditional Value-at-Risk (CVaR)
 
-        Args:
-          x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
-          alpha: quantile percentage of the distribution
-          n_samples: number of samples for monte carlo model_fitting
+    Args:
+      x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
+      alpha: quantile percentage of the distribution
+      n_samples: number of samples for monte carlo model_fitting
 
-        Returns:
-          - VaR values for each x to condition on - numpy array of shape (n_values)
-          - CVaR values for each x to condition on - numpy array of shape (n_values)
-        """
+    Returns:
+      - VaR values for each x to condition on - numpy array of shape (n_values)
+      - CVaR values for each x to condition on - numpy array of shape (n_values)
+    """
     assert self.ndim_y == 1, "Value at Risk can only be computed when ndim_y = 1"
     assert x_cond.ndim == 2
 

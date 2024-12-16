@@ -1,10 +1,10 @@
 import tensorflow as tf
+
 from .BaseNormalizingFlow import BaseNormalizingFlow
 
 
 class InvertedPlanarFlow(BaseNormalizingFlow):
-    """
-    Implements a bijector x = y + u * tanh(w_t * y + b)
+    """Implements a bijector x = y + u * tanh(w_t * y + b)
 
     Args:
         params: Tensor shape (?, 2*n_dims+1). This will be split into the parameters
@@ -31,16 +31,14 @@ class InvertedPlanarFlow(BaseNormalizingFlow):
 
     @staticmethod
     def get_param_size(n_dims):
-        """
-        :param n_dims: The dimension of the distribution to be transformed by the flow
+        """:param n_dims: The dimension of the distribution to be transformed by the flow
         :return: (int) The dimension of the parameter space for this flow, n_dims + n_dims + 1
         """
         return n_dims + n_dims + 1
 
     @staticmethod
     def _u_circ(u, w):
-        """
-        To ensure invertibility of the flow, the following condition needs to hold: w_t * u >= -1
+        """To ensure invertibility of the flow, the following condition needs to hold: w_t * u >= -1
         :return: The transformed u
         """
         wtu = tf.reduce_sum(w*u, 1, keepdims=True)
@@ -49,21 +47,18 @@ class InvertedPlanarFlow(BaseNormalizingFlow):
         return u + (m_wtu - wtu)*(w/norm_w_squared)
 
     def _wzb(self, z):
-        """
-        Computes w_t * z + b
+        """Computes w_t * z + b
         """
         return tf.reduce_sum(self._w * z, 1, keepdims=True) + self._b
 
     @staticmethod
     def _der_tanh(z):
-        """
-        Computes the derivative of hyperbolic tangent
+        """Computes the derivative of hyperbolic tangent
         """
         return 1. - tf.tanh(z) ** 2
 
     def _inverse(self, z):
-        """
-        Runs a backward pass through the bijector
+        """Runs a backward pass through the bijector
         Also checks for whether the flow is actually invertible
         """
         z = InvertedPlanarFlow._handle_input_dimensionality(z)
@@ -73,16 +68,14 @@ class InvertedPlanarFlow(BaseNormalizingFlow):
             return z + self._u * tf.tanh(self._wzb(z))
 
     def forward(self, x):
-        """
-        We don't require sampling and it would be slow, therefore it is not implemented
+        """We don't require sampling and it would be slow, therefore it is not implemented
 
         :raise NotImplementedError:
         """
         raise NotImplementedError()
 
     def _ildj(self, z):
-        """
-        Computes the ln of the absolute determinant of the jacobian
+        """Computes the ln of the absolute determinant of the jacobian
         """
         z = InvertedPlanarFlow._handle_input_dimensionality(z)
         psi = self._der_tanh(self._wzb(z)) * self._w

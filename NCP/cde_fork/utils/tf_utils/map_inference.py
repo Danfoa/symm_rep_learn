@@ -1,7 +1,7 @@
-import six
 import edward as ed
-from edward.util import copy, transform
+import six
 import tensorflow as tf
+from edward.util import copy
 
 
 class MAP_inference(ed.MAP):
@@ -11,7 +11,7 @@ class MAP_inference(ed.MAP):
     super(MAP_inference, self).__init__(**kwargs)
 
   def build_loss_and_gradients(self, var_list):
-    """Build loss function. Its automatic differentiation
+    r"""Build loss function. Its automatic differentiation
     is the gradient of
 
     $- \log p(x,z).$

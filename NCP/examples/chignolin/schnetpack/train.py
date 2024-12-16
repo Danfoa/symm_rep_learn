@@ -1,13 +1,12 @@
-import ml_confs
 from pathlib import Path
-import schnetpack
-from NCP.examples.chignolin.schnetpack.input_pipeline import TimeLaggedSampler
-from NCP.examples.chignolin.schnetpack.model import GraphNCP
-import torch
+
 import lightning
-from NCP.examples.chignolin.schnetpack.model import SchNet, SchNet_NCPOperator
-from lightning.pytorch.callbacks.model_checkpoint import ModelCheckpoint
-from torch.utils.data import random_split
+import ml_confs
+import schnetpack
+import torch
+
+from NCP.examples.chignolin.schnetpack.input_pipeline import TimeLaggedSampler
+from NCP.examples.chignolin.schnetpack.model import GraphNCP, SchNet, SchNet_NCPOperator
 
 
 def get_dataset(db_path, cutoff):

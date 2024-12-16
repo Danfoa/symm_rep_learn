@@ -1,6 +1,5 @@
 import numpy as np
 import scipy.stats as stats
-from sklearn.mixture import GaussianMixture as GMM
 
 from NCP.cde_fork.utils.misc import project_to_pos_semi_def
 
@@ -8,8 +7,7 @@ from .BaseConditionalDensitySimulation import BaseConditionalDensitySimulation
 
 
 class GaussianMixture(BaseConditionalDensitySimulation):
-    """
-    This model allows to fit and sample from a uni- bi- or multivariate Gaussian mixture model with diagonal covariance matrices.
+    """This model allows to fit and sample from a uni- bi- or multivariate Gaussian mixture model with diagonal covariance matrices.
     The mixture model is composed by a linear combination of an arbitrary number of components n_kernels. Means, covariances and weights are
     estimated by Maximum-Likelihood for each component. It is possible to specify the number of kernels to define the modality of the
     distribution and also dimensionality for both x and y. The component means are initialized randomly according to given standard
@@ -97,7 +95,7 @@ class GaussianMixture(BaseConditionalDensitySimulation):
         self.y_mean, self.y_std = self._compute_data_statistics()
 
     def pdf(self, X, Y):
-        """conditional probability density function P(Y|X)
+        """Conditional probability density function P(Y|X)
             See "Conditional Gaussian Mixture Models for Environmental Risk Mapping" [Gilardi, Bengio] for the math.
 
         Args:
@@ -107,7 +105,6 @@ class GaussianMixture(BaseConditionalDensitySimulation):
         Returns:
           the cond. distribution of Y given X, for the given realizations of X with shape:(n_samples,)
         """
-
         X, Y = self._handle_input_dimensionality(X, Y)
 
         P_y = np.stack(
@@ -120,7 +117,7 @@ class GaussianMixture(BaseConditionalDensitySimulation):
         return cond_prob
 
     def cdf(self, X, Y):
-        """conditional cumulative probability density function P(Y<y|X=x).
+        """Conditional cumulative probability density function P(Y<y|X=x).
            See "Conditional Gaussian Mixture Models for Environmental Risk Mapping" [Gilardi, Bengio] for the math.
 
         Args:
@@ -130,7 +127,6 @@ class GaussianMixture(BaseConditionalDensitySimulation):
         Returns:
           the cond. cumulative distribution of Y given X, for the given realizations of X with shape:(n_samples,)
         """
-
         X, Y = self._handle_input_dimensionality(X, Y)
 
         P_y = np.stack(
@@ -143,7 +139,7 @@ class GaussianMixture(BaseConditionalDensitySimulation):
         return cond_prob
 
     def joint_pdf(self, X, Y):
-        """joint probability density function P(X, Y)
+        """Joint probability density function P(X, Y)
 
         Args:
           X: variable X for the distribution P(X, Y), array_like, shape:(n_samples, ndim_x)
@@ -152,7 +148,6 @@ class GaussianMixture(BaseConditionalDensitySimulation):
         Returns:
           the joint distribution of X and Y wih shape:(n_samples,)
         """
-
         X, Y = self._handle_input_dimensionality(X, Y)
         XY = np.concatenate([X, Y], axis=1)
         a = [self.weights[i] * self.gaussians[i].pdf(XY) for i in range(self.n_kernels)]
@@ -168,7 +163,6 @@ class GaussianMixture(BaseConditionalDensitySimulation):
         Returns:
           Conditional random samples y drawn from p(y|x) - numpy array of shape (n_samples, ndim_y)
         """
-
         X = self._handle_input_dimensionality(X)
 
         if np.all(np.all(X == X[0, :], axis=1)):
@@ -185,7 +179,6 @@ class GaussianMixture(BaseConditionalDensitySimulation):
         Returns:
           (X,Y) - random samples drawn from p(x,y) - numpy arrays of shape (n_samples, ndim_x) and (n_samples, ndim_y)
         """
-
         assert n_samples > 0
 
         n_samples_comp = self.random_state.multinomial(n_samples, self.weights)
@@ -279,7 +272,7 @@ class GaussianMixture(BaseConditionalDensitySimulation):
         return X, y_samples
 
     def _sample_weights(self, n_weights):
-        """samples density weights -> sum up to one
+        """Samples density weights -> sum up to one
         Args:
           n_weights: number of weights
         Returns:

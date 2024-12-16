@@ -1,13 +1,14 @@
-import pandas as pd
-import traceback
-import numpy as np
 import copy
-
+import traceback
+from collections import OrderedDict
 
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 from matplotlib.pyplot import cm
-from collections import OrderedDict
+
 from NCP.cde_fork.utils import io
+
 #from NCP.cde_fork.model_fitting.ConfigRunner import ConfigRunner
 
 
@@ -57,10 +58,9 @@ class GoodnessOfFitResults:
 
   def plot_metric(self, plot_dicts, metric='hellinger_distance', keys_of_interest=None,
                   figsize=(20,8), layout=None, fig=None, color=None, log_scale_x=True, log_scale_y=True):
-    """
-    Generates a plot for a metric with axis x representing the n_observations and y representing the metric.
-    Args:
+    """Generates a plot for a metric with axis x representing the n_observations and y representing the metric.
 
+    Args:
       graph_dicts: a list of dicts, each element representing the data for one curve on the plot, example:
                     graph_dicts = [
                       { "estimator": "KernelMixtureNetwork", "x_noise_std": 0.01, "y_noise_std": 0.01},
@@ -71,7 +71,6 @@ class GoodnessOfFitResults:
       metric: must be one of the available metrics (e.g. hellinger_distance, kl_divergence etc.)
       simulator: specifies the simulator, e.g. EconDensity
     """
-
     assert self.results_df is not None, "first generate results df"
     assert metric in self.results_df
     assert plot_dicts is not None

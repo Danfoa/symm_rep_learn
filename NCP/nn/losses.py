@@ -1,9 +1,10 @@
 import torch
-from NCP.nn.functional import cme_score_cov, cme_score_Ustat, cme_score_opti
-from NCP.nn.layers import SingularLayer
+from normflows import MultiscaleFlow
+
 from NCP.model import NCPOperator
 from NCP.nn.diffusion_conditional import DDPM
-from normflows import MultiscaleFlow
+from NCP.nn.functional import cme_score_cov, cme_score_opti, cme_score_Ustat
+
 
 class CMELoss():
     def __init__(
@@ -44,7 +45,7 @@ class CMELoss():
             return cme_score_cov(X, Y, NCP, self.gamma)
         else:
             return cme_score_Ustat(X, Y, NCP, self.metric_deformation, self.center)
-        
+
 class DDPMLoss():
     def __init__(self,
             mode: str = "split",
@@ -55,7 +56,7 @@ class DDPMLoss():
 
     def __call__(self, X:torch.Tensor, Y:torch.Tensor, ddpm: DDPM):
         return ddpm(X, Y)
-    
+
 class NFLoss():
     def __init__(self,
             mode: str = "split",
@@ -63,7 +64,7 @@ class NFLoss():
             metric_deformation: float = 1.0,
             center: bool = True):
         pass
-    
+
     def __call__(self, X:torch.Tensor, Y:torch.Tensor, model: MultiscaleFlow):
         return model.forward_kld(Y, X)
 

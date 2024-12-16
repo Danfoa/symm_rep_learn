@@ -1,9 +1,11 @@
 import matplotlib as mpl
+
 mpl.use("PS") #handles X11 server detection (required to run on console)
 import numpy as np
-from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
-from NCP.cde_fork.evaluation.simulation_eval import base_experiment
 from ml_logger import logger
+
+from NCP.cde_fork.evaluation.simulation_eval import base_experiment
+from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
 
 EXP_PREFIX = 'question2_entropy_reg'
 RESULTS_FILE = 'results.pkl'

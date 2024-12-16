@@ -1,25 +1,25 @@
-from sklearn.model_selection import GridSearchCV
 import warnings
-from sklearn.model_selection import cross_validate
+
+from sklearn.model_selection import GridSearchCV, cross_validate
 
 from NCP.cde_fork import ConditionalDensity
-
 from NCP.cde_fork.utils.center_point_select import *
 
+
 class BaseDensityEstimator(ConditionalDensity):
-  """ Interface for conditional density estimation models """
+  """Interface for conditional density estimation models"""
 
   def fit(self, X, Y, verbose=False):
-    """ Fits the conditional density model with provided data
+    """Fits the conditional density model with provided data
 
-      Args:
-        X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
-        Y: numpy array of y targets - shape: (n_samples, n_dim_y)
+    Args:
+      X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
+      Y: numpy array of y targets - shape: (n_samples, n_dim_y)
     """
     raise NotImplementedError
 
   def eval_by_cv(self, X, Y, n_splits=5, verbose=True):
-    """ Fits the conditional density model with cross-validation by using the score function of the BaseDensityEstimator for
+    """Fits the conditional density model with cross-validation by using the score function of the BaseDensityEstimator for
     scoring the various splits.
 
     Args:
@@ -39,7 +39,7 @@ class BaseDensityEstimator(ConditionalDensity):
     self.fit(X, Y)
 
   def fit_by_cv(self, X, Y, n_folds=3, param_grid=None, verbose=True, n_jobs=-1, random_state=None):
-    """ Fits the conditional density model with hyperparameter search and cross-validation.
+    """Fits the conditional density model with hyperparameter search and cross-validation.
     - Determines the best hyperparameter configuration from a pre-defined set using cross-validation. Thereby,
       the conditional log-likelihood is used for simulation_eval.
     - Fits the model with the previously selected hyperparameter configuration
@@ -50,13 +50,13 @@ class BaseDensityEstimator(ConditionalDensity):
       param_grid: (optional) a dictionary with the hyperparameters of the model as key and and a list of respective \
                   parametrizations as value. The hyperparameter search is performed over the cartesian product of \
                   the provided lists.
-                  Example:
+
+    Example:
                   {"n_centers": [20, 50, 100, 200],
                    "center_sampling_method": ["agglomerative", "k_means", "random"],
                    "keep_edges": [True, False]
                   }
     """
-
     # save properties of data
     self.n_samples = X.shape[0]
     self.x_std = np.std(X, axis=0)
@@ -78,29 +78,29 @@ class BaseDensityEstimator(ConditionalDensity):
     return best_params
 
   def pdf(self, X, Y):
-    """ Predicts the conditional likelihood p(y|x). Requires the model to be fitted.
+    """Predicts the conditional likelihood p(y|x). Requires the model to be fitted.
 
-       Args:
-         X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
-         Y: numpy array of y targets - shape: (n_samples, n_dim_y)
+    Args:
+      X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
+      Y: numpy array of y targets - shape: (n_samples, n_dim_y)
 
-       Returns:
-          conditional likelihood p(y|x) - numpy array of shape (n_query_samples, )
+    Returns:
+       conditional likelihood p(y|x) - numpy array of shape (n_query_samples, )
 
-     """
+    """
     raise NotImplementedError
 
   def log_pdf(self, X, Y):
-    """ Predicts the conditional log-probability log p(y|x). Requires the model to be fitted.
+    """Predicts the conditional log-probability log p(y|x). Requires the model to be fitted.
 
-       Args:
-         X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
-         Y: numpy array of y targets - shape: (n_samples, n_dim_y)
+    Args:
+      X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
+      Y: numpy array of y targets - shape: (n_samples, n_dim_y)
 
-       Returns:
-          conditional log-probability log p(y|x) - numpy array of shape (n_query_samples, )
+    Returns:
+       conditional log-probability log p(y|x) - numpy array of shape (n_query_samples, )
 
-     """
+    """
     # This method is numerically unfavorable and should be overwritten with a numerically stable method
     with warnings.catch_warnings():
       warnings.simplefilter("ignore")
@@ -123,7 +123,7 @@ class BaseDensityEstimator(ConditionalDensity):
     return np.mean(self.log_pdf(X, Y))
 
   def mean_(self, x_cond, n_samples=10**6):
-    """ Mean of the fitted distribution conditioned on x_cond
+    """Mean of the fitted distribution conditioned on x_cond
     Args:
       x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
 
@@ -140,7 +140,7 @@ class BaseDensityEstimator(ConditionalDensity):
       return self._mean_mc(x_cond, n_samples=n_samples)
 
   def std_(self, x_cond, n_samples=10 ** 6):
-    """ Standard deviation of the fitted distribution conditioned on x_cond
+    """Standard deviation of the fitted distribution conditioned on x_cond
 
     Args:
       x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
@@ -154,7 +154,7 @@ class BaseDensityEstimator(ConditionalDensity):
     return self._std_pdf(x_cond, n_samples=n_samples)
 
   def covariance(self, x_cond, n_samples=10**6):
-    """ Covariance of the fitted distribution conditioned on x_cond
+    """Covariance of the fitted distribution conditioned on x_cond
 
     Args:
       x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
@@ -168,35 +168,35 @@ class BaseDensityEstimator(ConditionalDensity):
     return self._covariance_pdf(x_cond, n_samples=n_samples)
 
   def skewness(self, x_cond, n_samples=10**6):
-    """ Skewness of the fitted distribution conditioned on x_cond
+    """Skewness of the fitted distribution conditioned on x_cond
 
-       Args:
-         x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
+    Args:
+      x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
 
-       Returns:
-         Skewness Skew[y|x] corresponding to x_cond - numpy array of shape (n_values, ndim_y, ndim_y)
-       """
+    Returns:
+      Skewness Skew[y|x] corresponding to x_cond - numpy array of shape (n_values, ndim_y, ndim_y)
+    """
     assert self.fitted, "model must be fitted"
     x_cond = self._handle_input_dimensionality(x_cond)
     assert x_cond.ndim == 2
     return self._skewness_pdf(x_cond, n_samples=n_samples)
 
   def kurtosis(self, x_cond, n_samples=10**6):
-    """ Kurtosis of the fitted distribution conditioned on x_cond
+    """Kurtosis of the fitted distribution conditioned on x_cond
 
-       Args:
-         x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
+    Args:
+      x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
 
-       Returns:
-         Kurtosis Kurt[y|x] corresponding to x_cond - numpy array of shape (n_values, ndim_y, ndim_y)
-       """
+    Returns:
+      Kurtosis Kurt[y|x] corresponding to x_cond - numpy array of shape (n_values, ndim_y, ndim_y)
+    """
     assert self.fitted, "model must be fitted"
     x_cond = self._handle_input_dimensionality(x_cond)
     assert x_cond.ndim == 2
     return self._kurtosis_pdf(x_cond, n_samples=n_samples)
 
   def mean_std(self, x_cond, n_samples=10 ** 6):
-    """ Computes Mean and Covariance of the fitted distribution conditioned on x_cond.
+    """Computes Mean and Covariance of the fitted distribution conditioned on x_cond.
         Computationally more efficient than calling mean and covariance computatio separately
 
     Args:
@@ -210,7 +210,7 @@ class BaseDensityEstimator(ConditionalDensity):
     return mean, std
 
   def value_at_risk(self, x_cond, alpha=0.01, n_samples=10**6):
-    """ Computes the Value-at-Risk (VaR) of the fitted distribution. Only if ndim_y = 1
+    """Computes the Value-at-Risk (VaR) of the fitted distribution. Only if ndim_y = 1
 
     Args:
       x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
@@ -234,15 +234,15 @@ class BaseDensityEstimator(ConditionalDensity):
     return VaR
 
   def conditional_value_at_risk(self, x_cond, alpha=0.01, n_samples=10**6):
-    """ Computes the Conditional Value-at-Risk (CVaR) / Expected Shortfall of the fitted distribution. Only if ndim_y = 1
+    """Computes the Conditional Value-at-Risk (CVaR) / Expected Shortfall of the fitted distribution. Only if ndim_y = 1
 
-       Args:
-         x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
-         alpha: quantile percentage of the distribution
+    Args:
+      x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
+      alpha: quantile percentage of the distribution
 
-       Returns:
-         CVaR values for each x to condition on - numpy array of shape (n_values)
-       """
+    Returns:
+      CVaR values for each x to condition on - numpy array of shape (n_values)
+    """
     assert self.fitted, "model must be fitted"
     assert self.ndim_y == 1, "Value at Risk can only be computed when ndim_y = 1"
     x_cond = self._handle_input_dimensionality(x_cond)
@@ -258,7 +258,7 @@ class BaseDensityEstimator(ConditionalDensity):
       raise NotImplementedError("Distribution object must either support pdf or sampling in order to compute CVaR")
 
   def get_configuration(self, deep=True):
-    """ Get parameter configuration for this estimator.
+    """Get parameter configuration for this estimator.
 
     Args:
       deep: boolean, optional If True, will return the parameters for this estimator and \
@@ -281,17 +281,17 @@ class BaseDensityEstimator(ConditionalDensity):
     return param_dict
 
   def tail_risk_measures(self, x_cond, alpha=0.01, n_samples=10 ** 6):
-    """ Computes the Value-at-Risk (VaR) and Conditional Value-at-Risk (CVaR)
+    """Computes the Value-at-Risk (VaR) and Conditional Value-at-Risk (CVaR)
 
-        Args:
-          x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
-          alpha: quantile percentage of the distribution
-          n_samples: number of samples for monte carlo model_fitting
+    Args:
+      x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
+      alpha: quantile percentage of the distribution
+      n_samples: number of samples for monte carlo model_fitting
 
-        Returns:
-          - VaR values for each x to condition on - numpy array of shape (n_values)
-          - CVaR values for each x to condition on - numpy array of shape (n_values)
-        """
+    Returns:
+      - VaR values for each x to condition on - numpy array of shape (n_values)
+      - CVaR values for each x to condition on - numpy array of shape (n_values)
+    """
     assert self.fitted, "model must be fitted"
     assert self.ndim_y == 1, "Value at Risk can only be computed when ndim_y = 1"
     assert x_cond.ndim == 2

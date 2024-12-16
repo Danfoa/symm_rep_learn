@@ -1,66 +1,66 @@
-import itertools
-import pandas as pd
-import numpy as np
 import copy
+import itertools
 import traceback
 
+import numpy as np
+import pandas as pd
+
 """ do not remove, imports required for globals() call """
-from NCP.cde_fork.density_estimator import LSConditionalDensityEstimation, KernelMixtureNetwork, MixtureDensityNetwork, ConditionalKernelDensityEstimation, NeighborKernelDensityEstimation, NormalizingFlowEstimator
-from NCP.cde_fork.density_simulation import EconDensity, GaussianMixture, ArmaJump, JumpDiffusionModel, SkewNormal, LinearGaussian, LinearStudentT
+import base64
+import hashlib
+import os
+import time
+
+import config
+import tensorflow as tf
+from ml_logger import logger
+
 from NCP.cde_fork.model_fitting.GoodnessOfFit import GoodnessOfFit, sample_x_cond
 from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
 from NCP.cde_fork.utils import io
 from NCP.cde_fork.utils.async_executor import AsyncExecutor
-from ml_logger import logger
-import hashlib
-import base64
-import tensorflow as tf
-import os
-import config
-import time
 
 EXP_CONFIG_FILE = 'exp_configs.pkl'
 RESULTS_FILE = 'results.pkl'
 
 class ConfigRunner():
-  """
-  Args:
-    exp_prefix: (str) prefix of experiment configuration
-    est_params: dict containing estimator parametrization
-                example:
+  """Args:
+  exp_prefix: (str) prefix of experiment configuration
+  est_params: dict containing estimator parametrization
+              example:
 
-                { 'KernelMixtureNetwork':
-                          {'center_sampling_method': ["k_means"],
-                           'n_centers': [20],
-                           ...
-                           }
-                  'MixtureDensityNetwork':
-                          {
-                          ...
-                           }
-                }
+              { 'KernelMixtureNetwork':
+                        {'center_sampling_method': ["k_means"],
+                         'n_centers': [20],
+                         ...
+                         }
+                'MixtureDensityNetwork':
+                        {
+                        ...
+                         }
+              }
 
 
-    sim_params: dict containing simulator parametrization
-                example:
+  sim_params: dict containing simulator parametrization
+              example:
 
-                {'EconDensity': {'std': [1],
-                                'heteroscedastic': [True]
-                                },
+              {'EconDensity': {'std': [1],
+                              'heteroscedastic': [True]
+                              },
 
-                'GaussianMixture': { ... }
-                }
+              'GaussianMixture': { ... }
+              }
 
-    observations: either a array-like or a scalar value that defines the number of observations from the
-                    simulation model that are used to train the estimators
+  observations: either a array-like or a scalar value that defines the number of observations from the
+                  simulation model that are used to train the estimators
 
-    keys_of_interest: list of strings, each representing a column in the dataframe / csv export
+  keys_of_interest: list of strings, each representing a column in the dataframe / csv export
 
-    n_mc_samples: number of samples used for monte carlo sampling (a warning is printed if n_mc_samples is less than 10**5
+  n_mc_samples: number of samples used for monte carlo sampling (a warning is printed if n_mc_samples is less than 10**5
 
-    n_x_cond: (int) number of x conditionals to be sampled
+  n_x_cond: (int) number of x conditionals to be sampled
 
-    n_seeds: (int) number of different seeds for sampling the data
+  n_seeds: (int) number of different seeds for sampling the data
   """
 
   def __init__(self, exp_prefix, est_params, sim_params, observations, keys_of_interest, n_mc_samples=10 ** 7,
@@ -106,8 +106,7 @@ class ConfigRunner():
 
 
   def _generate_configuration_variants(self, est_params, sim_params):
-    """
-    Creates all possible combinations from the (configured) estimators and simulators.
+    """Creates all possible combinations from the (configured) estimators and simulators.
     Requires configured estimators and simulators in the constructor:
 
     Args:
@@ -119,7 +118,6 @@ class ConfigRunner():
         returned --> shape of tuples: (estimator object, simulator object)
         if n_observations is a list, n*m*o=k while o is the number of elements in n_observatons list
     """
-
     self.est_configs = _create_configurations(est_params)
     self.sim_configs = _create_configurations(sim_params)
 
@@ -163,8 +161,7 @@ class ConfigRunner():
 
   def run_configurations(self, estimator_filter=None,
                          limit=None, dump_models=False, multiprocessing=True, n_workers=None):
-    """
-    Runs the given configurations, i.e.
+    """Runs the given configurations, i.e.
     1) fits the estimator to the simulation and
     2) executes goodness-of-fit (currently: e.g. kl-divergence, wasserstein-distance etc.) tests
     Every successful run yields a result object of type GoodnessOfFitResult which contains
@@ -172,13 +169,13 @@ class ConfigRunner():
 
     such as n_samples, see GoodnessOfFitResult documentation for more information.
 
-      Args:
+    Args:
         estimator_filter: a parameter to decide whether to execute just a specific type of estimator, e.g. "KernelMixtureNetwork",
                           must be one of the density estimator class types
         limit: limit the number of (potentially filtered) tasks
         dump_models: (boolean) whether to save/dump the fitted estimators
 
-      Returns:
+    Returns:
          returns two objects: (result_list, full_df)
           1) a GoodnessOfFitResults object containing all configurations as GoodnessOfFitSingleResult objects, carrying information about the
           estimator and simulator hyperparameters as well as n_obs, n_x_cond, n_mc_samples and the statistic results.
@@ -298,12 +295,12 @@ class ConfigRunner():
 
 
   def _get_results_dataframe(self, results):
-    """ retrieves the dataframe for one or more GoodnessOfFitResults result objects.
+    """Retrieves the dataframe for one or more GoodnessOfFitResults result objects.
 
-      Args:
-          results: a list or single object of type GoodnessOfFitResults
-      Returns:
-         a pandas dataframe
+    Args:
+        results: a list or single object of type GoodnessOfFitResults
+    Returns:
+       a pandas dataframe
     """
     n_results = len(results)
     assert n_results > 0, "no results given"
@@ -403,15 +400,15 @@ def make_hash_sha256(o):
 
 # todo: might find a better place for this function
 def load_dumped_estimators(gof_result, task_id=None):
-  """
-  Loads the estimators that have been dumped during the configuration runs into a GoodnessOfFitResults object at the corresponding single
+  """Loads the estimators that have been dumped during the configuration runs into a GoodnessOfFitResults object at the corresponding single
   result entry. Assumes an ml-logger instance has been set-up and configured correctly.
-    Args:
+
+  Args:
         gof_result: a GoodnessOfFitResults object containing single result entries.
         task_id: can either be None in which case all estimators are loaded, a list or a scalar value that indicates the task number for
         which the estimator is/are loaded.
 
-      Returns:
+  Returns:
          returns the modified gof_result including the loaded estimators
   """
   assert logger

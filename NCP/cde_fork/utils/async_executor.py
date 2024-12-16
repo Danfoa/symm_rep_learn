@@ -1,8 +1,9 @@
-from multiprocessing import Process
-from multiprocessing import Manager
 import multiprocessing
+from multiprocessing import Manager, Process
+
 import numpy as np
 from progressbar.bar import ProgressBar
+
 
 class AsyncExecutor:
 
@@ -53,8 +54,7 @@ class LoopExecutor:
 
 
 def execute_batch_async_pdf(pdf_fun, X, Y, n_jobs=-1, batch_size=None):
-    """
-    Executes pdf_fun in batches in multiple processes and concatenates results along axis 0
+    """Executes pdf_fun in batches in multiple processes and concatenates results along axis 0
 
     Args:
         pdf_fun: callable with signature pdf(X, Y) returning a numpy array

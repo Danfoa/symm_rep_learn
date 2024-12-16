@@ -3,9 +3,10 @@
 #
 
 
-from NCP.cde_fork.utils.tf_utils.parameterized import Parameterized
-import NCP.cde_fork.utils.tf_utils.layers as L
 import itertools
+
+import NCP.cde_fork.utils.tf_utils.layers as L
+from NCP.cde_fork.utils.tf_utils.parameterized import Parameterized
 
 
 class LayersPowered(Parameterized):

@@ -1,26 +1,37 @@
 #%% Importing libraries
+import argparse
 import os
+from time import perf_counter
+
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
 import tensorflow as tf
-import argparse
-from tqdm import tqdm
-from NCP.metrics import compute_metrics
-from NCP.cde_fork.density_simulation import LinearGaussian, LinearStudentT, ArmaJump, SkewNormal, EconDensity, \
-                                             GaussianMixture
-from NCP.examples.tools.data_gen import LGGMD
-from NCP.cde_fork.density_estimator import KernelMixtureNetwork, NormalizingFlowEstimator, MixtureDensityNetwork, \
-    LSConditionalDensityEstimation, ConditionalKernelDensityEstimation, NeighborKernelDensityEstimation
-
-from keras.backend.tensorflow_backend import set_session
-from keras.backend.tensorflow_backend import clear_session
-from keras.backend.tensorflow_backend import get_session
-
-from time import perf_counter
+from keras.backend.tensorflow_backend import clear_session, get_session, set_session
 
 # function to convert pdf into cdf
 from scipy.integrate import cumtrapz
+from sklearn.preprocessing import StandardScaler
+from tqdm import tqdm
+
+from NCP.cde_fork.density_estimator import (
+    ConditionalKernelDensityEstimation,
+    KernelMixtureNetwork,
+    LSConditionalDensityEstimation,
+    MixtureDensityNetwork,
+    NeighborKernelDensityEstimation,
+)
+from NCP.cde_fork.density_simulation import (
+    ArmaJump,
+    EconDensity,
+    GaussianMixture,
+    LinearGaussian,
+    LinearStudentT,
+    SkewNormal,
+)
+from NCP.examples.tools.data_gen import LGGMD
+from NCP.metrics import compute_metrics
+
+
 def integrate_pdf(pdf, values):
     return cumtrapz(pdf.squeeze(), x=values.squeeze(), initial=0)
 # Reset Keras Session

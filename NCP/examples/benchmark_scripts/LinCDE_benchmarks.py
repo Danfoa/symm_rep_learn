@@ -1,16 +1,26 @@
 #%% Importing libraries
+import argparse
 import os
+import warnings
+
 import numpy as np
 import pandas as pd
-import argparse
 from sklearn.preprocessing import StandardScaler
-from NCP.metrics import compute_metrics
-from NCP.cdf import integrate_pdf
 from tqdm import tqdm
-from NCP.cde_fork.density_simulation import LinearGaussian, LinearStudentT, ArmaJump, SkewNormal, EconDensity, GaussianMixture
-from NCP.examples.tools.lincde import lincde
+
+from NCP.cde_fork.density_simulation import (
+    ArmaJump,
+    EconDensity,
+    GaussianMixture,
+    LinearGaussian,
+    LinearStudentT,
+    SkewNormal,
+)
+from NCP.cdf import integrate_pdf
 from NCP.examples.tools.data_gen import LGGMD
-import warnings
+from NCP.examples.tools.lincde import lincde
+from NCP.metrics import compute_metrics
+
 warnings.filterwarnings("ignore", ".*does not have many workers.*")
 
 def run_experiment(density_simulator, density_simulator_kwargs):

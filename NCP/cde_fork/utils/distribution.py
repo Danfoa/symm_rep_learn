@@ -27,8 +27,7 @@ def batched_univ_t_rvs(loc, scale, dof, random_state=None):
 
 
 def multidim_t_pdf(x, mu, sigma, dof):
-    '''
-    Multidimensional t-student density:
+    """Multidimensional t-student density:
 
     Args:
         x: points where to calculate the pdf - array of shape (batch_size, ndim_x)
@@ -39,7 +38,7 @@ def multidim_t_pdf(x, mu, sigma, dof):
 
     Returns:
         p: probability density p(x) - array of shape (batch_size)
-    '''
+    """
     d = mu.shape[0]
     num = gamma((d + dof) / 2.0)
     denom = gamma(dof / 2.0) * (dof * np.pi) ** (d / 2.0) * np.prod(sigma) ** 0.5 * \
@@ -50,7 +49,7 @@ def multidim_t_pdf(x, mu, sigma, dof):
 
 
 def multidim_t_rvs(mu, sigma, dof, N=1, random_state=None):
-    ''' generates random variables of multidmensional (diagonal covariance matrix)
+    """Generates random variables of multidmensional (diagonal covariance matrix)
         t distribution
 
     Args:
@@ -64,12 +63,11 @@ def multidim_t_rvs(mu, sigma, dof, N=1, random_state=None):
         rvs: ndarray, (n, len(m))
             each row is an independent draw of a multivariate t distributed
             random variable
-    '''
-
+    """
     return multivariate_t_rvs(mu, np.diag(sigma), dof, N, random_state=random_state)
 
 def multivariate_t_rvs(loc, cov, dof=np.inf, n=1, random_state=None):
-    ''' generates random variables of multivariate t distribution
+    """Generates random variables of multivariate t distribution
         Parameters
 
     Args:
@@ -83,7 +81,7 @@ def multivariate_t_rvs(loc, cov, dof=np.inf, n=1, random_state=None):
         rvs: ndarray, (n, len(m))
             each row is an independent draw of a multivariate t distributed
             random variable
-    '''
+    """
     if random_state is None:
         random_state = np.random.RandomState(None)
     loc = np.asarray(loc)

@@ -1,13 +1,11 @@
+import os
+import pickle
+
+import pandas as pd
 from ml_logger import logger
 
-from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
 from NCP.cde_fork.evaluation.simulation_eval import base_experiment
-import NCP.cde_fork.model_fitting.ConfigRunner as ConfigRunner
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-import pickle
-import os
+from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
 
 EXP_PREFIX = "question5_benchmark"
 RESULTS_FILE = "results.pkl"

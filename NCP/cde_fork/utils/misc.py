@@ -1,7 +1,8 @@
 import numpy as np
 
+
 def norm_along_axis_1(A, B, squared=False, norm_dim=False):
-    """ calculates the (squared) euclidean distance along the axis 1 of both 2d arrays
+    """Calculates the (squared) euclidean distance along the axis 1 of both 2d arrays
 
     Args:
       A: numpy array of shape (n, k)
@@ -10,7 +11,7 @@ def norm_along_axis_1(A, B, squared=False, norm_dim=False):
                otherwise the euclidean distance is returned
       norm_dim: (boolean) normalized the distance by the dimensionality k -> divides result by sqrt(k)
 
-      Returns:
+    Returns:
          euclidean distance along the axis 1 of both 2d arrays - numpy array of shape (n, m)
     """
     assert A.shape[1] == B.shape[1]
@@ -29,7 +30,7 @@ def norm_along_axis_1(A, B, squared=False, norm_dim=False):
 
 
 def is_pos_def(M):
-    """ checks whether x^T * M * x > 0, M being the matrix to be checked
+    """Checks whether x^T * M * x > 0, M being the matrix to be checked
     :param M: the matrix to be checked
     :return: True if positive definite, False otherwise
     """
@@ -40,8 +41,7 @@ def _project_to_pos_semi_def(M):
 
 
 def project_to_pos_semi_def(M):
-    """
-    Projects a symmetric matrix M (norm) or a stack of symmetric matrices M onto the cone of pos. (semi) def. matrices
+    """Projects a symmetric matrix M (norm) or a stack of symmetric matrices M onto the cone of pos. (semi) def. matrices
     :param M: Either M is a symmetric matrix of the form (m,m) or stack of k such matrices -> shape (k,m,m)
     :return: M, the projection of M or all projections of matrices in M on the cone pos. semi-def. matrices
     """
@@ -59,7 +59,7 @@ def project_to_pos_semi_def(M):
 
 
 def take(n, mydict):
-    "Return first n items of the iterable as a list"
+    """Return first n items of the iterable as a list"""
     return {k: mydict[k] for k in list(mydict)[:n]}
 
 

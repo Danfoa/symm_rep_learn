@@ -1,6 +1,7 @@
 import importlib
 import subprocess
 import sys
+
 for module in ['kooplearn', 'datasets', 'matplotlib', 'ml-confs']: # !! Add here any additional module that you need to install on top of kooplearn
     try:
         importlib.import_module(module)
@@ -9,9 +10,10 @@ for module in ['kooplearn', 'datasets', 'matplotlib', 'ml-confs']: # !! Add here
             module = 'kooplearn[full]'
         # pip install -q {module}
         subprocess.check_call([sys.executable, "-m", "pip", "install", module])
+import random
 import shutil
 from pathlib import Path
-import random
+
 from datasets import DatasetDict, interleave_datasets, load_dataset
 
 # main_path = Path(__file__).parent
@@ -21,8 +23,7 @@ from datasets import DatasetDict, interleave_datasets, load_dataset
 
 # print(noisy_data_path)
 def make_indices(configs):
-    """
-    Make indices for the noisy dataset
+    """Make indices for the noisy dataset
     
     Returns:
     indices: dict
@@ -46,10 +47,9 @@ def make_indices(configs):
                 # new_dataset[ordered_MNIST[split]["label"][ind]].append(ordered_MNIST[split]["image"][ind])
                 ind += 1
     return indices
-            
+
 def make_noisy_dataset(configs, data_path, noisy_data_path):
-    """
-    Make the noisy dataset and save it to disk
+    """Make the noisy dataset and save it to disk
     
     """
     # Data pipeline
@@ -58,7 +58,7 @@ def make_noisy_dataset(configs, data_path, noisy_data_path):
     digit_ds = []
     for i in range(configs.classes):
         digit_ds.append(MNIST.filter(lambda example: example["label"] == i, keep_in_memory=False, num_proc=8))
-    
+
     # print(len(digit_ds), digit_ds[0])
 
     ordered_MNIST = DatasetDict()
@@ -66,10 +66,10 @@ def make_noisy_dataset(configs, data_path, noisy_data_path):
     indices = make_indices(configs)
     # Order the digits in the dataset and select only a subset of the data
     for split in ["train", "test"]:
-        ordered_MNIST[split] = interleave_datasets([ds[split] for ds in digit_ds], split=split, seed=configs.rng_seed)  
+        ordered_MNIST[split] = interleave_datasets([ds[split] for ds in digit_ds], split=split, seed=configs.rng_seed)
         Noisy_ordered_MNIST[split] = ordered_MNIST[split].select(indices=indices[split])
         ordered_MNIST[split] = ordered_MNIST[split].select(range(configs[f"{split}_samples"]))
-    
+
     _tmp_ds = Noisy_ordered_MNIST["train"].train_test_split(test_size=configs.val_ratio, shuffle=False, seed=configs.rng_seed)
     Noisy_ordered_MNIST["train"] = _tmp_ds["train"]
     Noisy_ordered_MNIST["validation"] = _tmp_ds["test"]
@@ -121,7 +121,7 @@ def main(configs):
         shutil.rmtree(data_path)
         shutil.rmtree(noisy_data_path)
         make_noisy_dataset(configs, data_path, noisy_data_path)
-            
+
         # else:
         #     print("Data already preprocessed.")
 

@@ -1,16 +1,16 @@
-from NCP.cde_fork.density_simulation import *
-from NCP.cde_fork.density_estimator import *
-from NCP.cde_fork.evaluation.simulation_eval import base_experiment
-from ml_logger import logger
-from NCP.cde_fork.utils.misc import take_of_type
-from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
-import NCP.cde_fork.model_fitting.ConfigRunner as ConfigRunner
-import tensorflow as tf
 import os
 import pickle
+
 import matplotlib.pyplot as plt
+import tensorflow as tf
+from ml_logger import logger
 
-
+import NCP.cde_fork.model_fitting.ConfigRunner as ConfigRunner
+from NCP.cde_fork.density_estimator import *
+from NCP.cde_fork.density_simulation import *
+from NCP.cde_fork.evaluation.simulation_eval import base_experiment
+from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
+from NCP.cde_fork.utils.misc import take_of_type
 
 
 def fit_and_plot_estimated_vs_original_2D(estimator, simulator, n_samples):
@@ -58,8 +58,7 @@ def comparison_plot2d_sim_est(est, sim, x_cond=[1.0, 2.0], ylim=(-4,8), resoluti
 
 
 def get_density_plots(estimators_list, simulators_dict, path_to_results, exp_prefix="question1_noise_reg_x", task_ids=None):
-  """
-  This function allows to compare plots from estimators and simulators (i.e. fitted and true densities). Two modes are currently available:
+  """This function allows to compare plots from estimators and simulators (i.e. fitted and true densities). Two modes are currently available:
   1) by specifying estimators and simulator, the function picks one result pair randomly that matches the given simulator/estimator
   selection
   2) by specifying the task_ids as list, it is possible to pick specific plots to compare
@@ -74,7 +73,6 @@ def get_density_plots(estimators_list, simulators_dict, path_to_results, exp_pre
   Returns:
     A list of figures for fitted and true densities.
   """
-
   if task_ids is not None:
     assert type(task_ids) == list
     assert len(task_ids) == len(estimators_list)

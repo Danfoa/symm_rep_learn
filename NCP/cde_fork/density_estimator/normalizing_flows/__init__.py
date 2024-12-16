@@ -1,7 +1,7 @@
+from .AffineFlow import AffineFlow
+from .IdentityFlow import IdentityFlow
 from .PlanarFlow import InvertedPlanarFlow
 from .RadialFlow import InvertedRadialFlow
-from .IdentityFlow import IdentityFlow
-from .AffineFlow import AffineFlow
 
 FLOWS = {
     'planar': InvertedPlanarFlow,

@@ -1,29 +1,33 @@
-import numpy as np
+import os
+import pickle
 
+import lightning as L
+import normflows as nf
+import numpy as np
+import pandas as pd
 import torch
+from deel.puncc.regression import SplitCP
+from lightning.pytorch.callbacks.early_stopping import EarlyStopping
+from lightning.pytorch.callbacks.model_checkpoint import ModelCheckpoint
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.preprocessing import StandardScaler
 from torch.optim import Adam
-from NCP.model import NCPOperator, NCPModule
+from tqdm import tqdm
+
+from NCP.cdf import (
+    compute_coverage,
+    compute_coverage_length,
+    compute_marginal,
+    integrate_pdf,
+    quantile_regression,
+    quantile_regression_from_cdf,
+)
+from NCP.metrics import smooth_cdf
+from NCP.model import NCPModule, NCPOperator
 from NCP.nn.layers import MLP
 from NCP.nn.losses import CMELoss
 from NCP.nn.nf_module import NFModule
-from NCP.utils import from_np, FastTensorDataLoader
-import lightning as L
-from lightning.pytorch.callbacks.early_stopping import EarlyStopping
-from lightning.pytorch.callbacks.model_checkpoint import ModelCheckpoint
-import pandas as pd
-from NCP.metrics import smooth_cdf
-from NCP.cdf import compute_marginal, quantile_regression, quantile_regression_from_cdf, compute_coverage, compute_coverage_length, integrate_pdf
-
-from sklearn.preprocessing import StandardScaler
-from tqdm import tqdm
-
-import normflows as nf
-
-from deel.puncc.regression import SplitCP
-from sklearn.ensemble import RandomForestRegressor
-
-import pickle
-import os
+from NCP.utils import FastTensorDataLoader, from_np
 
 datasets = ['students']
 NEXP = 10
@@ -85,7 +89,7 @@ for d in datasets:
         }
 
     for m in ['ncp_c', 'ncp_w', 'nf', 'rfcc']:
-        if not m in quantiles.keys():
+        if m not in quantiles.keys():
             quantiles[m] = {}
             coverage[m] = np.zeros((NEXP, len(alphas)))
             size[m] = np.zeros((NEXP, len(alphas)))
@@ -290,7 +294,7 @@ for d in datasets:
             num_blocks = 2
             flows = []
             for i in range(num_flows):
-                flows += [nf.flows.AutoregressiveRationalQuadraticSpline(latent_size, num_blocks, hidden_units, 
+                flows += [nf.flows.AutoregressiveRationalQuadraticSpline(latent_size, num_blocks, hidden_units,
                                                             num_context_channels=X_train.shape[-1])]
                 flows += [nf.flows.LULinearPermute(latent_size)]
 
@@ -329,7 +333,7 @@ for d in datasets:
             best_model = torch.load(ckpt_path + '/best_model.pt').to('cpu')
             print(checkpoint_callback.best_model_path)
 
-            # Test coverage on test set            
+            # Test coverage on test set
             for a, alpha in enumerate(alphas):
                 quants = []
                 for i, xi in enumerate(tqdm(X_test)):

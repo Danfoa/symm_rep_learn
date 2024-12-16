@@ -1,21 +1,21 @@
-import numpy as np
-import tensorflow as tf
-import sklearn
-import os
 import itertools
+import os
 import warnings
 from multiprocessing import Manager
 
-from NCP.cde_fork.utils.tf_utils.layers_powered import LayersPowered
+import numpy as np
+import sklearn
+import tensorflow as tf
+
 import NCP.cde_fork.utils.tf_utils.layers as L
-from NCP.cde_fork.utils.serializable import Serializable
-from NCP.cde_fork.utils.async_executor import AsyncExecutor
 from NCP.cde_fork.density_estimator.BaseDensityEstimator import BaseDensityEstimator
+from NCP.cde_fork.utils.async_executor import AsyncExecutor
+from NCP.cde_fork.utils.serializable import Serializable
+from NCP.cde_fork.utils.tf_utils.layers_powered import LayersPowered
 
 
 class BaseNNEstimator(LayersPowered, Serializable, BaseDensityEstimator):
-    """
-    Base class for a density estimator using a neural network to parametrize the distribution p(y|x)
+    """Base class for a density estimator using a neural network to parametrize the distribution p(y|x)
     To use this class, implement pdf_, cdf_ and log_pdf_ or overwrite the parent methods
     To use the hyperparameter search, also implement reset_fit and (optionally) _param_grid()
     """
@@ -34,14 +34,13 @@ class BaseNNEstimator(LayersPowered, Serializable, BaseDensityEstimator):
     dropout = 0.0
 
     def reset_fit(self):
-        """
-        Reset all tensorflow objects to enable the model to be trained again
+        """Reset all tensorflow objects to enable the model to be trained again
         :return:
         """
         raise NotImplementedError()
 
     def fit_by_cv(self, X, Y, n_folds=3, param_grid=None, random_state=None, verbose=True, n_jobs=-1):
-        """ Fits the conditional density model with hyperparameter search and cross-validation.
+        """Fits the conditional density model with hyperparameter search and cross-validation.
 
         - Determines the best hyperparameter configuration from a pre-defined set using cross-validation. Thereby,
           the conditional log-likelihood is used for simulation_eval.
@@ -138,16 +137,16 @@ class BaseNNEstimator(LayersPowered, Serializable, BaseDensityEstimator):
         return selected_params
 
     def pdf(self, X, Y):
-        """ Predicts the conditional probability p(y|x). Requires the model to be fitted.
+        """Predicts the conditional probability p(y|x). Requires the model to be fitted.
 
-           Args:
-             X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
-             Y: numpy array of y targets - shape: (n_samples, n_dim_y)
+        Args:
+          X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
+          Y: numpy array of y targets - shape: (n_samples, n_dim_y)
 
-           Returns:
-              conditional probability p(y|x) - numpy array of shape (n_query_samples, )
+        Returns:
+           conditional probability p(y|x) - numpy array of shape (n_query_samples, )
 
-         """
+        """
         assert self.fitted, "model must be fitted to compute likelihood score"
         X, Y = self._handle_input_dimensionality(X, Y, fitting=False)
         p = self.sess.run(self.pdf_, feed_dict={self.X_ph: X, self.Y_ph: Y})
@@ -155,14 +154,14 @@ class BaseNNEstimator(LayersPowered, Serializable, BaseDensityEstimator):
         return p
 
     def cdf(self, X, Y):
-        """ Predicts the conditional cumulative probability p(Y<=y|X=x). Requires the model to be fitted.
+        """Predicts the conditional cumulative probability p(Y<=y|X=x). Requires the model to be fitted.
 
-           Args:
-             X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
-             Y: numpy array of y targets - shape: (n_samples, n_dim_y)
+        Args:
+          X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
+          Y: numpy array of y targets - shape: (n_samples, n_dim_y)
 
-           Returns:
-             conditional cumulative probability p(Y<=y|X=x) - numpy array of shape (n_query_samples, )
+        Returns:
+          conditional cumulative probability p(Y<=y|X=x) - numpy array of shape (n_query_samples, )
 
         """
         assert self.fitted, "model must be fitted to compute likelihood score"
@@ -172,16 +171,16 @@ class BaseNNEstimator(LayersPowered, Serializable, BaseDensityEstimator):
         return p
 
     def log_pdf(self, X, Y):
-        """ Predicts the conditional log-probability log p(y|x). Requires the model to be fitted.
+        """Predicts the conditional log-probability log p(y|x). Requires the model to be fitted.
 
-           Args:
-             X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
-             Y: numpy array of y targets - shape: (n_samples, n_dim_y)
+        Args:
+          X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
+          Y: numpy array of y targets - shape: (n_samples, n_dim_y)
 
-           Returns:
-              onditional log-probability log p(y|x) - numpy array of shape (n_query_samples, )
+        Returns:
+           onditional log-probability log p(y|x) - numpy array of shape (n_query_samples, )
 
-         """
+        """
         assert self.fitted, "model must be fitted to compute likelihood score"
         X, Y = self._handle_input_dimensionality(X, Y, fitting=False)
         p = self.sess.run(self.log_pdf_, feed_dict={self.X_ph: X, self.Y_ph: Y})

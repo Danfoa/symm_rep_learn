@@ -2,33 +2,34 @@ import numpy as np
 import statsmodels.api as sm
 
 from NCP.cde_fork.utils.async_executor import execute_batch_async_pdf
+
 from .BaseDensityEstimator import BaseDensityEstimator
 
 MULTIPROC_THRESHOLD = 10**4
 
 class ConditionalKernelDensityEstimation(BaseDensityEstimator):
-  """ ConditionalKernelDensityEstimation (CKDE): Nonparametric conditional density estimator that
-      models the joint probability p(x,y) and marginal probability p(x) via kernel density estimation
-      and computes the conditional density as p(y|x) = p(x, y) / p(x). This implementation wraps
-      functionality of the statsmodels.nonparametric module.
+  """ConditionalKernelDensityEstimation (CKDE): Nonparametric conditional density estimator that
+  models the joint probability p(x,y) and marginal probability p(x) via kernel density estimation
+  and computes the conditional density as p(y|x) = p(x, y) / p(x). This implementation wraps
+  functionality of the statsmodels.nonparametric module.
 
-      Args:
-          name: (str) name / identifier of estimator
-          ndim_x: (int) dimensionality of x variable
-          ndim_y: (int) dimensionality of y variable
-          bandwidth: (array_like or str)
-            If an array, it is a fixed user-specified bandwidth.  If a string,
-            should be one of:
+  Args:
+      name: (str) name / identifier of estimator
+      ndim_x: (int) dimensionality of x variable
+      ndim_y: (int) dimensionality of y variable
+      bandwidth: (array_like or str)
+        If an array, it is a fixed user-specified bandwidth.  If a string,
+        should be one of:
 
-            - normal_reference: normal reference rule of thumb (default)
-            - cv_ml: cross validation maximum likelihood
-            - cv_ls: cross validation least squares
-          n_jobs: (int) number of jobs to launch for calls with large batch sizes
-          random_seed: (optional) seed (int) of the random number generators used
+        - normal_reference: normal reference rule of thumb (default)
+        - cv_ml: cross validation maximum likelihood
+        - cv_ls: cross validation least squares
+      n_jobs: (int) number of jobs to launch for calls with large batch sizes
+      random_seed: (optional) seed (int) of the random number generators used
 
-      References:
-          Racine, J., Li, Q. Nonparametric econometrics: theory and practice.
-          Princeton University Press. (2007)
+  References:
+      Racine, J., Li, Q. Nonparametric econometrics: theory and practice.
+      Princeton University Press. (2007)
   """
 
   def __init__(self, name='CKDE', ndim_x=None, ndim_y=None, bandwidth='normal_reference', n_jobs=-1, random_seed=None):
@@ -49,11 +50,11 @@ class ConditionalKernelDensityEstimation(BaseDensityEstimator):
 
 
   def fit(self, X, Y, **kwargs):
-    """ Since CKDE is a lazy learner, fit just stores the provided training data (X,Y)
+    """Since CKDE is a lazy learner, fit just stores the provided training data (X,Y)
 
-      Args:
-        X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
-        Y: numpy array of y targets - shape: (n_samples, n_dim_y)
+    Args:
+      X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
+      Y: numpy array of y targets - shape: (n_samples, n_dim_y)
 
     """
     X, Y = self._handle_input_dimensionality(X, Y, fitting=True)
@@ -68,16 +69,16 @@ class ConditionalKernelDensityEstimation(BaseDensityEstimator):
     self.has_cdf = True
 
   def pdf(self, X, Y):
-    """ Predicts the conditional likelihood p(y|x). Requires the model to be fitted.
+    """Predicts the conditional likelihood p(y|x). Requires the model to be fitted.
 
-       Args:
-         X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
-         Y: numpy array of y targets - shape: (n_samples, n_dim_y)
+    Args:
+      X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
+      Y: numpy array of y targets - shape: (n_samples, n_dim_y)
 
-       Returns:
-          conditional likelihood p(y|x) - numpy array of shape (n_query_samples, )
+    Returns:
+       conditional likelihood p(y|x) - numpy array of shape (n_query_samples, )
 
-     """
+    """
     X,Y = self._handle_input_dimensionality(X, Y)
 
     n_samples = X.shape[0]
@@ -87,7 +88,7 @@ class ConditionalKernelDensityEstimation(BaseDensityEstimator):
       return self.sm_kde.pdf(endog_predict=Y, exog_predict=X)
 
   def cdf(self, X, Y):
-    """ Predicts the conditional cumulative probability p(Y<=y|X=x). Requires the model to be fitted.
+    """Predicts the conditional cumulative probability p(Y<=y|X=x). Requires the model to be fitted.
 
     Args:
       X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)

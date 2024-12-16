@@ -1,7 +1,8 @@
 import torch
-from NCP.nn.layers import SingularLayer
+
 from NCP.model import NCPOperator
 from NCP.utils import cross_cov, random_split
+
 
 def robust_cov(X, tol=1e-5):
     C = torch.cov(X)
@@ -60,7 +61,7 @@ def cme_score_cov(X:torch.Tensor, Y:torch.Tensor, NCP:NCPOperator, gamma:float):
         return loss + gamma * loss_on
     else:
         return loss
-    
+
 
 def cme_score_opti(X:torch.Tensor, Y:torch.Tensor, NCP:NCPOperator, gamma:float):
     X1, X2, Y1, Y2 = random_split(X, Y, 2)
@@ -121,7 +122,7 @@ def cme_score_Ustat(
         return score
 
 def log_fro_metric_deformation_loss(cov: torch.tensor):
-    """Logarithmic + Frobenious metric deformation loss as used in :footcite:t:`Kostic2023DPNets`, defined as :math:`{{\\rm Tr}}(C^{2} - C -\ln(C))` .
+    """Logarithmic + Frobenious metric deformation loss as used in :footcite:t:`Kostic2023DPNets`, defined as :math:`{{\\rm Tr}}(C^{2} - C -\\ln(C))` .
 
     Args:
         cov (torch.tensor): A symmetric positive-definite matrix.

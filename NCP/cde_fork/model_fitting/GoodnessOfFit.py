@@ -1,17 +1,18 @@
-import time
-import numpy as np
 import logging
+import time
+
 import matplotlib.pyplot as plt
+import numpy as np
 from ml_logger import logger
 
 from NCP.cde_fork.density_estimator.BaseDensityEstimator import BaseDensityEstimator
 from NCP.cde_fork.density_simulation import BaseConditionalDensitySimulation
-from NCP.cde_fork.model_fitting.GoodnessOfFitSingleResult import GoodnessOfFitSingleResult
 from NCP.cde_fork.model_fitting.divergences import divergence_measures_pdf
+from NCP.cde_fork.model_fitting.GoodnessOfFitSingleResult import GoodnessOfFitSingleResult
 
 
 class GoodnessOfFit:
-  """ Class that takes an estimator a probabilistic simulation model. The estimator is fitted on n_obervation samples.
+  """Class that takes an estimator a probabilistic simulation model. The estimator is fitted on n_obervation samples.
   Then the goodness of fit w.r.t to the true probability distribution is evaluated
 
   Args:
@@ -59,13 +60,11 @@ class GoodnessOfFit:
       self.task_name = type(self.estimator).__name__ + '_' + type(self.probabilistic_model).__name__
 
   def fit_estimator(self, print_fit_result=True): #todo set to False
-    """
-    Fits the estimator with the provided data
+    """Fits the estimator with the provided data
 
     Args:
       print_fit_result: boolean that specifies whether the fitted distribution shall be plotted (only works if ndim_x and ndim_y = 1)
     """
-
     self.time_to_fit = None
     if not self.estimator.fitted:  # fit estimator if necessary
       t_start = time.time()
@@ -87,11 +86,10 @@ class GoodnessOfFit:
         plt.close(plt3d)
 
   def compute_results(self):
-    """
-      Computes statistics and stores the results in GoodnessOfFitResult object
+    """Computes statistics and stores the results in GoodnessOfFitResult object
 
-      Returns:
-        GoodnessOfFitResult object that holds the computed statistics
+    Returns:
+      GoodnessOfFitResult object that holds the computed statistics
     """
     assert self.x_cond.all()
     assert self.estimator is not None
@@ -157,8 +155,7 @@ class GoodnessOfFit:
 
 
 def sample_x_cond(X, n_x_cond=20, low_percentile = 10, high_percentile=90, random_seed=92):
-  """
-  uniformly samples n_xcond points within the specified percentiles in X
+  """Uniformly samples n_xcond points within the specified percentiles in X
 
   Args:
     X: data on which the percentiles shall be computed - ndarray with shape (n_samples, ndim_x)

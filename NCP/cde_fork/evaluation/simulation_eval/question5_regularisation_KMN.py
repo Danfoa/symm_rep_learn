@@ -2,9 +2,8 @@ import matplotlib as mpl
 
 mpl.use("PS")  # handles X11 server detection (required to run on console)
 import numpy as np
-from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
+
 from NCP.cde_fork.evaluation.simulation_eval import base_experiment
-from ml_logger import logger
 
 EXP_PREFIX = 'question5_regularisation_KMN'
 RESULTS_FILE = 'results.pkl'

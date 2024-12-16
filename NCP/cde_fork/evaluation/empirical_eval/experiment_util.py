@@ -1,18 +1,15 @@
-from multiprocessing import Manager
-from NCP.cde_fork.utils.async_executor import AsyncExecutor, LoopExecutor
-import numpy as np
-import tensorflow as tf
-import pandas as pd
 import copy
-from pprint import pprint
-from ml_logger import logger
 import itertools
+from multiprocessing import Manager
+from pprint import pprint
 
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from ml_logger import logger
 
-from NCP.cde_fork.density_estimator import LSConditionalDensityEstimation, KernelMixtureNetwork, MixtureDensityNetwork, \
-    ConditionalKernelDensityEstimation, NeighborKernelDensityEstimation, NormalizingFlowEstimator
+from NCP.cde_fork.utils.async_executor import AsyncExecutor, LoopExecutor
 
-from NCP.cde_fork.evaluation.empirical_eval.datasets import BostonHousing
 
 def run_benchmark_train_test_fit_cv(dataset, model_dict, seed=27, n_jobs_inner=-1, n_jobc_outer=1, n_train_valid_splits=1,
                                     shuffle_splits=True, n_eval_seeds=1, n_folds=5):
@@ -141,7 +138,7 @@ def run_benchmark_train_test_fit_cv_ml(dataset, model_dict, seed=27, n_train_val
 """ helpers """
 
 def _initialize_model_cv(model_key, conf_dict, verbose=False):
-    ''' make kartesian product of listed parameters per model '''
+    """Make kartesian product of listed parameters per model"""
     assert 'estimator' in conf_dict.keys()
     estimator = conf_dict.pop('estimator')
     param_dict_cv = {}

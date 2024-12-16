@@ -1,25 +1,35 @@
 #%% Importing libraries
+import argparse
 import os
 import time
+import warnings
+
+import lightning as L
 import numpy as np
 import pandas as pd
-import argparse
 import torch
-from torch.optim import Adam
-from sklearn.preprocessing import StandardScaler
-import lightning as L
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from lightning.pytorch.callbacks.model_checkpoint import ModelCheckpoint
-from NCP.utils import from_np, FastTensorDataLoader
-from NCP.nn.losses import DDPMLoss
-from NCP.metrics import compute_metrics
-from NCP.cdf import compute_marginal
+from sklearn.preprocessing import StandardScaler
+from torch.optim import Adam
 from tqdm import tqdm
-from NCP.nn.diffusion_conditional import DDPM, ContextUnet
-from NCP.nn.ddpm_module import DDPMModule
-from NCP.cde_fork.density_simulation import LinearGaussian, LinearStudentT, ArmaJump, SkewNormal, EconDensity, GaussianMixture
+
+from NCP.cde_fork.density_simulation import (
+    ArmaJump,
+    EconDensity,
+    GaussianMixture,
+    LinearGaussian,
+    LinearStudentT,
+    SkewNormal,
+)
+from NCP.cdf import compute_marginal
 from NCP.examples.tools.data_gen import LGGMD
-import warnings
+from NCP.metrics import compute_metrics
+from NCP.nn.ddpm_module import DDPMModule
+from NCP.nn.diffusion_conditional import DDPM, ContextUnet
+from NCP.nn.losses import DDPMLoss
+from NCP.utils import FastTensorDataLoader, from_np
+
 warnings.filterwarnings("ignore", ".*does not have many workers.*")
 
 # function to convert pdf into cdf
@@ -27,6 +37,7 @@ def pdf2cdf(pdf, step):
     return np.cumsum(pdf * step, -1)
 
 from scipy.stats import ecdf
+
 
 def cdf_from_sample(model:DDPM, x, ys, N=1000):
     samples, _ = model.sample(x, N, device=model.device)

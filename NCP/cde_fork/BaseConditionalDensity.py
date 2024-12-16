@@ -1,14 +1,12 @@
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import scipy
-import scipy.stats as stats
 from matplotlib import cm
-from mpl_toolkits.mplot3d import Axes3D
 from sklearn.base import BaseEstimator
 
 from NCP.cde_fork.utils.center_point_select import *
 from NCP.cde_fork.utils.integration import mc_integration_student_t, numeric_integation
-from NCP.cde_fork.utils.optimizers import find_root_by_bounding, find_root_newton_method
+from NCP.cde_fork.utils.optimizers import find_root_by_bounding
 
 """ Default Numerical Integration Standards"""
 N_SAMPLES_INT = 10**5

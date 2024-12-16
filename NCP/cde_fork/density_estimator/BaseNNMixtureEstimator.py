@@ -1,18 +1,18 @@
-from scipy.stats import norm, multivariate_normal
-from sklearn.mixture import GaussianMixture
 import numpy as np
 import tensorflow as tf
+from scipy.stats import multivariate_normal, norm
+from sklearn.mixture import GaussianMixture
 
 from NCP.cde_fork.density_estimator.BaseNNEstimator import BaseNNEstimator
-from NCP.cde_fork.utils.tf_utils.map_inference import MAP_inference
 from NCP.cde_fork.utils.tf_utils.adamW import AdamWOptimizer
+from NCP.cde_fork.utils.tf_utils.map_inference import MAP_inference
 
 
 class BaseNNMixtureEstimator(BaseNNEstimator):
   weight_decay = 0.0
 
   def mean_(self, x_cond, n_samples=None):
-    """ Mean of the fitted distribution conditioned on x_cond
+    """Mean of the fitted distribution conditioned on x_cond
     Args:
       x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
 
@@ -31,7 +31,7 @@ class BaseNNMixtureEstimator(BaseNNEstimator):
     return means
 
   def std_(self, x_cond, n_samples=10 ** 6):
-    """ Standard deviation of the fitted distribution conditioned on x_cond
+    """Standard deviation of the fitted distribution conditioned on x_cond
 
     Args:
       x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
@@ -43,13 +43,13 @@ class BaseNNMixtureEstimator(BaseNNEstimator):
     return np.sqrt(np.diagonal(covs, axis1=1, axis2=2))
 
   def covariance(self, x_cond, n_samples=None):
-    """ Covariance of the fitted distribution conditioned on x_cond
+    """Covariance of the fitted distribution conditioned on x_cond
 
-      Args:
-        x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
+    Args:
+      x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
 
-      Returns:
-        Covariances Cov[y|x] corresponding to x_cond - numpy array of shape (n_values, ndim_y, ndim_y)
+    Returns:
+      Covariances Cov[y|x] corresponding to x_cond - numpy array of shape (n_values, ndim_y, ndim_y)
     """
     assert self.fitted, "model must be fitted"
     x_cond = self._handle_input_dimensionality(x_cond)
@@ -73,7 +73,7 @@ class BaseNNMixtureEstimator(BaseNNEstimator):
     return covs
 
   def mean_std(self, x_cond, n_samples=None):
-    """ Computes Mean and Covariance of the fitted distribution conditioned on x_cond.
+    """Computes Mean and Covariance of the fitted distribution conditioned on x_cond.
         Computationally more efficient than calling mean and covariance computatio separately
 
     Args:
@@ -87,14 +87,14 @@ class BaseNNMixtureEstimator(BaseNNEstimator):
     return mean, std
 
   def sample(self, X):
-    """ sample from the conditional mixture distributions - requires the model to be fitted
+    """Sample from the conditional mixture distributions - requires the model to be fitted
 
-      Args:
-        X: values to be conditioned on when sampling - numpy array of shape (n_instances, n_dim_x)
+    Args:
+      X: values to be conditioned on when sampling - numpy array of shape (n_instances, n_dim_x)
 
-      Returns: tuple (X, Y)
-        - X - the values to conditioned on that were provided as argument - numpy array of shape (n_samples, ndim_x)
-        - Y - conditional samples from the model p(y|x) - numpy array of shape (n_samples, ndim_y)
+    Returns: tuple (X, Y)
+      - X - the values to conditioned on that were provided as argument - numpy array of shape (n_samples, ndim_x)
+      - Y - conditional samples from the model p(y|x) - numpy array of shape (n_samples, ndim_y)
     """
     assert self.fitted, "model must be fitted to compute likelihood score"
     assert self.can_sample
@@ -107,18 +107,18 @@ class BaseNNMixtureEstimator(BaseNNEstimator):
       return self._sample_rows_individually(X)
 
   def conditional_value_at_risk(self, x_cond, alpha=0.01, n_samples=10**7):
-    """ Computes the Conditional Value-at-Risk (CVaR) / Expected Shortfall of a GMM. Only if ndim_y = 1
+    """Computes the Conditional Value-at-Risk (CVaR) / Expected Shortfall of a GMM. Only if ndim_y = 1
 
-        Based on formulas from section 2.3.2 in "Expected shortfall for distributions in finance",
-        Simon A. Broda, Marc S. Paolella, 2011
+     Based on formulas from section 2.3.2 in "Expected shortfall for distributions in finance",
+     Simon A. Broda, Marc S. Paolella, 2011
 
-       Args:
-         x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
-         alpha: quantile percentage of the distribution
+    Args:
+      x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
+      alpha: quantile percentage of the distribution
 
-       Returns:
-         CVaR values for each x to condition on - numpy array of shape (n_values)
-       """
+    Returns:
+      CVaR values for each x to condition on - numpy array of shape (n_values)
+    """
     assert self.fitted, "model must be fitted"
     assert self.ndim_y == 1, "Value at Risk can only be computed when ndim_y = 1"
     x_cond = self._handle_input_dimensionality(x_cond)
@@ -128,17 +128,17 @@ class BaseNNMixtureEstimator(BaseNNEstimator):
     return self._conditional_value_at_risk_mixture(VaRs, x_cond, alpha=alpha)
 
   def tail_risk_measures(self, x_cond, alpha=0.01, n_samples=10 ** 7):
-    """ Computes the Value-at-Risk (VaR) and Conditional Value-at-Risk (CVaR)
+    """Computes the Value-at-Risk (VaR) and Conditional Value-at-Risk (CVaR)
 
-        Args:
-          x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
-          alpha: quantile percentage of the distribution
-          n_samples: number of samples for monte carlo model_fitting
+    Args:
+      x_cond: different x values to condition on - numpy array of shape (n_values, ndim_x)
+      alpha: quantile percentage of the distribution
+      n_samples: number of samples for monte carlo model_fitting
 
-        Returns:
-          - VaR values for each x to condition on - numpy array of shape (n_values)
-          - CVaR values for each x to condition on - numpy array of shape (n_values)
-        """
+    Returns:
+      - VaR values for each x to condition on - numpy array of shape (n_values)
+      - CVaR values for each x to condition on - numpy array of shape (n_values)
+    """
     assert self.fitted, "model must be fitted"
     assert self.ndim_y == 1, "Value at Risk can only be computed when ndim_y = 1"
     assert x_cond.ndim == 2
@@ -150,8 +150,7 @@ class BaseNNMixtureEstimator(BaseNNEstimator):
     return VaRs, CVaRs
 
   def _partial_fit(self, X, Y, n_epoch=1, eval_set=None, verbose=True):
-    """
-    update model
+    """Update model
     """
     # loop over epochs
     for i in range(n_epoch):
@@ -177,11 +176,9 @@ class BaseNNMixtureEstimator(BaseNNEstimator):
         print("mean log-loss valid: {:.4f}".format(test_loss))
 
   def _conditional_value_at_risk_mixture(self, VaRs, x_cond, alpha=0.01,):
-    """
-    Based on formulas from section 2.3.2 in "Expected shortfall for distributions in finance",
+    """Based on formulas from section 2.3.2 in "Expected shortfall for distributions in finance",
     Simon A. Broda, Marc S. Paolella, 2011
     """
-
     weights, locs, scales = self._get_mixture_components(x_cond)
 
     locs = locs.reshape(locs.shape[:2])
@@ -202,7 +199,7 @@ class BaseNNMixtureEstimator(BaseNNEstimator):
     return CVaRs
 
   def _sample_rows_same(self, X):
-    """ uses efficient sklearn implementation to sample from gaussian mixture -> only works if all rows of X are the same"""
+    """Uses efficient sklearn implementation to sample from gaussian mixture -> only works if all rows of X are the same"""
     weights, locs, scales = self._get_mixture_components(np.expand_dims(X[0], axis=0))
 
     # make sure that sum of weights < 1
@@ -241,14 +238,14 @@ class BaseNNMixtureEstimator(BaseNNEstimator):
     return X, Y
 
   def cdf(self, X, Y):
-    """ Predicts the conditional cumulative probability p(Y<=y|X=x). Requires the model to be fitted.
+    """Predicts the conditional cumulative probability p(Y<=y|X=x). Requires the model to be fitted.
 
-       Args:
-         X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
-         Y: numpy array of y targets - shape: (n_samples, n_dim_y)
+    Args:
+      X: numpy array to be conditioned on - shape: (n_samples, n_dim_x)
+      Y: numpy array of y targets - shape: (n_samples, n_dim_y)
 
-       Returns:
-         conditional cumulative probability p(Y<=y|X=x) - numpy array of shape (n_query_samples, )
+    Returns:
+      conditional cumulative probability p(Y<=y|X=x) - numpy array of shape (n_query_samples, )
 
     """
     assert self.fitted, "model must be fitted to compute likelihood score"
@@ -265,8 +262,7 @@ class BaseNNMixtureEstimator(BaseNNEstimator):
     return P
 
   def reset_fit(self):
-    """
-    resets all tensorflow objects and
+    """Resets all tensorflow objects and
     :return:
     """
     tf.reset_default_graph()

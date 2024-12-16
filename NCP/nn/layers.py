@@ -1,6 +1,6 @@
 import torch
-import numpy as np
-from torch.nn import Module, Linear, Dropout, ReLU, Sequential, Conv2d, MaxPool2d
+from torch.nn import Conv2d, Dropout, Linear, MaxPool2d, Module, ReLU, Sequential
+
 
 class SingularLayer(Module):
     def __init__(self, d):
@@ -74,7 +74,7 @@ class ConvMLP(Module):
                   dropout,
                   activation,
                   iterative_whitening)
-        
+
     def forward(self, x):
         x = self.pool(self.act(self.conv1(x)))
         x = self.pool(self.act(self.conv2(x)))
@@ -91,7 +91,7 @@ class IterativeWhitening(Module):
 
         self.register_buffer('running_mean', torch.zeros(1, self.input_size))
         self.register_buffer('running_whitening_mat', torch.zeros(self.input_size, self.input_size))
-    
+
     def _compute_whitening_matrix(self, X: torch.Tensor):
         assert X.dim == 2, "Only supporting 2D Tensors"
         if X.shape[1] != self.input_size:
@@ -104,11 +104,11 @@ class IterativeWhitening(Module):
         whitening_mat = P / torch.trace(covX)
         X_mean = X.mean(0, keepdim=True)
         return X_mean, whitening_mat
-    
+
     def _update_running_stats(self, mean, whitening_mat):
         self.running_mean = self.momentum*mean + (1 - self.momentum)*self.running_mean
         self.running_whitening_mat = self.momentum*whitening_mat + (1 - self.momentum)*self.running_whitening_mat
-    
+
     def forward(self, X: torch.Tensor):
         self._update_running_stats(self._compute_whitening_matrix(X))
         return (X - self.running_mean)@self.running_whitening_mat

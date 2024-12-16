@@ -1,26 +1,35 @@
 #%% Importing libraries
+import argparse
 import os
 import time
+import warnings
+
+import lightning as L
+import normflows as nf
 import numpy as np
 import pandas as pd
-import argparse
 import torch
-from torch.optim import Adam
-from sklearn.preprocessing import StandardScaler
-import lightning as L
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from lightning.pytorch.callbacks.model_checkpoint import ModelCheckpoint
-from NCP.utils import to_np, from_np, FastTensorDataLoader
-from NCP.metrics import compute_metrics
-from tqdm import tqdm
 from normflows import ConditionalNormalizingFlow
-import normflows as nf
-from NCP.nn.nf_module import NFModule
-from NCP.cdf import integrate_pdf
+from sklearn.preprocessing import StandardScaler
+from torch.optim import Adam
+from tqdm import tqdm
 
-from NCP.cde_fork.density_simulation import LinearGaussian, LinearStudentT, ArmaJump, SkewNormal, EconDensity, GaussianMixture
+from NCP.cde_fork.density_simulation import (
+    ArmaJump,
+    EconDensity,
+    GaussianMixture,
+    LinearGaussian,
+    LinearStudentT,
+    SkewNormal,
+)
+from NCP.cdf import integrate_pdf
 from NCP.examples.tools.data_gen import LGGMD
-import warnings
+from NCP.metrics import compute_metrics
+from NCP.nn.nf_module import NFModule
+from NCP.utils import FastTensorDataLoader, from_np, to_np
+
 warnings.filterwarnings("ignore", ".*does not have many workers.*")
 
 class CustomModelCheckpoint(ModelCheckpoint):

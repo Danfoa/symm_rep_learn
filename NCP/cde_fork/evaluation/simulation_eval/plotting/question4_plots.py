@@ -1,13 +1,10 @@
+import os
+
+import matplotlib.pyplot as plt
 from ml_logger import logger
 
-from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
 from NCP.cde_fork.evaluation.simulation_eval import base_experiment
-import matplotlib.pyplot as plt
-
-from matplotlib.pyplot import cm
-from matplotlib.ticker import FormatStrFormatter, StrMethodFormatter
-import pandas as pd
-import os
+from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
 
 SMALL_SIZE = 13
 MEDIUM_SIZE = 14

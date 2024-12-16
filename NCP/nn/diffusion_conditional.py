@@ -1,7 +1,7 @@
 
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
 
 # code from https://github.com/TeaPearce/Conditional_Diffusion_MNIST/blob/main/script.py
 #copyright 2022 Tim Pearce (MIT License)
@@ -33,7 +33,7 @@ class ResidualBlock(nn.Module):
             if self.same_channels:
                 out = x + x2
             else:
-                out = x1 + x2 
+                out = x1 + x2
             return out / 1.414
         else:
             x1 = self.layer1(x)
@@ -143,8 +143,7 @@ class ContextUnet(nn.Module):
 
 
 def ddpm_schedules(beta1, beta2, T):
-    """
-    Returns pre-computed schedules for DDPM sampling, training process.
+    """Returns pre-computed schedules for DDPM sampling, training process.
     """
     assert beta1 < beta2 < 1.0, "beta1 and beta2 must be in (0, 1)"
 
@@ -187,10 +186,8 @@ class DDPM(nn.Module):
         self.loss_mse = nn.MSELoss()
 
     def forward(self, x, y):
+        """This method is used in training, so samples t and noise randomly
         """
-        this method is used in training, so samples t and noise randomly
-        """
-
         _ts = torch.randint(1, self.n_T+1, (y.shape[0],)).to(self.device)  # t ~ Uniform(0, n_T)
         noise = torch.randn_like(y)  # eps ~ N(0, 1)
 
@@ -212,11 +209,11 @@ class DDPM(nn.Module):
 
 
         y_i = torch.randn(n_sample, self.nn_model.y_dim).to(device)  # x_T ~ N(0, 1), sample initial noise
-        x_i = context.repeat(n_sample, 1).to(device) 
+        x_i = context.repeat(n_sample, 1).to(device)
         # double the batch
         x_i = x_i.repeat(2, 1)
 
-        y_i_store = [] # keep track of generated steps in case want to plot something 
+        y_i_store = [] # keep track of generated steps in case want to plot something
         for i in range(self.n_T, 0, -1):
             t_is = torch.tensor([i / self.n_T]).to(device)
             t_is = t_is.repeat(n_sample)
@@ -239,7 +236,7 @@ class DDPM(nn.Module):
             )
             if i%20==0 or i==self.n_T or i<8:
                 y_i_store.append(y_i.detach().cpu().numpy())
-        
+
         y_i_store = np.array(y_i_store)
         return y_i.detach().cpu().numpy(), y_i_store
 

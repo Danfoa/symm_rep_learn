@@ -1,26 +1,36 @@
 #%% Importing libraries
+import argparse
 import os
 import time
+import warnings
+
+import lightning as L
 import numpy as np
 import pandas as pd
-import argparse
 import torch
-from torch.optim import Adam
-from sklearn.preprocessing import StandardScaler
-import lightning as L
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from lightning.pytorch.callbacks.model_checkpoint import ModelCheckpoint
-from torch.nn import GELU, ReLU
-from NCP.nn.layers import MLP
-from NCP.utils import from_np, FastTensorDataLoader
-from NCP.nn.losses import CMELoss
-from NCP.model import NCPOperator, NCPModule
-from NCP.metrics import compute_metrics
-from NCP.cdf import compute_marginal, integrate_pdf
+from sklearn.preprocessing import StandardScaler
+from torch.nn import GELU
+from torch.optim import Adam
 from tqdm import tqdm
-from NCP.cde_fork.density_simulation import LinearGaussian, LinearStudentT, ArmaJump, SkewNormal, EconDensity, GaussianMixture
+
+from NCP.cde_fork.density_simulation import (
+    ArmaJump,
+    EconDensity,
+    GaussianMixture,
+    LinearGaussian,
+    LinearStudentT,
+    SkewNormal,
+)
+from NCP.cdf import compute_marginal, integrate_pdf
 from NCP.examples.tools.data_gen import LGGMD
-import warnings
+from NCP.metrics import compute_metrics
+from NCP.model import NCPModule, NCPOperator
+from NCP.nn.layers import MLP
+from NCP.nn.losses import CMELoss
+from NCP.utils import FastTensorDataLoader, from_np
+
 warnings.filterwarnings("ignore", ".*does not have many workers.*")
 
 class CustomModelCheckpoint(ModelCheckpoint):

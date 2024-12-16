@@ -1,14 +1,13 @@
 import matplotlib as mpl
 
 mpl.use("PS")  # handles X11 server detection (required to run on console)
-import numpy as np
-
-from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
-from NCP.cde_fork.evaluation.simulation_eval import base_experiment
-import NCP.cde_fork.model_fitting.ConfigRunner as ConfigRunner
 import config
-
+import numpy as np
 from ml_logger import logger
+
+import NCP.cde_fork.model_fitting.ConfigRunner as ConfigRunner
+from NCP.cde_fork.evaluation.simulation_eval import base_experiment
+from NCP.cde_fork.model_fitting.GoodnessOfFitResults import GoodnessOfFitResults
 
 EXP_PREFIX = 'question4_benchmark_skew_NF'
 RESULTS_FILE = 'results.pkl'

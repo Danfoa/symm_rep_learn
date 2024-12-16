@@ -1,5 +1,5 @@
-import operator
 import numpy as np
+
 
 def flatten_tensors(tensors):
     if len(tensors) > 0:

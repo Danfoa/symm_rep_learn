@@ -1,11 +1,11 @@
-from sklearn.cluster import KMeans, AgglomerativeClustering
-from sklearn.metrics.pairwise import euclidean_distances, cosine_distances
-import pandas as pd
 import numpy as np
+import pandas as pd
+from sklearn.cluster import AgglomerativeClustering, KMeans
+from sklearn.metrics.pairwise import cosine_distances, euclidean_distances
 
 
 def sample_center_points(Y, method='all', k=100, keep_edges=False, parallelize=True, random_state=None):
-    """ function to define kernel centers with various downsampling alternatives
+    """Function to define kernel centers with various downsampling alternatives
 
     Args:
       Y: numpy array from which kernel centers shall be selected - shape (n_samples,) or (n_samples, n_dim)

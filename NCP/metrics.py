@@ -1,8 +1,10 @@
 # distances for one dimensional distributions
-import numpy as np
 import warnings
-from sklearn.isotonic import IsotonicRegression
+
+import numpy as np
 from scipy.special import rel_entr
+from sklearn.isotonic import IsotonicRegression
+
 
 # all measures take empirical cdfs computed for the same values as input
 def cdf_to_hist(x, fx=None, smooth=True, bin_length=1):
@@ -87,8 +89,7 @@ def kolmogorov_smirnov(x, y, values=None, smooth=True):
     return np.max(np.abs(x-y))
 
 def compute_metrics(x, y, metrics='all', smooth=True, values=None):
-    """
-    Compute specified metrics for two probability distributions.
+    """Compute specified metrics for two probability distributions.
 
     Args:
     p, q: Probability distributions to compare.
@@ -99,7 +100,6 @@ def compute_metrics(x, y, metrics='all', smooth=True, values=None):
     Returns:
     A dictionary where keys are metric names and values are computed metric values.
     """
-
     if smooth and values is None:
         raise ValueError('Values must be provided when smoothing the cdf')
 

@@ -6,9 +6,11 @@ import schnetpack
 import torch
 from lightning import LightningModule
 from lightning.pytorch.utilities import grad_norm
-from NCP.utils import cross_cov, random_split
+
 from NCP.model import NCPOperator
 from NCP.nn.layers import SingularLayer
+from NCP.utils import cross_cov, random_split
+
 
 class NCPLoss:
     @staticmethod
