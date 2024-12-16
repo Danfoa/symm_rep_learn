@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from typing import Union
-from NCP.utils import tonp, frnp
+from NCP.utils import to_np, from_np
 from NCP.metrics import smooth_cdf
 from sklearn.isotonic import IsotonicRegression
 from sklearn.neighbors import KernelDensity
@@ -50,9 +50,9 @@ def get_cdf(model, X, Y=None, observable = lambda x : x, postprocess = None):
         Ux, sigma, Vy = model.postprocess_UV(X, postprocess=postprocess, Y=Y)
     else:
         sigma = torch.sqrt(torch.exp(-model.models['S'].weights ** 2))
-        Ux = model.models['U'](frnp(X, model.device))
-        Vy = model.models['V'](frnp(Y, model.device))
-        Ux, sigma, Vy = tonp(Ux), tonp(sigma), tonp(Vy)
+        Ux = model.models['U'](from_np(X, model.device))
+        Vy = model.models['V'](from_np(Y, model.device))
+        Ux, sigma, Vy = to_np(Ux), to_np(sigma), to_np(Vy)
 
     Ux = Ux.flatten()
 
@@ -78,9 +78,9 @@ def get_pdf(model, X, Y=None, observable = lambda x : x, postprocess = None, p_y
         Ux, sigma, Vy = model.postprocess_UV(X, postprocess, Y)
     else:
         sigma = torch.sqrt(torch.exp(-model.models['S'].weights ** 2))
-        Ux = model.models['U'](frnp(X, model.device))
-        Vy = model.models['V'](frnp(Y, model.device))
-        Ux, sigma, Vy = tonp(Ux), tonp(sigma), tonp(Vy)
+        Ux = model.models['U'](from_np(X, model.device))
+        Vy = model.models['V'](from_np(Y, model.device))
+        Ux, sigma, Vy = to_np(Ux), to_np(sigma), to_np(Vy)
 
     Ux = Ux.flatten()
     EVyFy = Vy[candidates]
@@ -104,12 +104,12 @@ def quantile_regression_naive(model, X, observable = lambda x : np.mean(x, axis=
 class compute_marginal(KernelDensity):
     def __call__(self, x):
         if torch.is_tensor(x):
-            x = tonp(x)
+            x = to_np(x)
         if x.ndim == 1:
             x = x.reshape(-1, 1)
         log_probability = self.score_samples(np.array(x))
         probability = np.exp(log_probability)
-        return frnp(probability)
+        return from_np(probability)
 
 from scipy.integrate import cumulative_trapezoid
 def integrate_pdf(pdf, values):

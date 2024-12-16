@@ -6,7 +6,7 @@ import argparse
 import torch
 from sklearn.preprocessing import StandardScaler
 import lightning as L
-from NCP.utils import tonp, frnp
+from NCP.utils import to_np, from_np
 from NCP.metrics import compute_metrics
 from tqdm import tqdm
 from NCP.nn.kernel_mixture_network import estimator_infer_sigma, kmn_torch_infer_sigma
@@ -57,10 +57,10 @@ def run_experiment(density_simulator, density_simulator_kwargs):
             X_val = xscaler.transform(X_val)
             Y_val = yscaler.transform(Y_val)
 
-            X_train_torch = frnp(X_train, device=device)
-            Y_train_torch = frnp(Y_train, device=device)
-            X_val_torch = frnp(X_val, device=device)
-            Y_val_torch = frnp(Y_val, device=device)
+            X_train_torch = from_np(X_train, device=device)
+            Y_train_torch = from_np(Y_train, device=device)
+            X_val_torch = from_np(X_val, device=device)
+            Y_val_torch = from_np(Y_val, device=device)
 
 
             L.seed_everything(seed)
@@ -91,7 +91,7 @@ def run_experiment(density_simulator, density_simulator_kwargs):
             scores = []
             for xi in x_grid:
                 xi = xi.reshape(1, -1)
-                fys, pred_pdf = model.pdf(frnp(xi, device), frnp(ys, device))
+                fys, pred_pdf = model.pdf(from_np(xi, device), from_np(ys, device))
                 pred_cdf = integrate_pdf(pred_pdf.squeeze(), ys)
 
                 if density.__class__.__name__ == 'LGGMD':

@@ -1,16 +1,12 @@
-from torch.nn import Module
-import torch
-
-from NCP.nn.layers import SingularLayer
-from NCP.utils import tonp, frnp, sqrtmh, cross_cov, filter_reduced_rank_svals
-import lightning as L
 from copy import deepcopy
 
-def ensure_torch(x):
-    if torch.is_tensor(x):
-        return x
-    else:
-        return frnp(x)
+import lightning
+import torch
+from torch.nn import Module
+
+from NCP.nn.layers import SingularLayer
+from NCP.utils import cross_cov, ensure_torch, filter_reduced_rank_svals, sqrt_hermitian, to_np
+
 
 class NCPOperator(Module):
     def __init__(self, U_operator:Module, V_operator:Module, U_operator_kwargs:dict, V_operator_kwargs:dict):
@@ -94,7 +90,7 @@ class NCPOperator(Module):
         sigma_U_fY_VY = sigma * Ux * Vy_fY
         val = torch.sum(sigma_U_fY_VY, axis=-1)
 
-        return tonp(bias + val)
+        return to_np(bias + val)
 
     def cdf(self, X, Y_sampling, probas=None, observable=lambda x: x, postprocess=None):
         # for continious, sample Y_sampling
@@ -120,15 +116,16 @@ class NCPOperator(Module):
             EVyFy = torch.mean(Vy * Ify, axis=0)  # for all latent dim, compute E (Vy * fY)
             cdf[i] = emp_cdf[i] + torch.sum(sigma * Ux * EVyFy)
 
-        return tonp(fY[candidates].flatten()), tonp(cdf)
+        return to_np(fY[candidates].flatten()), to_np(cdf)
 
     def pdf(self, X, Y_sampling, p_y=lambda x:x, observable=lambda x: x, postprocess=None):
         # observable is a vector to scalar function
         fY = torch.stack([observable(x_i) for x_i in torch.unbind(Y_sampling, dim=-1)], dim=-1) # Pytorch equivalent of numpy.apply_along_axis
+        # TODO: pretty sure this is a bug unless the samples are not provided already sorted by user.
         fY_sorted, _ = torch.sort(fY, dim=0)
 
         pdf = (1 + self.forward(X, Y_sampling, postprocess)) * p_y(fY_sorted)
-        return tonp(fY_sorted), tonp(pdf)
+        return to_np(fY_sorted), to_np(pdf)
 
     def _compute_data_statistics(self, X, Y):
         sigma = torch.sqrt(torch.exp(-self.S.weights ** 2))
@@ -148,8 +145,8 @@ class NCPOperator(Module):
         cov_XY = cross_cov(Ux_centered.T, Vy_centered.T)
 
         # write in a stable way
-        self._sqrt_cov_X_inv = torch.linalg.pinv(sqrtmh(cov_X))
-        self._sqrt_cov_Y_inv = torch.linalg.pinv(sqrtmh(cov_Y))
+        self._sqrt_cov_X_inv = torch.linalg.pinv(sqrt_hermitian(cov_X))
+        self._sqrt_cov_Y_inv = torch.linalg.pinv(sqrt_hermitian(cov_Y))
 
         M = self._sqrt_cov_X_inv @ cov_XY @ self._sqrt_cov_Y_inv
         e_val, sing_vec_l = torch.linalg.eigh(M @ M.T)
@@ -157,7 +154,7 @@ class NCPOperator(Module):
         self._sing_val = torch.sqrt(e_val)
         self._sing_vec_r = (M.T @ self._sing_vec_l) / self._sing_val
 
-class NCPModule(L.LightningModule):
+class NCPModule(lightning.LightningModule):
     def __init__(
             self,
             model: NCPOperator,
@@ -194,7 +191,7 @@ class NCPModule(L.LightningModule):
         loss = self.loss_fn
         l = loss(X, Y, self.model)
         self.log('train_loss', l, on_step=False, on_epoch=True, prog_bar=True)
-        self.train_loss.append(tonp(l))
+        self.train_loss.append(to_np(l))
 
         return l
 
@@ -204,7 +201,7 @@ class NCPModule(L.LightningModule):
         loss = self.loss_fn
         l = loss(X, Y, self.model)
         self.log('val_loss', l, on_step=False, on_epoch=True, prog_bar=True)
-        self.val_loss.append(tonp(l))
+        self.val_loss.append(to_np(l))
         return l
 
     def on_fit_end(self):

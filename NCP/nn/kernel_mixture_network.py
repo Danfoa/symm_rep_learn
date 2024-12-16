@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 from sklearn.cluster import KMeans, AgglomerativeClustering
-from NCP.utils import tonp, frnp
+from NCP.utils import to_np, from_np
 
 def sample_center_points(y, method='all', k=100, keep_edges=False):
     """
@@ -12,7 +12,7 @@ def sample_center_points(y, method='all', k=100, keep_edges=False):
     """
 
     # make sure y is 1D
-    y = tonp(y)
+    y = to_np(y)
     y = y.ravel()
 
     # keep all points as kernel centers
@@ -97,9 +97,9 @@ class kmn_torch_infer_sigma(object):
         self.estimator = estimator(x_train.shape[-1], self.n_centers, self.device)
         self.keep_edges = keep_edges
         self.sigma = Variable(0.5 * torch.ones(self.n_centers), requires_grad=False)
-        self.center_locs = Variable(frnp(sample_center_points(y_train, method=self.center_sampling_method,
-                                                                          k=self.n_centers,
-                                                                          keep_edges=self.keep_edges), self.device), requires_grad=False)
+        self.center_locs = Variable(from_np(sample_center_points(y_train, method=self.center_sampling_method,
+                                                                 k=self.n_centers,
+                                                                 keep_edges=self.keep_edges), self.device), requires_grad=False)
 
         self.n_data, self.n_features = x_train.shape
 
@@ -143,7 +143,7 @@ class kmn_torch_infer_sigma(object):
             weights = out[:, 0:-1]
             sigma = torch.unsqueeze(out[:, -1], dim=1)
             l = self.mdn_loss_function(weights, sigma, self.y)
-            self.loss.append(tonp(l))
+            self.loss.append(to_np(l))
 
             if (self.validation_present):
                 self.estimator.eval()
@@ -151,13 +151,13 @@ class kmn_torch_infer_sigma(object):
                 weights_val = out[:, 0:-1]
                 sigma_val = torch.unsqueeze(out[:, -1], dim=1)
                 l_val = self.mdn_loss_function(weights_val, sigma_val, self.y_val)
-                self.loss_val.append(tonp(l_val))
+                self.loss_val.append(to_np(l_val))
 
             if (i % 100 == 0):
                 if (self.validation_present):
                     print('Iter: {0} - loss: {1} - loss_val: {2} - sigma: {3}'.format(i, self.loss[-1],
                                                                                       self.loss_val[-1],
-                                                                                      tonp(out[0, -1])))
+                                                                                      to_np(out[0, -1])))
 
                     if self.loss_val[-1] < min_val_loss:
                         min_val_loss = self.loss_val[-1]
@@ -185,4 +185,4 @@ class kmn_torch_infer_sigma(object):
         sigma = torch.unsqueeze(out[:, -1], dim=1)
         result = self.gaussian_distribution(torch.unsqueeze(y, 1), self.center_locs, sigma) * weights
         result = torch.sum(result, dim=1)
-        return tonp(y), tonp(result)
+        return to_np(y), to_np(result)

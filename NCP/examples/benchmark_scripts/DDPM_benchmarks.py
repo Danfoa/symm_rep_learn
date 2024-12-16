@@ -10,7 +10,7 @@ from sklearn.preprocessing import StandardScaler
 import lightning as L
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from lightning.pytorch.callbacks.model_checkpoint import ModelCheckpoint
-from NCP.utils import frnp, FastTensorDataLoader
+from NCP.utils import from_np, FastTensorDataLoader
 from NCP.nn.losses import DDPMLoss
 from NCP.metrics import compute_metrics
 from NCP.cdf import compute_marginal
@@ -74,10 +74,10 @@ def run_experiment(density_simulator, density_simulator_kwargs):
         X_val = xscaler.transform(X_val)
         Y_val = yscaler.transform(Y_val)
 
-        X_train_torch = frnp(X_train)
-        Y_train_torch = frnp(Y_train)
-        X_val_torch = frnp(X_val)
-        Y_val_torch = frnp(Y_val)
+        X_train_torch = from_np(X_train)
+        Y_train_torch = from_np(Y_train)
+        X_val_torch = from_np(X_val)
+        Y_val_torch = from_np(Y_val)
 
         optimizer_kwargs = {
             'lr': lr
@@ -159,7 +159,7 @@ def run_experiment(density_simulator, density_simulator_kwargs):
             scores = []
             for xi in x_grid:
                 xi = xi.reshape(1, -1)
-                pred_cdf = cdf_from_sample(best_model, frnp(xi, device), ys).squeeze()
+                pred_cdf = cdf_from_sample(best_model, from_np(xi, device), ys).squeeze()
 
                 if density.__class__.__name__ == 'LGGMD':
                     true_cdf = density.cdf(xscaler.inverse_transform(xi), yscaler.inverse_transform(ys)).squeeze()

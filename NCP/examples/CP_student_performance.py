@@ -6,7 +6,7 @@ from NCP.model import NCPOperator, NCPModule
 from NCP.nn.layers import MLP
 from NCP.nn.losses import CMELoss
 from NCP.nn.nf_module import NFModule
-from NCP.utils import frnp, FastTensorDataLoader
+from NCP.utils import from_np, FastTensorDataLoader
 import lightning as L
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from lightning.pytorch.callbacks.model_checkpoint import ModelCheckpoint
@@ -123,12 +123,12 @@ for d in datasets:
         X_test = xscaler.transform(X_test)
         Y_test = yscaler.transform(Y_test)
 
-        X_train_torch = frnp(X_train)
-        Y_train_torch = frnp(Y_train)
-        X_val_torch = frnp(X_val)
-        Y_val_torch = frnp(Y_val)
-        X_test_torch = frnp(X_test)
-        Y_test_torch = frnp(Y_test)
+        X_train_torch = from_np(X_train)
+        Y_train_torch = from_np(Y_train)
+        X_val_torch = from_np(X_val)
+        Y_val_torch = from_np(Y_val)
+        X_test_torch = from_np(X_test)
+        Y_test_torch = from_np(Y_test)
 
         # y discretisation for computing cdf
         spread = np.max(Y_train) - np.min(Y_train)
@@ -218,7 +218,7 @@ for d in datasets:
             pdfs = np.zeros((len(X_test), len(y_discr)))
             for i, xi in tqdm(enumerate(X_test), total=len(X_test)):
                 xi = xi.reshape(1, -1)
-                fys, pred_pdf = best_model.pdf(frnp([[xi]]), y_discr_torch, postprocess='centering', p_y=marginal)
+                fys, pred_pdf = best_model.pdf(from_np([[xi]]), y_discr_torch, postprocess='centering', p_y=marginal)
                 pred_cdf = integrate_pdf(pred_pdf, y_discr)
                 cdfs[i] = pred_cdf
                 pdfs[i] = pred_pdf
@@ -247,7 +247,7 @@ for d in datasets:
             pdfs = np.zeros((len(X_test), len(y_discr)))
             for i, xi in tqdm(enumerate(X_test), total=len(X_test)):
                 xi = xi.reshape(1, -1)
-                fys, pred_pdf = best_model.pdf(frnp([[xi]]), y_discr_torch, postprocess='whitening', p_y=marginal)
+                fys, pred_pdf = best_model.pdf(from_np([[xi]]), y_discr_torch, postprocess='whitening', p_y=marginal)
                 pred_cdf = integrate_pdf(pred_pdf, y_discr)
                 cdfs[i] = pred_cdf
                 pdfs[i] = pred_pdf

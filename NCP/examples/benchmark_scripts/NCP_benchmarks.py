@@ -12,7 +12,7 @@ from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from lightning.pytorch.callbacks.model_checkpoint import ModelCheckpoint
 from torch.nn import GELU, ReLU
 from NCP.nn.layers import MLP
-from NCP.utils import frnp, FastTensorDataLoader
+from NCP.utils import from_np, FastTensorDataLoader
 from NCP.nn.losses import CMELoss
 from NCP.model import NCPOperator, NCPModule
 from NCP.metrics import compute_metrics
@@ -69,10 +69,10 @@ def run_experiment(density_simulator, density_simulator_kwargs):
             X_val = xscaler.transform(X_val)
             Y_val = yscaler.transform(Y_val)
 
-            X_train_torch = frnp(X_train)
-            Y_train_torch = frnp(Y_train)
-            X_val_torch = frnp(X_val)
-            Y_val_torch = frnp(Y_val)
+            X_train_torch = from_np(X_train)
+            Y_train_torch = from_np(Y_train)
+            X_val_torch = from_np(X_val)
+            Y_val_torch = from_np(Y_val)
 
             U_operator_kwargs = {
                 'input_shape': X_train.shape[-1],
@@ -181,7 +181,7 @@ def run_experiment(density_simulator, density_simulator_kwargs):
                 scores = []
                 for xi in x_grid:
                     xi = xi.reshape(1, -1)
-                    fys, pred_pdf = best_model.pdf(frnp(xi), frnp(ys), postprocess=postprocess, p_y=p_y)
+                    fys, pred_pdf = best_model.pdf(from_np(xi), from_np(ys), postprocess=postprocess, p_y=p_y)
                     pred_pdf = np.where(pred_pdf == np.nan, 0, pred_pdf)
                     pred_cdf = integrate_pdf(pred_pdf, ys)
 

@@ -1,10 +1,10 @@
 import torch
 from typing import NamedTuple
 
-def tonp(x):
+def to_np(x):
     return x.detach().cpu().numpy()
 
-def frnp(x, device=None):
+def from_np(x, device=None):
     return torch.Tensor(x).to(device)
 
 # Sorting and parsing
@@ -20,7 +20,7 @@ def topk(vec: torch.Tensor, k: int):
     values = vec[indices]
     return TopKReturnType(values, indices)
 
-def sqrtmh(A: torch.Tensor):
+def sqrt_hermitian(A: torch.Tensor):
     # Credits to
     """Compute the square root of a Symmetric or Hermitian positive definite matrix or batch of matrices.
     Credits to  `https://github.com/pytorch/pytorch/issues/25481#issuecomment-1032789228
@@ -144,6 +144,7 @@ class FastTensorDataLoader:
         if remainder > 0:
             n_batches += 1
         self.n_batches = n_batches
+
     def __iter__(self):
         if self.shuffle:
             r = torch.randperm(self.dataset_len)
@@ -160,3 +161,10 @@ class FastTensorDataLoader:
 
     def __len__(self):
         return self.n_batches
+
+
+def ensure_torch(x):
+    if torch.is_tensor(x):
+        return x
+    else:
+        return from_np(x)

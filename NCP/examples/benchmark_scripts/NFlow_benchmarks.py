@@ -10,7 +10,7 @@ from sklearn.preprocessing import StandardScaler
 import lightning as L
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from lightning.pytorch.callbacks.model_checkpoint import ModelCheckpoint
-from NCP.utils import tonp, frnp, FastTensorDataLoader
+from NCP.utils import to_np, from_np, FastTensorDataLoader
 from NCP.metrics import compute_metrics
 from tqdm import tqdm
 from normflows import ConditionalNormalizingFlow
@@ -67,10 +67,10 @@ def run_experiment(density_simulator, density_simulator_kwargs):
             X_val = xscaler.transform(X_val)
             Y_val = yscaler.transform(Y_val)
 
-            X_train_torch = frnp(X_train)
-            Y_train_torch = frnp(Y_train)
-            X_val_torch = frnp(X_val)
-            Y_val_torch = frnp(Y_val)
+            X_train_torch = from_np(X_train)
+            Y_train_torch = from_np(Y_train)
+            X_val_torch = from_np(X_val)
+            Y_val_torch = from_np(Y_val)
 
             optimizer_kwargs = {
                 'lr': lr
@@ -162,7 +162,7 @@ def run_experiment(density_simulator, density_simulator_kwargs):
             scores = []
             for xi in x_grid:
                 xi = xi.reshape(1, -1)
-                pred_pdf = tonp(torch.exp(best_model.log_prob(frnp(ys), frnp(np.repeat(xi, len(ys), axis=0)))))
+                pred_pdf = to_np(torch.exp(best_model.log_prob(from_np(ys), from_np(np.repeat(xi, len(ys), axis=0)))))
                 pred_cdf = integrate_pdf(pred_pdf, ys)
 
                 if density.__class__.__name__ == 'LGGMD':

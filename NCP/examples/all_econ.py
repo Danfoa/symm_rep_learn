@@ -10,7 +10,7 @@ from NCP.cdf import get_cdf
 from NCP.nn.losses import CMELoss
 from NCP.utils import smooth_cdf
 from NCP.metrics import hellinger, kullback_leibler, wasserstein1
-from NCP.utils import frnp
+from NCP.utils import from_np
 import lightning as L
 from NCP.nn.callbacks import LitProgressBar
 from scipy.stats import laplace, cauchy, bernoulli, pareto
