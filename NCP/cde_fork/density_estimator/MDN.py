@@ -162,7 +162,7 @@ class MixtureDensityNetwork(BaseNNMixtureEstimator):
       self._add_l1_l2_regularization(core_network)
 
       # tensor to store samples
-      self.samples = mixture.sample() #TODO either use it or remove it
+      self.samples = mixture.x_sampler() #TODO either use it or remove it
 
       # tensor to compute probabilities
       if self.data_normalization:

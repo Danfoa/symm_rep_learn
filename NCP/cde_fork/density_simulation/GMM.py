@@ -48,7 +48,7 @@ class GaussianMixture(BaseConditionalDensitySimulation):
             loc=np.zeros([self.ndim]), scale=self.means_std, size=[n_kernels, self.ndim]
         )  # shape(n_kernels, n_dims)
 
-        """ Sample cov matrixes and assure that cov matrix is pos definite"""
+        """ Sample cov matrices and assure that cov matrix is pos definite"""
         self.covariances_x = project_to_pos_semi_def(
             np.abs(
                 self.random_state_params.normal(
