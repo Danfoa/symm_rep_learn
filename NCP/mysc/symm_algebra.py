@@ -58,14 +58,14 @@ def isotypic_cross_cov(
         Y_iso = Y
     else:
         Qy_T = torch.Tensor(Qy_T).to(device=Y.device, dtype=Y.dtype)
-        Qy = torch.Tensor(Qy).to(device=Y.device, dtype=Y.dtype)
+        # Qy = torch.Tensor(Qy).to(device=Y.device, dtype=Y.dtype)
         Y_iso = torch.einsum('...ij,...j->...i', Qy_T, Y)   # y_iso = Q_y2iso @ y
 
     if irrep_dim > 1:
         # Since CovXY = Θ_χy ⊗ I_d  , d = dim(irrep) and Θ_χυ ∈ R^{mχ x mυ}
         # We compute the constrained cross-covariance, by estimating the matrix Θ_χυ
-        # This requires us to reshape X_iso ∈ R^{n x p} to X_sing ∈ R^{n x mχ} and Y_iso ∈ R^{n x q} to Y_sing ∈ R^{n x mυ}
-        # Ensuring that the dimensions of a single irrep are flattened into the rows of X_sing and Y_sing
+        # This requires reshape X_iso ∈ R^{n x p} to X_sing ∈ R^{nd x mχ} and Y_iso ∈ R^{n x q} to Y_sing ∈ R^{nd x mυ}
+        # Ensuring all samples from dimensions of a single irrep are flattened into a row of X_sing and Y_sing
         X_sing = X_iso.view(-1, mk_X, irrep_dim).permute(0, 2, 1).reshape(-1, mk_X)
         Y_sing = Y_iso.view(-1, mk_Y, irrep_dim).permute(0, 2, 1).reshape(-1, mk_Y)
     else: # For one dimensional (real) irreps, this defaults to the standard cross-covariance
@@ -74,7 +74,7 @@ def isotypic_cross_cov(
     n_samples = X_sing.shape[0]
     assert n_samples == X.shape[0] * irrep_dim
 
-    if centered and irrep_id == G.trivial_representation.id:  # Non-trivial isotypic subspace are centered
+    if centered and irrep_id == rep_X.group.trivial_representation.id:  # Non-trivial isotypic subspace are centered
         X_sing = X_sing - torch.mean(X_sing, dim=0, keepdim=True)
         Y_sing = Y_sing - torch.mean(Y_sing, dim=0, keepdim=True)
 
@@ -85,7 +85,8 @@ def isotypic_cross_cov(
     else:
         CovXY_iso = theta_xy
 
-    if not x_in_iso_basis: # Change basis back to the original basis
+    # Change back to original basis if needed _______________________
+    if not x_in_iso_basis:
         CovXY = Qx @ CovXY_iso
     else:
         CovXY = CovXY_iso

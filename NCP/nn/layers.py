@@ -10,8 +10,12 @@ class SingularLayer(Module):
         # low = np.sqrt(np.log(4))
         # self.weights = torch.nn.Parameter(torch.Tensor(low+(high-low)*torch.rand(d,)), requires_grad=True)
 
+    @property
+    def svals(self):
+        return torch.exp(-self.weights**2)
+
     def forward(self, x):
-        return x * torch.exp(-self.weights**2)
+        return x * self.svals
 
 class MLPBlock(Module):
     def __init__(self, input_size, output_size, dropout=0., activation=ReLU):
