@@ -1,6 +1,6 @@
 import torch
 
-from NCP.model import NCPOperator
+from NCP.models.ncp import NCPOperator
 from NCP.utils import cross_cov, random_split
 
 

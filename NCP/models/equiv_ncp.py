@@ -1,4 +1,6 @@
 # Created by danfoa at 19/12/24
+import logging
+
 import escnn.nn
 import numpy as np
 import torch
@@ -9,6 +11,7 @@ from NCP.mysc.rep_theory_utils import field_type_to_isotypic_basis
 from NCP.mysc.symm_algebra import isotypic_cross_cov
 from NCP.nn.layers import SingularLayer
 
+log = logging.getLogger(__name__)
 
 class eNCPOperator(torch.nn.Module):
 
@@ -16,21 +19,20 @@ class eNCPOperator(torch.nn.Module):
         super(eNCPOperator, self).__init__()
         self.gamma = 0.01
         # Get field type in the singular-isotypic basis
-        x_singular_type = field_type_to_isotypic_basis(x_fns.out_type)
-        y_singular_type = field_type_to_isotypic_basis(y_fns.out_type)
-
+        assert x_fns.out_type == y_fns.out_type, "Embeddings field types must be the same"
+        lat_singular_type = field_type_to_isotypic_basis(x_fns.out_type)
         # Take any input field-type, add a G-equivariant linear layer, parameterizing a change of basis to the
         # Iso-singular basis. (singular functions clustered by isotypic subspaces)
-        x2singular = escnn.nn.Linear(in_type=x_fns.out_type, out_type=x_singular_type)
-        y2singular = escnn.nn.Linear(in_type=y_fns.out_type, out_type=y_singular_type)
+        x2singular = escnn.nn.Linear(in_type=x_fns.out_type, out_type=lat_singular_type)
+        y2singular = escnn.nn.Linear(in_type=y_fns.out_type, out_type=lat_singular_type)
         self.singular_fns_x = escnn.nn.SequentialModule(x_fns, x2singular)
         self.singular_fns_y = escnn.nn.SequentialModule(y_fns, y2singular)
         self.G = self.singular_fns_x.in_type.fibergroup
 
-        assert x_singular_type.size == y_singular_type.size, "Fn spaces of diff dimensionality not yet supported"
+        assert lat_singular_type.size == lat_singular_type.size, "Fn spaces of diff dimensionality not yet supported"
         # Isotypic subspace are identified by the irrep id associated with the subspace
-        self.iso_subspaces_id = [iso_rep.irreps[0] for iso_rep in y_singular_type.representations]
-        self.iso_subspaces_dim = [iso_rep.size for iso_rep in y_singular_type.representations]
+        self.iso_subspaces_id = [iso_rep.irreps[0] for iso_rep in lat_singular_type.representations]
+        self.iso_subspaces_dim = [iso_rep.size for iso_rep in lat_singular_type.representations]
         self.irreps_dim = {irrep_id: self.G.irrep(*irrep_id).size for irrep_id in self.iso_subspaces_id}
         self.iso_subspace_irrep_dim = [self.irreps_dim[id] for id in self.iso_subspaces_id]  # For completeness
         self.iso_irreps_multiplicities = [
@@ -43,12 +45,12 @@ class eNCPOperator(torch.nn.Module):
 
         # Store the sval trainable parameters / degrees of freedom (dof)
         num_sval_dof = np.sum(self.iso_irreps_multiplicities)  # There is one sval per irrep
-        assert num_sval_dof == len(y_singular_type.irreps), f"{num_sval_dof} != {len(y_singular_type.irreps)}"
+        assert num_sval_dof == len(lat_singular_type.irreps), f"{num_sval_dof} != {len(lat_singular_type.irreps)}"
         # TODO: Enable different initializations for this parameter
         self.sval_dof = SingularLayer(num_sval_dof)
         # vector storing the multiplicity of each singular value
         self.sval_multiplicities = torch.tensor(
-            [self.irreps_dim[irrep_id] for irrep_id in y_singular_type.irreps]
+            [self.irreps_dim[irrep_id] for irrep_id in lat_singular_type.irreps]
             )
         # TODO: Buffers for centering and whitening
 
@@ -68,7 +70,7 @@ class eNCPOperator(torch.nn.Module):
 
 
     def forward(self, x: GeometricTensor, y: GeometricTensor):
-        """ Forward pass of the eNCP operator.
+        """Forward pass of the eNCP operator.
 
         Computes non-linear transformations of the input random variables x and y, and returns r-dimensional embeddings
         f(x) = [f_1(x), ..., f_r(x)] and h(y) = [h_1(y), ..., h_r(y)] representing the top r-singular functions of
@@ -77,6 +79,7 @@ class eNCPOperator(torch.nn.Module):
         Args:
             x: (GeometricTensor) of shape (..., d_x) representing the input x.
             y: (GeometricTensor) of shape (..., d_y) representing the input y.
+
         Returns:
             fx: (GeometricTensor) of shape (..., r) representing the singular functions of a subspace of L^2(X)
             hy: (GeometricTensor) of shape (..., r) representing the singular functions of a subspace of L^2(Y)
@@ -126,13 +129,12 @@ class eNCPOperator(torch.nn.Module):
             Cx_iso.append(Cx_k), Cy_iso.append(Cy_k), Cxy_iso.append(Cxy_k)
             orth_iso_x.append(orth_x_k), orth_iso_y.append(orth_y_k), loss_iso.append(loss_k)
 
-        mi_loss = sum(loss_iso)                                 # tr(block_diag(C1,...Cn)) = Σ_i tr(C_i)
-        orth_reg = sum(orth_iso_x) + sum(orth_iso_y)            # ||block_diag(C1,...Cn) - I||_F^2 = Σ_i ||C_i - I||_F^2
-        center_reg = mean_fx.norm() ** 2 + mean_hy.norm() ** 2    # Centering regularization
+        mi_loss = sum(loss_iso)                                # tr(block_diag(C1,...Cn)) = Σ_i tr(Ci)
+        orth_reg = sum(orth_iso_x) + sum(orth_iso_y)           # ||block_diag(C1,...Cn) - I||_F^2 = Σ_i ||Ci - I||_F^2
+        center_reg = mean_fx.norm() ** 2 + mean_hy.norm() ** 2   # Centering regularization
         loss = mi_loss + self.gamma * (orth_reg + 2*center_reg)
         metrics = dict(mi_loss=mi_loss.detach(), orth_reg=orth_reg.detach(), center_reg=center_reg.detach())
         return loss, metrics
-
 
     def center_fns(self, f: GeometricTensor):
         """Centers the functions by removing the mean of their G-invariant components.
@@ -163,11 +165,12 @@ class eNCPOperator(torch.nn.Module):
 
 if __name__ == "__main__":
 
-    G = escnn.group.Icosahedral()
+    G = escnn.group.DihedralGroup(5)
 
-    x_rep = G.regular_representation                      # ρ_Χ
-    y_rep = directsum([G.regular_representation] * 2)     # ρ_Y
-    lat_rep = directsum([G.regular_representation] * 4)   # ρ_Ζ
+    x_rep = G.regular_representation                       # ρ_Χ
+    y_rep = directsum([G.regular_representation] * 10)     # ρ_Y
+    lat_rep = directsum([G.regular_representation] * 12)   # ρ_Ζ
+    x_rep.name, y_rep.name, lat_rep.name = "rep_X", "rep_Y", "rep_L2"
 
     x_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=[x_rep])
     y_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=[y_rep])
@@ -177,6 +180,7 @@ if __name__ == "__main__":
     y_embedding = escnn.nn.Linear(y_type, lat_type)
 
     model = eNCPOperator(χ_embedding, y_embedding)
+    print(model)
 
     x = torch.randn(10, x_rep.size)
     y = torch.randn(10, y_rep.size)
