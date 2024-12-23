@@ -183,6 +183,8 @@ class GaussianMixture(BaseConditionalDensitySimulation):
 
         n_samples_comp = self.random_state.multinomial(n_samples, self.weights)
 
+        assert np.sum(n_samples_comp) == n_samples, f"n_samples_comp: {n_samples_comp}, n_samples: {n_samples}"
+
         samples = np.vstack(
             [
                 gaussian.rvs(size=n, random_state=self.random_state)
