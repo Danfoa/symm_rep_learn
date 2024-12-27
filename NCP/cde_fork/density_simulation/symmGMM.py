@@ -63,18 +63,18 @@ class SymmGaussianMixture(GaussianMixture):
 
         if not self.G.continuous:
             # To make these distributions invariant under the group action, we need to average over the group
-            self.n_kernels = n_kernels * G.order()
+            self.n_kernels = n_kernels * self.G.order()
             means = [self.means]
             Cxs, Cys = [self.covariances_x], [self.covariances_y]
-            for g in G.elements:
-                if g == G.identity: continue
+            for g in self.G.elements:
+                if g == self.G.identity: continue
                 means.append(np.einsum('ij,...j->...i', self.rep(g), self.means))
                 Cxs.append(np.einsum('ij,kjm,mn->kin', self.rep_X(g), self.covariances_x, self.rep_X(~g)))
                 Cys.append(np.einsum('ij,kjm,mn->kin', self.rep_Y(g), self.covariances_y, self.rep_Y(~g)))
             self.means = np.concatenate(means, axis=0)
             self.covariances_x = np.concatenate(Cxs, axis=0)
             self.covariances_y = np.concatenate(Cys, axis=0)
-            self.weights = np.concatenate([self.weights] * G.order())
+            self.weights = np.concatenate([self.weights] * self.G.order())
             self.weights /= np.sum(self.weights)
         else:
             raise NotImplementedError("Only finite groups are supported at the moment")
@@ -117,6 +117,44 @@ class SymmGaussianMixture(GaussianMixture):
         Y_mean, Y_var = symmetric_moments(Y, self.rep_Y)
         return Y_mean.detach().numpy(), np.sqrt(Y_var.detach().numpy())
 
+    def pdf_y(self, Y):
+        """ Marginal probability density function P(Y)
+        Args:
+            Y: the variable Y for the distribution P(Y), array_like, shape:(n_samples, ndim_y)
+        Returns:
+            the marginal distribution of Y with shape:(n_samples,)
+        """
+        Y = self._handle_input_dimensionality(Y)
+        p_y = np.sum([self.weights[i] * self.gaussians_y[i].pdf(Y) for i in range(self.n_kernels)], axis=0)
+        return p_y
+
+    def pdf_x(self, X):
+        """ Marginal probability density function P(X)
+        Args:
+            X: the variable X for the distribution P(X), array_like, shape:(n_samples, ndim_x)
+        Returns:
+            the marginal distribution of X with shape:(n_samples,)
+        """
+        X = self._handle_input_dimensionality(X)
+        p_x = np.sum([self.weights[i] * self.gaussians_x[i].pdf(X) for i in range(self.n_kernels)], axis=0)
+        return p_x
+
+    def mutual_information(self, X, Y):
+        """ Compute the mutual information between X and Y
+
+        Defined by MI = ln(p(x,y) / p(x)p(y))
+
+        Args:
+            X: (..., ndim_x) array of samples from X
+            Y: (..., ndim_y) array of samples from Y
+        Returns:
+            (..., 1) Mutual information between X and Y for each sample
+        """
+        X, Y = self._handle_input_dimensionality(X), self._handle_input_dimensionality(Y)
+        p_xy = self.joint_pdf(X, Y)
+        p_x = self.pdf_x(X)
+        p_y = self.pdf_y(Y)
+        return np.log(p_xy / (p_x * p_y))
 
 if __name__ == "__main__":
 
