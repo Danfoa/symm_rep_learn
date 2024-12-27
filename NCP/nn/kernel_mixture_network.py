@@ -5,7 +5,7 @@ import torch.nn as nn
 from sklearn.cluster import AgglomerativeClustering, KMeans
 from torch.autograd import Variable
 
-from NCP.utils import from_np, to_np
+from NCP.mysc.utils import from_np, to_np
 
 
 def sample_center_points(y, method='all', k=100, keep_edges=False):

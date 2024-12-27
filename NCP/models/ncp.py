@@ -5,7 +5,7 @@ import torch
 from torch.nn import Module
 
 from NCP.nn.layers import SingularLayer
-from NCP.utils import cross_cov, ensure_torch, filter_reduced_rank_svals, sqrt_hermitian, to_np
+from NCP.mysc.utils import cross_cov, ensure_torch, filter_reduced_rank_svals, sqrt_hermitian, to_np
 
 
 class NCPOperator(Module):

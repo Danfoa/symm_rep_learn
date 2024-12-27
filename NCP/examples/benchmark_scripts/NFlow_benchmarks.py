@@ -28,7 +28,7 @@ from NCP.cdf import integrate_pdf
 from NCP.examples.tools.data_gen import LGGMD
 from NCP.metrics import compute_metrics
 from NCP.nn.nf_module import NFModule
-from NCP.utils import FastTensorDataLoader, from_np, to_np
+from NCP.mysc.utils import FastTensorDataLoader, from_np, to_np
 
 warnings.filterwarnings("ignore", ".*does not have many workers.*")
 

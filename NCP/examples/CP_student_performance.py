@@ -27,7 +27,7 @@ from NCP.models.ncp import NCPModule, NCPOperator
 from NCP.nn.layers import MLP
 from NCP.nn.losses import CMELoss
 from NCP.nn.nf_module import NFModule
-from NCP.utils import FastTensorDataLoader, from_np
+from NCP.mysc.utils import FastTensorDataLoader, from_np
 
 datasets = ['students']
 NEXP = 10

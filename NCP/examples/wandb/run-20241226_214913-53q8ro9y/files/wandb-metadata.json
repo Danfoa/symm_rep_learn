@@ -1,0 +1,40 @@
+{
+  "os":  "Linux-6.8.0-49-generic-x86_64-with-glibc2.35",
+  "python":  "CPython 3.10.0",
+  "startedAt":  "2024-12-26T20:49:13.542305Z",
+  "program":  "NCP/examples/symmetric_1D.ipynb",
+  "git":  {
+    "remote":  "https://github.com/alekfrohlich/NCP.git",
+    "commit":  "dfce349404732eb32980108ea1a9f64fd84078fb"
+  },
+  "email":  "daniels.ordonez@gmail.com",
+  "root":  ".",
+  "host":  "Daniels-P1G5",
+  "executable":  "/home/danfoa/anaconda3/envs/robotics3.10/envs/ncp/bin/python",
+  "cpu_count":  14,
+  "cpu_count_logical":  20,
+  "gpu":  "NVIDIA GeForce RTX 3080 Ti Laptop GPU",
+  "gpu_count":  1,
+  "disk":  {
+    "/":  {
+      "total":  "658419081216",
+      "used":  "515876102144"
+    }
+  },
+  "memory":  {
+    "total":  "67115466752"
+  },
+  "cpu":  {
+    "count":  14,
+    "countLogical":  20
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "NVIDIA GeForce RTX 3080 Ti Laptop GPU",
+      "memoryTotal":  "17179869184",
+      "cudaCores":  7424,
+      "architecture":  "Ampere"
+    }
+  ],
+  "cudaVersion":  "12.2"
+}

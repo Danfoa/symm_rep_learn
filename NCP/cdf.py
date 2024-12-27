@@ -7,7 +7,7 @@ from sklearn.isotonic import IsotonicRegression
 from sklearn.neighbors import KernelDensity
 
 from NCP.metrics import smooth_cdf
-from NCP.utils import from_np, to_np
+from NCP.mysc.utils import from_np, to_np
 
 
 def compute_quantile_robust(values:np.ndarray, cdf:np.ndarray, alpha:Union[str, float]='all', isotonic:bool=True, rescaling:bool=True):

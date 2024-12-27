@@ -22,7 +22,7 @@ from NCP.cdf import integrate_pdf
 from NCP.examples.tools.data_gen import LGGMD
 from NCP.metrics import compute_metrics
 from NCP.nn.kernel_mixture_network import estimator_infer_sigma, kmn_torch_infer_sigma
-from NCP.utils import from_np
+from NCP.mysc.utils import from_np
 
 warnings.filterwarnings("ignore", ".*does not have many workers.*")
 

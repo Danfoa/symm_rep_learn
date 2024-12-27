@@ -28,7 +28,7 @@ from NCP.metrics import compute_metrics
 from NCP.nn.ddpm_module import DDPMModule
 from NCP.nn.diffusion_conditional import DDPM, ContextUnet
 from NCP.nn.losses import DDPMLoss
-from NCP.utils import FastTensorDataLoader, from_np
+from NCP.mysc.utils import FastTensorDataLoader, from_np
 
 warnings.filterwarnings("ignore", ".*does not have many workers.*")
 

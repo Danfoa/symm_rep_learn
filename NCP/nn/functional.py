@@ -1,7 +1,7 @@
 import torch
 
 from NCP.models.ncp import NCPOperator
-from NCP.utils import cross_cov, random_split
+from NCP.mysc.utils import cross_cov, random_split
 
 
 def robust_cov(X, tol=1e-5):

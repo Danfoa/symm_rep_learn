@@ -9,7 +9,7 @@ from lightning.pytorch.utilities import grad_norm
 
 from NCP.models.ncp import NCPOperator
 from NCP.nn.layers import SingularLayer
-from NCP.utils import cross_cov, random_split
+from NCP.mysc.utils import cross_cov, random_split
 
 
 class NCPLoss:
@@ -67,7 +67,7 @@ def compute_covs(encoded_X, encoded_Y):
     cov_XY = torch.mm(encoded_X.T, encoded_Y)
     return cov_X, cov_Y, cov_XY
 
-class SchNet(schnetpack.model.AtomisticModel):
+class SchNet(schnetpack.eNCPop.AtomisticModel):
     def __init__(self, configs: ml_confs.Configs):
         super().__init__(
             input_dtype_str="float32",
