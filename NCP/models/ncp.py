@@ -1,210 +1,154 @@
-from copy import deepcopy
-
-import lightning
+# Created by danfoa at 19/12/24
+from __future__ import annotations
 import torch
-from torch.nn import Module
 
-from NCP.nn.layers import SingularLayer
-from NCP.mysc.utils import cross_cov, ensure_torch, filter_reduced_rank_svals, sqrt_hermitian, to_np
+import logging
 
 
-class NCPOperator(Module):
-    def __init__(self, U_operator:Module, V_operator:Module, U_operator_kwargs:dict, V_operator_kwargs:dict):
+log = logging.getLogger(__name__)
 
-        super(NCPOperator, self).__init__()
-        if U_operator_kwargs['output_shape'] == V_operator_kwargs['output_shape']:
-            d = U_operator_kwargs['output_shape'] # number of latent dimensions
+
+# Neural Conditional Probability (NCP) model.
+class NCP(torch.nn.Module):
+
+    def __init__(self, x_fns: torch.nn.Module, y_fns: torch.nn.Module, embedding_dim=None, gamma=0.01):
+        super(NCP, self).__init__()
+        self.gamma = gamma
+        self.embedding_dim = embedding_dim
+        self.singular_fns_x = x_fns
+        self.singular_fns_y = y_fns
+        # NCP does not need to have trainable svals.
+        self.svals = torch.nn.Parameter(torch.zeros(embedding_dim), requires_grad=False)
+        self._svals_estimated = False
+        # Matrix containing the cross-covariance matrix form of the operator Cyx: L^2(Y) -> L^2(X)
+        self.register_buffer('Cyx', torch.zeros(embedding_dim, embedding_dim))
+        # Matrix containing the covariance matrix form of the operator Cx: L^2(X) -> L^2(X)
+        self.register_buffer('Cx', torch.zeros(embedding_dim, embedding_dim))
+        # Matrix containing the covariance matrix form of the operator Cy: L^2(Y) -> L^2(Y)
+        self.register_buffer('Cy', torch.zeros(embedding_dim, embedding_dim))
+        # Expectation of the embedding functions
+        self.register_buffer('mean_fx', torch.zeros((1, embedding_dim)))
+        self.register_buffer('mean_hy', torch.zeros((1, embedding_dim)))
+        # Use multiple batch information to keep bettwe estimates of expectations
+        self._running_stats = False  # TODO: Implement running mean
+
+    def forward(self, x: torch.Tensor, y: torch.Tensor):
+        """Forward pass of the NCP operator.
+
+        Computes non-linear transformations of the input random variables x and y, and returns r-dimensional embeddings
+        f(x) = [f_1(x), ..., f_r(x)] and h(y) = [h_1(y), ..., h_r(y)] representing the top r-singular functions of
+        the conditional expectation operator such that E_p(y|x)[h_i(y)] = σ_i f_i(x) for i=1,...,r.
+
+        Args:
+            x: (torch.Tensor) of shape (..., d) representing the input random variable x.
+            y: (torch.Tensor) of shape (..., d) representing the input random variable y.
+        Returns:
+            fx: (torch.Tensor) of shape (..., r) representing the singular functions of a subspace of L^2(X).
+            hy: (torch.Tensor) of shape (..., r) representing the singular functions of a subspace of L^2(Y).
+        """
+        fx = self.singular_fns_x(x)  # f(x) = [f_1(x), ..., f_r(x)]
+        hy = self.singular_fns_y(y)  # h(y) = [h_1(y), ..., h_r(y)]
+
+        # TODO: After svals are identified applied change of basis to the singular functions.
+        pass
+
+        return fx, hy
+
+    def loss(self, fx: torch.Tensor, hy: torch.Tensor):
+        """ TODO
+        Args:
+            fx: (torch.Tensor) of shape (..., r) representing the singular functions of a subspace of L^2(X)
+            hy: (torch.Tensor) of shape (..., r) representing the singular functions of a subspace of L^2(Y)
+        Returns:
+            loss: L = -2 ||Cxy||_F^2 + tr(Cxy Cx Cxy^T Cy) - 1
+                + γ(||Cx - I||_F^2 + ||Cy - I||_F^2 + ||E_p(x) f(x)||_F^2 + ||E_p(y) h(y)||_F^2)
+            metrics: Scalar valued metrics to monitor during training.
+        """
+        assert fx.shape[-1] == hy.shape[-1] == self.embedding_dim, \
+            f"Expected number of singular functions to be {self.embedding_dim}, got {fx.shape[-1]} and {hy.shape[-1]}."
+
+        self.update_fns_statistics(fx, hy)  # Update mean_fx and mean_hy
+        # Main loss
+        # approx_err = -2 ||Cxy||_F^2 + tr(Cxy Cx Cxy^T Cy) - 1
+        Cxy_f_norm = torch.linalg.norm(self.Cxy, ord='fro') ** 2
+        prod_C = torch.einsum('ij,jk,kl,ln->in', self.Cxy, self.Cx, self.Cxy, self.Cy)
+        approx_err = -2 * Cxy_f_norm + torch.trace(prod_C) - 1
+
+        # Regularization terms, encouraging orthonormality and centered basis functions
+        # orth_reg = ||Cx - I||_F^2 + ||Cy - I||_F^2
+        I = torch.eye(self.embedding_dim, device=fx.device, dtype=fx.dtype)
+        orth_reg = (torch.sum((self.Cx - I) ** 2) + torch.sum((self.Cy - I) ** 2)) / 2
+        # center_reg = ||mean_fx := E_p(x) f(x)||_F^2 + ||mean_hy := E_p(y) h(y)||_F^2
+        mean_fx_norm, mean_hy_norm = torch.linalg.norm(self.mean_fx), torch.linalg.norm(self.mean_hy)
+        center_reg = mean_fx_norm ** 2 + mean_hy_norm ** 2
+
+        # Total loss ___________________________________________________________
+        loss = approx_err + self.gamma * (orth_reg + center_reg)
+        # Logging metrics ______________________________________________________
+        metrics = {
+            "||Cxy||_F": Cxy_f_norm.detach() / self.embedding_dim,
+            "||mu_x||":  mean_fx_norm.detach(),
+            "||mu_y||":  mean_hy_norm.detach(),
+            }
+        metrics |= self.batch_metrics()
+        return loss, metrics
+
+    def mutual_information(self, x: torch.Tensor, y: torch.Tensor):
+        """Compute the exponential of the mutual information between the random variables x and y.
+
+        The conditional expectation's kernel function k(x,y) = p(x,y) / p(x)p(y), is by definition the exponential of
+        the mutual information between two evaluations of the random variables x and y, that is: MI = ln(k(x,y)).
+
+        In the chosen basis sets of the approximated function spaces L^2(X) and L^2(Y), the approximated kernel function
+        is computed as: k_r(x,y) = 1 + Σ_i,j=1^r Cxy_ij f_i(x) h_j(y).
+
+        TODO: When the singular basis are appropriatedly identified after training we can compute the kernel function by
+        k_r(x,y) = 1 + Σ_i=1^r σ_i f_i(x) h_i(y).
+
+        Args:
+            x: (torch.Tensor) of shape (..., d) representing the input random variable x.
+            y: (torch.Tensor) of shape (..., d) representing the input random variable y.
+        Returns:
+            (torch.Tensor) representing the expected mutual information between x and y.
+        """
+        fx, hy = self(x, y)
+        fx_centered, hy_centered = fx - self.mean_fx, hy - self.mean_hy
+        # Compute the kernel function
+        kr = 1 + torch.einsum('nr,rc,nc->n', fx_centered, self.Cxy, hy_centered)
+        return torch.log(kr)
+
+    @torch.no_grad()
+    def batch_metrics(self):
+        return {
+            "||Cx||_F": torch.linalg.norm(self.Cx, ord='fro') ** 2 / self.embedding_dim,  # Should converge to 1
+            "||Cy||_F": torch.linalg.norm(self.Cy, ord='fro') ** 2 / self.embedding_dim,  # Should converge to 1
+            }
+
+    def update_fns_statistics(self, fx: torch.Tensor, hy: torch.Tensor):
+        n_samples = fx.shape[0]
+
+        if self._running_stats:
+            raise NotImplementedError("Running mean is not implemented yet.")
         else:
-            raise ValueError('Number of latent dimensions must be the same for U_operator and V_operator.')
+            eps = 1e-6 * torch.eye(self.embedding_dim)
+            self.mean_fx = fx.mean(dim=0, keepdim=True)
+            self.mean_hy = hy.mean(dim=0, keepdim=True)
+            self.Cxy = (torch.einsum('nr,nc->rc', fx, hy) - self.mean_fx.T @ self.mean_fx) / (n_samples - 1)
+            self.Cx = (torch.einsum('nr,nr->r', fx, fx) - self.mean_fx.T @ self.mean_fx) / (n_samples - 1) + eps
+            self.Cy = (torch.einsum('nr,nr->r', hy, hy) - self.mean_hy.T @ self.mean_hy) / (n_samples - 1) + eps
 
-        self.U = U_operator(**U_operator_kwargs)
-        self.V = V_operator(**V_operator_kwargs)
-        self.S = SingularLayer(d)
 
-        # buffers for centering
-        self.register_buffer('_mean_Ux', torch.zeros(d))
-        self.register_buffer('_mean_Vy', torch.zeros(d))
-
-        #buffers for whitening
-        self.register_buffer('_sqrt_cov_X_inv', torch.eye(d))
-        self.register_buffer('_sqrt_cov_Y_inv', torch.eye(d))
-        self.register_buffer('_sing_val', torch.ones(d))
-        self.register_buffer('_sing_vec_l', torch.eye(d))
-        self.register_buffer('_sing_vec_r', torch.eye(d))
-
-    def forward(self, x, y, postprocess=None):
-        Ux, sigma, Vy = self.postprocess_UV(x, y, postprocess)
-
-        # return F.relu(torch.sum(sigma * Ux * Vy, axis=-1))
-        return torch.sum(sigma * Ux * Vy, axis=-1)
-
-    def postprocess_UV(self, X, Y, postprocess=None):
-        sigma = torch.sqrt(torch.exp(-self.S.weights ** 2))
-        if postprocess is None:
-            Ux = self.U(X)
-            Vy = self.V(Y)
-        else:
-            if postprocess == 'centering':
-                Ux, Vy = self.centering(X, Y)
-            elif postprocess == 'whitening':
-                Ux, sigma, Vy = self.whitening(X, Y)
-        return Ux, sigma, Vy
-
-    def centering(self, X, Y):
-        Ux = self.U(X)
-        Vy = self.V(Y)
-
-        Ux_centered = Ux - torch.outer(torch.ones(Ux.shape[0]), self._mean_Ux)
-        Vy_centered = Vy - torch.outer(torch.ones(Vy.shape[0]), self._mean_Vy)
-
-        return Ux_centered, Vy_centered
-
-    def whitening(self, X, Y):
-        sigma = torch.sqrt(torch.exp(-self.S.weights ** 2))
-
-        Ux = self.U(X)
-        Ux = Ux - torch.outer(torch.ones(Ux.shape[0]), self._mean_Ux)
-        Ux = Ux @ torch.diag(sigma)
-        Ux = Ux @ self._sqrt_cov_X_inv @ self._sing_vec_l
-
-        Vy = self.V(Y)
-        Vy = Vy - torch.outer(torch.ones(Vy.shape[0]), self._mean_Vy)
-        Vy = Vy @ torch.diag(sigma)
-        Vy = Vy @ self._sqrt_cov_Y_inv @ self._sing_vec_r
-
-        return Ux, self._sing_val, Vy
-
-    def conditional_expectation(self, X, Y_sampling, observable=lambda x: x, postprocess=None):
-        X = ensure_torch(X)
-        Y_sampling = ensure_torch(Y_sampling)
-
-        Ux, sigma, Vy = self.postprocess_UV(X, Y_sampling, postprocess)
-        fY = observable(Y_sampling)
-        bias = torch.mean(fY, axis=0)
-
-        fY = fY.unsqueeze(-1).repeat((1,1,Vy.shape[-1]))
-        Vy = Vy.unsqueeze(1).repeat((1, fY.shape[1], 1))
-        Ux = Ux.unsqueeze(1).repeat((1, fY.shape[1], 1))
-
-        Vy_fY = torch.mean(Vy * fY, axis=0)
-        sigma_U_fY_VY = sigma * Ux * Vy_fY
-        val = torch.sum(sigma_U_fY_VY, axis=-1)
-
-        return to_np(bias + val)
-
-    def cdf(self, X, Y_sampling, probas=None, observable=lambda x: x, postprocess=None):
-        # for continious, sample Y_sampling
-        X = ensure_torch(X)
-        Y_sampling = ensure_torch(Y_sampling)
-        probas = ensure_torch(probas)
-
-        # observable is a vector to scalar function
-        fY = torch.stack([observable(y_i) for y_i in torch.unbind(Y_sampling, dim=-1)], dim=-1).flatten() # Pytorch equivalent of numpy.apply_along_axis
-        candidates = torch.argsort(fY)
-        if probas is None:
-            emp_cdf = torch.cumsum(torch.ones(fY.shape[0]), -1) / fY.shape[0]  # vector of [k/n], k \in [n]
-        else:
-            emp_cdf = torch.cumsum(probas)
-
-        Ux, sigma, Vy = self.postprocess_UV(X, Y_sampling, postprocess)
-        Ux = Ux.flatten()
-
-        # estimating the cdf of the function f on X_t
-        cdf = torch.zeros(candidates.shape[0])
-        for i, val in enumerate(fY[candidates]):
-            Ify = torch.outer((fY <= val), torch.ones(Vy.shape[1]))  # indicator function of fY < fY[i], put into shape (n_sample, latent_dim)
-            EVyFy = torch.mean(Vy * Ify, axis=0)  # for all latent dim, compute E (Vy * fY)
-            cdf[i] = emp_cdf[i] + torch.sum(sigma * Ux * EVyFy)
-
-        return to_np(fY[candidates].flatten()), to_np(cdf)
-
-    def pdf(self, X, Y_sampling, p_y=lambda x:x, observable=lambda x: x, postprocess=None):
-        # observable is a vector to scalar function
-        fY = torch.stack([observable(x_i) for x_i in torch.unbind(Y_sampling, dim=-1)], dim=-1) # Pytorch equivalent of numpy.apply_along_axis
-        # TODO: pretty sure this is a bug unless the samples are not provided already sorted by user.
-        fY_sorted, _ = torch.sort(fY, dim=0)
-
-        pdf = (1 + self.forward(X, Y_sampling, postprocess)) * p_y(fY_sorted)
-        return to_np(fY_sorted), to_np(pdf)
-
-    def _compute_data_statistics(self, X, Y):
-        sigma = torch.sqrt(torch.exp(-self.S.weights ** 2))
-        Ux = self.U(X.type_as(sigma))
-        Vy = self.V(Y.type_as(sigma))
-        self._mean_Ux = torch.mean(Ux, axis=0)
-        self._mean_Vy = torch.mean(Vy, axis=0)
-
-        Ux_centered = Ux - torch.outer(torch.ones(Ux.shape[0]).type_as(Ux), self._mean_Ux)
-        Vy_centered = Vy - torch.outer(torch.ones(Vy.shape[0]).type_as(Vy), self._mean_Vy)
-
-        Ux_centered = Ux_centered @ torch.diag(sigma)
-        Vy_centered = Vy_centered @ torch.diag(sigma)
-
-        cov_X = torch.cov(Ux_centered.T)
-        cov_Y = torch.cov(Vy_centered.T)
-        cov_XY = cross_cov(Ux_centered.T, Vy_centered.T)
-
-        # write in a stable way
-        self._sqrt_cov_X_inv = torch.linalg.pinv(sqrt_hermitian(cov_X))
-        self._sqrt_cov_Y_inv = torch.linalg.pinv(sqrt_hermitian(cov_Y))
-
-        M = self._sqrt_cov_X_inv @ cov_XY @ self._sqrt_cov_Y_inv
-        e_val, sing_vec_l = torch.linalg.eigh(M @ M.T)
-        e_val, self._sing_vec_l = filter_reduced_rank_svals(e_val, sing_vec_l)
-        self._sing_val = torch.sqrt(e_val)
-        self._sing_vec_r = (M.T @ self._sing_vec_l) / self._sing_val
-
-class NCPModule(lightning.LightningModule):
-    def __init__(
-            self,
-            model: NCPOperator,
-            optimizer_fn: torch.optim.Optimizer,
-            optimizer_kwargs: dict,
-            loss_fn: torch.nn.Module,
-            loss_kwargs: dict,
-    ):
-        super(NCPModule, self).__init__()
-        self.model = model
-        self._optimizer = optimizer_fn
-        _tmp_opt_kwargs = deepcopy(optimizer_kwargs)
-        if "lr" in _tmp_opt_kwargs:  # For Lightning's LearningRateFinder
-            self.lr = _tmp_opt_kwargs.pop("lr")
-            self.opt_kwargs = _tmp_opt_kwargs
-        else:
-            self.lr = 1e-3
-            raise Warning(
-                "No learning rate specified. Using default value of 1e-3. You can specify the learning rate by passing it to the optimizer_kwargs argument."
-            )
-        self.loss_fn = loss_fn(**loss_kwargs)
-        self.train_loss = []
-        self.val_loss = []
-
-    def configure_optimizers(self):
-        kw = self.opt_kwargs | {"lr": self.lr}
-        return self._optimizer(self.parameters(), **kw)
-
-    def training_step(self, batch, batch_idx):
-        if self.current_epoch == 0:
-            self.batch = batch
-
-        X, Y = batch
-        loss = self.loss_fn
-        l = loss(X, Y, self.model)
-        self.log('train_loss', l, on_step=False, on_epoch=True, prog_bar=True)
-        self.train_loss.append(to_np(l))
-
-        return l
-
-    def validation_step(self, batch, batch_idx):
-        X, Y = batch
-
-        loss = self.loss_fn
-        l = loss(X, Y, self.model)
-        self.log('val_loss', l, on_step=False, on_epoch=True, prog_bar=True)
-        self.val_loss.append(to_np(l))
-        return l
-
-    def on_fit_end(self):
-        X, Y = self.batch
-        self.model._compute_data_statistics(X, Y)
-        del self.batch
+if __name__ == "__main__":
+    from NCP.nn.layers import MLP
+    in_dim, out_dim, embedding_dim = 10,4,40
+    fx = MLP(input_shape=in_dim, output_shape=embedding_dim, n_hidden=3, layer_size=64, activation=torch.nn.ReLU)
+    hy = MLP(input_shape=out_dim, output_shape=embedding_dim, n_hidden=3, layer_size=64, activation=torch.nn.ReLU)
+    ncp = NCP(fx, hy, embedding_dim=embedding_dim)
+    x = torch.randn(10, in_dim)
+    y = torch.randn(10, out_dim)
+    fx, hy = ncp(x, y)
+    loss, metrics = ncp.loss(fx, hy)
+    print(loss)
+    with torch.no_grad():
+        mi = ncp.mutual_information(x, y)
+    print(mi)

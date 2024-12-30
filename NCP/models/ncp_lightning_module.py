@@ -44,13 +44,13 @@ class NCPModule(lightning.LightningModule):
         flat_metrics = flatten_dict(metrics)
         for k, v in flat_metrics.items():
             name = f"{k}/{suffix}"
-            self.log(name, v, prog_bar=False, batch_size=batch_size)
+            self.log(name, v, batch_size=batch_size)
 
     def training_step(self, batch, batch_idx):
         outputs = self.model(*batch)
         loss, metrics = self.loss_fn(*outputs)
 
-        self.log("loss/train", loss, prog_bar=False, batch_size=self.get_batch_dim(batch))
+        self.log("loss/train", loss, batch_size=self.get_batch_dim(batch))
         self.log_metrics(metrics, suffix="train", batch_size=self.get_batch_dim(batch))
         return loss
 
@@ -58,7 +58,7 @@ class NCPModule(lightning.LightningModule):
         outputs = self.model(*batch)
         loss, metrics = self.loss_fn(*outputs)
 
-        self.log("loss/val", loss, prog_bar=False, batch_size=self.get_batch_dim(batch))
+        self.log("loss/val", loss, batch_size=self.get_batch_dim(batch))
         self.log_metrics(metrics, suffix="val", batch_size=self.get_batch_dim(batch))
         return loss
 
@@ -66,7 +66,7 @@ class NCPModule(lightning.LightningModule):
         outputs = self.model(*batch)
         loss, metrics = self.loss_fn(*outputs)
 
-        self.log("loss/test", loss, prog_bar=False, batch_size=self.get_batch_dim(batch))
+        self.log("loss/test", loss, batch_size=self.get_batch_dim(batch))
         self.log_metrics(metrics, suffix="test", batch_size=self.get_batch_dim(batch))
         return loss
 

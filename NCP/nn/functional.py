@@ -9,6 +9,8 @@ def robust_cov(X, tol=1e-5):
     Cp = 0.5*(C + C.T)
     return Cp #+ tol
 
+
+
 # def cme_score(x1:torch.Tensor, x2:torch.Tensor, y1:torch.Tensor, y2:torch.Tensor, S:SingularLayer, gamma:float):
 #     loss = 0.5 * ( torch.sum(S(x1 * y2)**2, dim=1) + torch.sum(S(x2 * y1)**2, dim=1) )
 #     loss -= torch.sum(S((x1 - x2) * (y1 - y2)), dim=1)

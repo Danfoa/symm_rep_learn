@@ -1,7 +1,7 @@
 import torch
 from torch.nn import Conv2d, Dropout, Linear, MaxPool2d, Module, ReLU, Sequential
 
-
+# TODO: Unless we define custom initialization schemes, this class seems rather unnecesary.
 class SingularLayer(Module):
     def __init__(self, d):
         super(SingularLayer, self).__init__()
