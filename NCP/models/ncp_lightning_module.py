@@ -1,6 +1,7 @@
 # Created by danfoa at 26/12/24
 from __future__ import annotations
 
+import time
 from copy import deepcopy
 
 import lightning
@@ -39,18 +40,12 @@ class NCPModule(lightning.LightningModule):
         kw = self.opt_kwargs | {"lr": self.lr}
         return self._optimizer(self.parameters(), **kw)
 
-    @torch.no_grad()
-    def log_metrics(self, metrics: dict, suffix='', batch_size=None):
-        flat_metrics = flatten_dict(metrics)
-        for k, v in flat_metrics.items():
-            name = f"{k}/{suffix}"
-            self.log(name, v, batch_size=batch_size)
 
     def training_step(self, batch, batch_idx):
         outputs = self.model(*batch)
         loss, metrics = self.loss_fn(*outputs)
 
-        self.log("loss/train", loss, batch_size=self.get_batch_dim(batch))
+        self.log("loss/train", loss, prog_bar=True, batch_size=self.get_batch_dim(batch))
         self.log_metrics(metrics, suffix="train", batch_size=self.get_batch_dim(batch))
         return loss
 
@@ -58,7 +53,7 @@ class NCPModule(lightning.LightningModule):
         outputs = self.model(*batch)
         loss, metrics = self.loss_fn(*outputs)
 
-        self.log("loss/val", loss, batch_size=self.get_batch_dim(batch))
+        self.log("loss/val", loss, prog_bar=True, batch_size=self.get_batch_dim(batch))
         self.log_metrics(metrics, suffix="val", batch_size=self.get_batch_dim(batch))
         return loss
 
@@ -66,9 +61,23 @@ class NCPModule(lightning.LightningModule):
         outputs = self.model(*batch)
         loss, metrics = self.loss_fn(*outputs)
 
-        self.log("loss/test", loss, batch_size=self.get_batch_dim(batch))
+        self.log("loss/test", loss, prog_bar=True, batch_size=self.get_batch_dim(batch))
         self.log_metrics(metrics, suffix="test", batch_size=self.get_batch_dim(batch))
         return loss
+
+    def on_train_epoch_start(self) -> None:
+        self._time = time.time()
+
+    def on_train_epoch_end(self) -> None:
+        epoch_time = (time.time() - self._time)
+        self.log("epoch_time", epoch_time, on_epoch=True)
+
+    @torch.no_grad()
+    def log_metrics(self, metrics: dict, suffix='', batch_size=None):
+        flat_metrics = flatten_dict(metrics)
+        for k, v in flat_metrics.items():
+            name = f"{k}/{suffix}"
+            self.log(name, v, batch_size=batch_size)
 
     def get_batch_dim(self, batch):
         return batch[0].shape[0]
