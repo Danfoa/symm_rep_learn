@@ -85,7 +85,7 @@ class NCP(torch.nn.Module):
         mean_fx_norm, mean_hy_norm = torch.linalg.norm(self.mean_fx), torch.linalg.norm(self.mean_hy)
         # center_reg = mean_fx_norm ** 2 + mean_hy_norm ** 2
         # reg = orth_reg + 2 * center_reg  # Numerically unstability appears here
-        reg = self.orthonormality_penalization(fx) + self.orthonormality_penalization(hy)
+        reg = self.orthonormality_penalization(fx, self.mean_fx) + self.orthonormality_penalization(hy, self.mean_hy)
         # Total loss ___________________________________________________________
         # loss = truncation_err + self.gamma * (orth_reg + center_reg)
         loss = truncation_err + (self.embedding_dim * self.gamma) * reg
@@ -124,7 +124,7 @@ class NCP(torch.nn.Module):
     #     return t1_u + t1_v + t2_u + t2_v + (fx.shape[1] + hy.shape[1] - 2)
 
     @staticmethod
-    def orthonormality_penalization(fx, fx_c=None, fx_c_p=None):
+    def orthonormality_penalization(fx, fx_mean=None):
         """ Computes orthonormality and centering regularization penalization for a batch of feature vectors.
 
         Computes finite sample unbiased empirical estimates of the term:
@@ -146,18 +146,16 @@ class NCP(torch.nn.Module):
                          2 ||1/N Σ_i=1^N (f(x_i))||^2
         Args:
             fx: (n_samples, r) Feature vectors f(x) = [f_1(x), ..., f_r(x)].
-            fx_c: Optional (n_samples, r) Centered feature vectors f_c(x) = f(x) - mean(fx).
-            fx_c_p: Optional (n_samples, r) Centered feature vectors f_c(x') (permuted set).
+            fx_mean: (r,) Mean of the feature vectors E_p(x) f(x).
 
         Returns:
             Regularization term as a scalar tensor.
         """
         n_samples = fx.shape[0]
-        # Permute if not provided
-        perm = torch.randperm(n_samples)
         # Compute centered vectors if not provided
-        fx_c = fx_c if fx_c is not None else fx - fx.mean(dim=0, keepdim=True)
-        fx_c_p = fx_c_p if fx_c_p is not None else fx_c[perm]
+        fx_mean = fx_mean if fx_mean is not None else fx.mean(dim=0, keepdim=True)
+        fx_c = fx - fx_mean     #  f_c = f - E_p(x) f(x) = [f_c,1(x), ..., f_c,r(x)]
+        fx_c_p = fx_c[torch.randperm(n_samples)]       # = [f_c,1(x'), ..., f_c,r(x')]
 
         # Precompute inner products for centered and uncentered vectors
         inner_prod_x_xp = torch.mm(fx_c, fx_c_p.T)             # (n_samples, n_samples)  Symmetric matrix.
@@ -172,7 +170,7 @@ class NCP(torch.nn.Module):
         term1 = (inner_prod_x_xp ** 2).mean()                           # E_(x,x')~p(x) [(f_c(x)^T f_c(x'))^2]
         term2 = -2 * torch.sum(fx_c * fx_c, dim=1).mean()              # -2 E[f_c(x)^T f_c(x)]
         cst = fx.shape[-1]                                             # Dimensionality r
-        centering_loss = 2 * (fx.mean(dim=0) ** 2).sum()                # 2 ||E_p(x) (f(x_i))||^2
+        centering_loss = 2 * (fx_mean ** 2).sum()                       # 2 ||E_p(x) (f(x_i))||^2
 
         # Combine terms
         regularization = term1 + term2 + cst + centering_loss

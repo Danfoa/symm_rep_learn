@@ -44,22 +44,10 @@ class SymmGaussianMixture(GaussianMixture):
         self.means = self.random_state_params.normal(
             loc=np.zeros([self.ndim]), scale=self.means_std, size=[n_kernels, self.ndim]
         )  # shape(n_kernels, n_dims)
-
+        print(self.means)
         """ Sample cov matrices and assure that cov matrix is pos definite"""
-        self.covariances_x = project_to_pos_semi_def(
-            np.abs(
-                self.random_state_params.normal(
-                    loc=1, scale=0.5, size=(n_kernels, self.ndim_x, self.ndim_x)
-                )
-            )
-        )  # shape(n_kernels, ndim_x, ndim_y)
-        self.covariances_y = project_to_pos_semi_def(
-            np.abs(
-                self.random_state_params.normal(
-                    loc=1, scale=0.5, size=(n_kernels, self.ndim_y, self.ndim_y)
-                )
-            )
-        )  # shape(n_kernels, ndim_x, ndim_y)
+        self.covariances_x = self.sample_covariances(dim=self.ndim_x, scale=0.4, means_std=self.means_std, num=n_kernels)
+        self.covariances_y = self.sample_covariances(dim=self.ndim_y, scale=0.4, means_std=self.means_std, num=n_kernels)
 
         if not self.G.continuous:
             # To make these distributions invariant under the group action, we need to average over the group
@@ -99,6 +87,31 @@ class SymmGaussianMixture(GaussianMixture):
         # approximate data statistics
         self.y_mean, self.y_std = self._compute_data_statistics()
 
+    def sample_covariances(self, dim, scale, means_std, num=1):
+        """ Sample covariance matrices for the GMM
+        Args:
+          dim: dimensionality of the covariance matrices
+          scale: std of the eigenvalues of the covariance matrices
+          means_std: std of the means of the centers of the kernes
+          num: number of covariance matrices to sample
+        Returns:
+          ndarray of covariance matrices with shape (number, dim, dim)
+        """
+
+        # Sample diagonal entries / eigenvalues of the covariance matrix
+        eigenvalues = np.abs(self.random_state_params.normal(loc=1, scale=scale, size=(num, dim)))
+        # Ensure the minimum eigenvalue is 10% of the means_std
+        min_eig = 0.15 * means_std
+        # This controls that no kernel appears to be supported on a single line/point. / stochasticity
+        eigenvalues = np.maximum(eigenvalues, min_eig)
+
+        # eigenvalues /= eigenvalues.max()
+        # Sample num orthogonal matrices usign QR decomposition
+        Q, _ = np.linalg.qr(self.random_state_params.normal(size=(num, dim, dim)))
+        var = np.asarray([np.diag(e) for e in eigenvalues])
+        cov = np.einsum('...ij,...jk,...lk->...il', Q, var, Q)
+        return project_to_pos_semi_def(cov)
+
     def _sample_weights(self, n_weights):
         """Samples density weights -> sum up to one
         Args:
@@ -107,7 +120,8 @@ class SymmGaussianMixture(GaussianMixture):
           ndarray of weights with shape (n_weights,)
         """
         weights = self.random_state_params.random(n_weights)
-        return weights / np.sum(weights)
+        weights /= np.sum(weights)
+        return weights
 
     def _compute_data_statistics(self):
         """ Return mean and std of the y component of the data """

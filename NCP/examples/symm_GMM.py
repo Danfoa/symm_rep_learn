@@ -4,14 +4,14 @@ import pathlib
 import escnn
 import hydra
 import lightning
-import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import torch
 from escnn.group import Group, Representation
 from escnn.nn import FieldType, GeometricTensor
 from lightning.pytorch.loggers import WandbLogger
-from omegaconf import DictConfig
+from matplotlib import pyplot as plt
+from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, default_collate, TensorDataset
 
 from NCP.cde_fork.density_simulation.symmGMM import SymmGaussianMixture
@@ -202,41 +202,38 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
         from NCP.models.equiv_ncp import ENCPOperator
         from NCP.nn.equiv_layers import EMLP
 
-        kwags = dict(out_type=lat_type,
+        kwargs = dict(out_type=lat_type,
                      hidden_layers=cfg.embedding.hidden_layers,
                      hidden_units=cfg.embedding.hidden_units, bias=False)
-        χ_embedding = EMLP(in_type=x_type, **kwags)
-        y_embedding = EMLP(in_type=y_type, **kwags)
-        eNCPop = ENCPOperator(x_fns=χ_embedding, y_fns=y_embedding, gamma=cfg["gamma"])
+        χ_embedding = EMLP(in_type=x_type, **kwargs)
+        y_embedding = EMLP(in_type=y_type, **kwargs)
+        eNCPop = ENCPOperator(x_fns=χ_embedding, y_fns=y_embedding, gamma=cfg.gamma)
 
         return eNCPop
     elif cfg.model.lower() == "ncp":  # NCP
         from NCP.mysc.utils import class_from_name
-        from NCP.models.ncp import NCPOperator
+        from NCP.models.ncp import NCP
         from NCP.nn.layers import MLP
 
-        activation = class_from_name('torch.nn', cfg.model.activation)
-        xMLPkwargs = dict(
-            input_shape=x_type.size,
-            n_hidden=cfg['hidden_layers'],
-            layer_size=[cfg['hidden_units']] * cfg['hidden_layers'],
-            activation=activation,
-            )
-        yMLPKwargs = xMLPkwargs.copy() | dict(input_shape=y_type.size)
-        NCPop = NCPOperator(U_operator=MLP, V_operator=MLP, U_operator_kwargs=xMLPkwargs, V_operator_kwargs=yMLPKwargs)
-        return NCPop
+        activation = class_from_name('torch.nn', cfg.embedding.activation)
+        kwargs = dict(output_shape=lat_type.size,
+                      n_hidden=cfg.embedding.hidden_layers,
+                      layer_size=cfg.embedding.hidden_units,
+                      activation=activation)
+        fx = MLP(input_shape=x_type.size, **kwargs)
+        fy = MLP(input_shape=y_type.size, **kwargs)
+        ncp = NCP(fx, fy, embedding_dim=lat_type.size, gamma=cfg.gamma * lat_type.size)
+        return ncp
     else:
         raise ValueError(f"Model {cfg.model} not recognized")
 
 
-def generate_dataset(n_samples: int, gmm: SymmGaussianMixture, rep_X: Representation, rep_Y: Representation):
+def gmm_dataset(n_samples: int, gmm: SymmGaussianMixture, rep_X: Representation, rep_Y: Representation):
     from NCP.mysc.symm_algebra import symmetric_moments
 
     x_samples, y_samples = gmm.simulate(n_samples=n_samples)
-    x_samples = x_samples.squeeze()
-    y_samples = y_samples.squeeze()
-    x_mean, x_var = symmetric_moments(np.expand_dims(x_samples, 1), rep_X)
-    y_mean, y_var = symmetric_moments(np.expand_dims(y_samples, 1), rep_Y)
+    x_mean, x_var = symmetric_moments(x_samples, rep_X)
+    y_mean, y_var = symmetric_moments(y_samples, rep_Y)
 
     # Train, val, test splitting
     train_ratio, val_ratio, test_ratio = 0.7, 0.15, 0.15
@@ -247,12 +244,12 @@ def generate_dataset(n_samples: int, gmm: SymmGaussianMixture, rep_X: Representa
     x_train, x_val, x_test = X[:n_train], X[n_train:n_train + n_val], X[n_train + n_val:]
     y_train, y_val, y_test = Y[:n_train], Y[n_train:n_train + n_val], Y[n_train + n_val:]
 
-    X_train = torch.unsqueeze(torch.from_numpy(x_train).float(), 1)
-    Y_train = torch.unsqueeze(torch.from_numpy(y_train).float(), 1)
-    X_val = torch.unsqueeze(torch.from_numpy(x_val).float(), 1)
-    Y_val = torch.unsqueeze(torch.from_numpy(y_val).float(), 1)
-    X_test = torch.unsqueeze(torch.from_numpy(x_test).float(), 1)
-    Y_test = torch.unsqueeze(torch.from_numpy(y_test).float(), 1)
+    X_train = torch.atleast_2d(torch.from_numpy(x_train).float())
+    Y_train = torch.atleast_2d(torch.from_numpy(y_train).float())
+    X_val = torch.atleast_2d(torch.from_numpy(x_val).float())
+    Y_val = torch.atleast_2d(torch.from_numpy(y_val).float())
+    X_test = torch.atleast_2d(torch.from_numpy(x_test).float())
+    Y_test = torch.atleast_2d(torch.from_numpy(y_test).float())
 
     train_dataset = TensorDataset(X_train, Y_train)
     val_dataset = TensorDataset(X_val, Y_val)
@@ -261,19 +258,25 @@ def generate_dataset(n_samples: int, gmm: SymmGaussianMixture, rep_X: Representa
     return (x_samples, y_samples), (train_dataset, val_dataset, test_dataset)
 
 
-@hydra.main(config_path='cfg', config_name='config', version_base='1.1')
+@hydra.main(config_path='cfg', config_name='config', version_base='1.3')
 def main(cfg: DictConfig):
     C2 = escnn.group.CyclicGroup(2)  # Reflection group = Cyclic group of order 2
+    # rep_X = C2.regular_representation  # ρ_Χ
+    # rep_Y = C2.regular_representation  # ρ_Y
     rep_X = C2.representations['irrep_1']  # ρ_Χ
     rep_Y = C2.representations['irrep_1']  # ρ_Y
     rep_X.name, rep_Y.name = "rep_X", "rep_Y"
 
-    gmm = SymmGaussianMixture(n_kernels=cfg.gmm.n_kernels, rep_X=rep_X, rep_Y=rep_Y, means_std=2.0, random_seed=7)
+    gmm = SymmGaussianMixture(n_kernels=6, rep_X=rep_X, rep_Y=rep_Y, means_std=2.0, random_seed=10)
 
-    # grid = plot_analytic_joint_2D(gmm, G=C2, rep_X=rep_X, rep_Y=rep_Y)
+    grid = plot_analytic_joint_2D(gmm, G=C2, rep_X=rep_X, rep_Y=rep_Y)
+    plt.show()
+
+    (x_samples, y_samples), (train_ds, val_ds, test_ds) = gmm_dataset(cfg.n_samples, gmm, rep_X, rep_Y)
+
+    # Plot y vs x
+    # plt.scatter(x_samples, y_samples, alpha=0.5, color='C0', label='Data')
     # plt.show()
-
-    (x_samples, y_samples), (train_ds, val_ds, test_ds) = generate_dataset(cfg.n_samples, gmm, rep_X, rep_Y)
 
     # Define the Input and Latent types for ESCNN
     x_type = FieldType(gspace=escnn.gspaces.no_base_space(C2), representations=[rep_X])
@@ -282,29 +285,39 @@ def main(cfg: DictConfig):
         gspace=escnn.gspaces.no_base_space(C2),
         representations=[C2.regular_representation] * (cfg.embedding['embedding_dim'] // C2.order())
         )
+
     # ESCNN equivariant models expect GeometricTensors.
     def geom_tensor_collate_fn(batch) -> [GeometricTensor, GeometricTensor]:
         x_batch, y_batch = default_collate(batch)
         return GeometricTensor(x_batch, x_type), GeometricTensor(y_batch, y_type)
 
-    train_dataloader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, collate_fn=geom_tensor_collate_fn)
-    val_dataloader = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=geom_tensor_collate_fn)
-    test_dataloader = DataLoader(test_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=geom_tensor_collate_fn)
+    # Get the model
+    ncp_op = get_model(cfg, x_type, y_type, lat_type)
 
-    npc_op = get_model(cfg, x_type, y_type, lat_type)
+    # Define the dataloaders
+    from escnn.nn import EquivariantModule
+    collate_fn = geom_tensor_collate_fn if isinstance(ncp_op, EquivariantModule) else default_collate
+    train_dataloader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_fn)
+    val_dataloader = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=collate_fn)
+    test_dataloader = DataLoader(test_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=collate_fn)
+
 
     lightning_module = NCPModule(
-        model=npc_op,
+        model=ncp_op,
         optimizer_fn=torch.optim.Adam,
-        optimizer_kwargs={"lr": cfg["lr"]},
-        loss_fn=npc_op.loss,
+        optimizer_kwargs={"lr": cfg.lr},
+        loss_fn=ncp_op.loss,
         )
 
     pathlib.Path("lightning_logs").mkdir(exist_ok=True)
-    logger = WandbLogger(save_dir="lightning_logs", project="NCP-GMM-C2", log_model=False, config=cfg)
-    logger.watch(lightning_module, log="all", log_graph=False)
+    logger = WandbLogger(save_dir="lightning_logs",
+                         project="NCP-GMM-C2",
+                         log_model=False,
+                         config=OmegaConf.to_container(cfg, resolve=True))
+    # logger.watch(ncp_op, log="all", log_graph=False)
 
-    trainer = lightning.Trainer(max_epochs=500, logger=logger,
+    trainer = lightning.Trainer(accelerator='auto',
+                                max_epochs=500, logger=logger,
                                 enable_progress_bar=True,
                                 log_every_n_steps=5,
                                 check_val_every_n_epoch=5)
@@ -314,6 +327,7 @@ def main(cfg: DictConfig):
 
     a = trainer.test(lightning_module, dataloaders=test_dataloader)
     print(a)
+
 
 if __name__ == '__main__':
     main()
