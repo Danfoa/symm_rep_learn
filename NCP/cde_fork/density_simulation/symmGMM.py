@@ -46,8 +46,8 @@ class SymmGaussianMixture(GaussianMixture):
         )  # shape(n_kernels, n_dims)
         print(self.means)
         """ Sample cov matrices and assure that cov matrix is pos definite"""
-        self.covariances_x = self.sample_covariances(dim=self.ndim_x, scale=0.4, means_std=self.means_std, num=n_kernels)
-        self.covariances_y = self.sample_covariances(dim=self.ndim_y, scale=0.4, means_std=self.means_std, num=n_kernels)
+        self.covariances_x = self.sample_covariances(dim=self.ndim_x, scale=0.5, means_std=self.means_std, num=n_kernels)
+        self.covariances_y = self.sample_covariances(dim=self.ndim_y, scale=0.5, means_std=self.means_std, num=n_kernels)
 
         if not self.G.continuous:
             # To make these distributions invariant under the group action, we need to average over the group
@@ -168,7 +168,7 @@ class SymmGaussianMixture(GaussianMixture):
         p_xy = self.joint_pdf(X, Y)
         p_x = self.pdf_x(X)
         p_y = self.pdf_y(Y)
-        return np.log(p_xy / (p_x * p_y))
+        return p_xy / (p_x * p_y)
 
 if __name__ == "__main__":
 

@@ -18,8 +18,13 @@ class NCPModule(lightning.LightningModule):
             optimizer_fn: torch.optim.Optimizer,
             optimizer_kwargs: dict,
             loss_fn: torch.nn.Module | callable,
+            test_metrics: callable = None,  # Callable at the end of testing
+            val_metrics: callable = None,   # Callable at the end of validation
             ):
         super(NCPModule, self).__init__()
+        self._test_metrics = test_metrics
+        self._val_metrics = val_metrics
+
         self.model = model
         self._optimizer = optimizer_fn
         _tmp_opt_kwargs = deepcopy(optimizer_kwargs)
@@ -72,12 +77,17 @@ class NCPModule(lightning.LightningModule):
         epoch_time = (time.time() - self._time)
         self.log("epoch_time", epoch_time, on_epoch=True)
 
+    def on_validation_epoch_end(self) -> None:
+        if self._val_metrics is not None:
+            metrics = self._val_metrics(None)
+            self.log_metrics(metrics, suffix="val", batch_size=None)
+
     @torch.no_grad()
-    def log_metrics(self, metrics: dict, suffix='', batch_size=None):
+    def log_metrics(self, metrics: dict, suffix='', batch_size=None, **kwargs):
         flat_metrics = flatten_dict(metrics)
         for k, v in flat_metrics.items():
             name = f"{k}/{suffix}"
-            self.log(name, v, batch_size=batch_size)
+            self.log(name, v, batch_size=batch_size, **kwargs)
 
     def get_batch_dim(self, batch):
         return batch[0].shape[0]

@@ -172,3 +172,5 @@ cython_debug/
 NCP/lightning_logs/
 
 NCP/outputs/
+
+lightning_logs/

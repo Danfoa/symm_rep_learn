@@ -45,13 +45,13 @@ def plot_analytic_joint_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representa
     x_t, y_t = x_samples[0], y_samples[0]
     g = G.elements[-1]
     gx_t, gy_t = (rep_X(g) @ [x_t]).squeeze(), (rep_Y(g) @ [y_t]).squeeze()
-    grid.ax_joint.axvline(x_t, color='r', alpha=0.2)
-    grid.ax_joint.axvline(gx_t, color='r', alpha=0.2)
-    grid.ax_joint.axhline(y_t, color='r', alpha=0.2)
-    grid.ax_joint.axhline(gy_t, color='r', alpha=0.2)
+    grid.ax_joint.axvline(x_t, color='r', alpha=0.7)
+    grid.ax_joint.axhline(y_t, color='r', alpha=0.7)
+    grid.ax_joint.axvline(gx_t, color='g', alpha=0.7)
+    grid.ax_joint.axhline(gy_t, color='g', alpha=0.7)
     # Draw red point on the selected sample
-    grid.ax_joint.plot(x_t, y_t, 'ro', markersize=4, alpha=0.5)
-    grid.ax_joint.plot(gx_t, gy_t, 'ro', markersize=4, alpha=0.5)
+    grid.ax_joint.plot(x_t, y_t, 'ro', markersize=5, alpha=0.7)
+    grid.ax_joint.plot(gx_t, gy_t, 'go', markersize=5, alpha=0.7)
     # Set limits
     grid.ax_joint.set_xlim([-x_max, x_max])
     grid.ax_joint.set_ylim([-y_max, y_max])
@@ -134,13 +134,13 @@ def plot_analytic_mi_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representatio
     x_t, y_t = x_samples[0], y_samples[0]
     g = G.elements[-1]
     gx_t, gy_t = (rep_X(g) @ [x_t]).squeeze(), (rep_Y(g) @ [y_t]).squeeze()
-    grid.ax_joint.axvline(x_t, color='r', alpha=0.2)
-    grid.ax_joint.axvline(gx_t, color='r', alpha=0.2)
-    grid.ax_joint.axhline(y_t, color='r', alpha=0.2)
-    grid.ax_joint.axhline(gy_t, color='r', alpha=0.2)
+    grid.ax_joint.axvline(x_t, color='r', alpha=0.7)
+    grid.ax_joint.axhline(y_t, color='r', alpha=0.7)
+    grid.ax_joint.axvline(gx_t, color='g', alpha=0.7)
+    grid.ax_joint.axhline(gy_t, color='g', alpha=0.7)
     # Draw red point on the selected sample
-    grid.ax_joint.plot(x_t, y_t, 'ro', markersize=4, alpha=0.5)
-    grid.ax_joint.plot(gx_t, gy_t, 'ro', markersize=4, alpha=0.5)
+    grid.ax_joint.plot(x_t, y_t, 'ro', markersize=5, alpha=0.5)
+    grid.ax_joint.plot(gx_t, gy_t, 'go', markersize=5, alpha=0.5)
     # Set limits
     grid.ax_joint.set_xlim([-x_max, x_max])
     grid.ax_joint.set_ylim([-y_max, y_max])
@@ -152,19 +152,33 @@ def plot_analytic_mi_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representatio
 
     # Do plot of conditional probability density on the test conditions x and gx
     n_samples_cpd = len(y_range)
-    cpd_y_vals = gmm.pdf(X=np.repeat(x_t, n_samples_cpd), Y=y_range)
-    cpd_gy_vals = gmm.pdf(X=np.repeat(gx_t, n_samples_cpd), Y=y_range)
+    mi_x_vals = gmm.mutual_information(X=np.repeat(x_t, n_samples_cpd), Y=y_range)
+    mi_gx_vals = gmm.mutual_information(X=np.repeat(gx_t, n_samples_cpd), Y=y_range)
+    mi_y_vals = gmm.mutual_information(X=x_range, Y=np.repeat(y_t, len(x_range)))
+    mi_gy_vals = gmm.mutual_information(X=x_range, Y=np.repeat(gy_t, len(x_range)))
+
+    mi_min, mi_max = min(mi_x_vals.min(), mi_gx_vals.min()), max(mi_x_vals.max(), mi_gx_vals.max())
     # Plot filled distributions with lines
     style = {
-        "cpd_x":  {
+        "mi_x":  {
             "color":  "red",
             "fill":   "pink",
-            "legend": r"$p(y | x)$",
+            "legend": r"$MI(y,x)$",
             },
-        "cpd_gx": {
+        "mi_gx": {
             "color":  "green",
             "fill":   "lightgreen",
-            "legend": r"$p(y | g \;\triangleright_{\mathcal{X}}\; x)$",
+            "legend": r"$MI(y, g \;\triangleright_{\mathcal{X}}\; x)$",
+            },
+        "mi_y":  {
+            "color": "red",
+            "fill":  "pink",
+            "legend": r"$MI(y,x)$",
+            },
+        "mi_gy": {
+            "color": "green",
+            "fill":  "lightgreen",
+            "legend": r"$MI(g \;\triangleright_{\mathcal{Y}}\; y, x)$",
             },
         "pdf":    {
             "color":  "blue",
@@ -173,31 +187,26 @@ def plot_analytic_mi_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representatio
             }
         }
 
-    for key, cpd_vals in zip(["cpd_x", "cpd_gx"], [cpd_y_vals, cpd_gy_vals]):
-        grid.ax_marg_y.plot(cpd_vals, y_range, color=style[key]["color"], linestyle="-", alpha=0.9, linewidth=0.6,
+    for key, mi_vals in zip(["mi_x", "mi_gx"], [mi_x_vals, mi_gx_vals]):
+        grid.ax_marg_y.plot(mi_vals, y_range, color=style[key]["color"], linestyle="-", alpha=0.9, linewidth=1,
                             label=style[key]["legend"])
-
-    # Plot marginal x
-    pdf_x = gmm.pdf_x(X=x_range)
-    grid.ax_marg_x.fill_between(x_range, 0, pdf_x, color=style["pdf"]["fill"], alpha=0.4)
-    grid.ax_marg_x.plot(x_range, pdf_x, color=style["pdf"]["color"], linestyle="-", alpha=1.0, linewidth=0.6,
-                        label=style["pdf"]["legend"])
-    grid.ax_marg_x.set_ylim([0, None])
-    # Plot marginal y
-    pdf_y = gmm.pdf_y(Y=y_range)
-    grid.ax_marg_y.fill_betweenx(y_range, 0, pdf_y, color=style["pdf"]["fill"], alpha=0.4)
-    grid.ax_marg_y.plot(pdf_y, y_range, color=style["pdf"]["color"], linestyle="-", alpha=1.0, linewidth=0.6,
-                        label=style["pdf"]["legend"])
-    grid.ax_marg_y.set_xlim([0, None])
+    for key, mi_vals in zip(["mi_y", "mi_gy"], [mi_y_vals, mi_gy_vals]):
+        grid.ax_marg_x.plot(x_range, mi_vals, color=style[key]["color"], linestyle="-", alpha=0.9, linewidth=1,
+                            label=style[key]["legend"])
 
     # Add legend
     grid.ax_marg_y.legend(loc="upper left", fontsize=8)
+    grid.ax_marg_x.legend(loc="upper left", fontsize=8)
+    # Set bot marg x,y to have the same image scale
+    grid.ax_marg_x.set_ylim([mi_min, mi_max])
+    grid.ax_marg_y.set_xlim([mi_min, mi_max])
     grid.fig.suptitle(r"Analytic mutual information $\frac{p(x,y)}{p(y)p(x)}$")
     grid.fig.tight_layout()
     return grid
 
 
 def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
+    embedding_dim = lat_type.size
     if cfg.model.lower() == "encp":  # Equivariant NCP
         from NCP.models.equiv_ncp import ENCPOperator
         from NCP.nn.equiv_layers import EMLP
@@ -216,13 +225,13 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
         from NCP.nn.layers import MLP
 
         activation = class_from_name('torch.nn', cfg.embedding.activation)
-        kwargs = dict(output_shape=lat_type.size,
+        kwargs = dict(output_shape=embedding_dim,
                       n_hidden=cfg.embedding.hidden_layers,
                       layer_size=cfg.embedding.hidden_units,
                       activation=activation)
         fx = MLP(input_shape=x_type.size, **kwargs)
         fy = MLP(input_shape=y_type.size, **kwargs)
-        ncp = NCP(fx, fy, embedding_dim=lat_type.size, gamma=cfg.gamma * lat_type.size)
+        ncp = NCP(fx, fy, embedding_dim=embedding_dim, gamma=cfg.gamma * lat_type.size)
         return ncp
     else:
         raise ValueError(f"Model {cfg.model} not recognized")
@@ -269,8 +278,10 @@ def main(cfg: DictConfig):
 
     gmm = SymmGaussianMixture(n_kernels=6, rep_X=rep_X, rep_Y=rep_Y, means_std=2.0, random_seed=10)
 
-    grid = plot_analytic_joint_2D(gmm, G=C2, rep_X=rep_X, rep_Y=rep_Y)
-    plt.show()
+    # grid = plot_analytic_joint_2D(gmm, G=C2, rep_X=rep_X, rep_Y=rep_Y)
+    # plt.show()
+    # grid = plot_analytic_mi_2D(gmm, G=C2, rep_X=rep_X, rep_Y=rep_Y)
+    # plt.show()
 
     (x_samples, y_samples), (train_ds, val_ds, test_ds) = gmm_dataset(cfg.n_samples, gmm, rep_X, rep_Y)
 
@@ -317,7 +328,7 @@ def main(cfg: DictConfig):
     # logger.watch(ncp_op, log="all", log_graph=False)
 
     trainer = lightning.Trainer(accelerator='auto',
-                                max_epochs=500, logger=logger,
+                                max_epochs=cfg.max_epochs, logger=logger,
                                 enable_progress_bar=True,
                                 log_every_n_steps=5,
                                 check_val_every_n_epoch=5)

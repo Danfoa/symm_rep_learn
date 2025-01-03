@@ -1,16 +1,17 @@
 
 model : eNCP
 
-gamma: 0.01     # Weight of the NCP regularization loss term.
+gamma: 0.001     # Weight of the NCP regularization loss term.
 lr: 1e-3
-batch_size: 1024
+batch_size: 2024
 n_samples: 10000
-max_epochs: 500
+max_epochs: 5000
 
 gmm:
   n_kernels: 6
 
 embedding:
   hidden_units: 64
-  hidden_layers: 3
-  embedding_dim: 6
+  hidden_layers: 4
+  embedding_dim: 25
+  activation: ReLU

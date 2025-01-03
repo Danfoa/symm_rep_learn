@@ -1,11 +1,16 @@
 # Created by danfoa at 19/12/24
 from __future__ import annotations
+
+from idlelib.pyshell import fix_x11_paste
+
 import torch
 
 import logging
 
 from torch.linalg import matrix_norm
 from wandb.sdk.internal.profiler import torch_trace_handler
+
+from NCP.mysc.statistics import cov_norm_squared_unbiased_estimation, cross_cov_norm_squared_unbiased_estimation
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +61,31 @@ class NCP(torch.nn.Module):
 
         return fx, hy
 
+    def mutual_information(self, fx: torch.Tensor, hy: torch.Tensor):
+        """Compute the exponential of the mutual information between the random variables x and y.
+
+        The conditional expectation's kernel function k(x,y) = p(x,y) / p(x)p(y), is by definition the exponential of
+        the mutual information between two evaluations of the random variables x and y, that is: MI = ln(k(x,y)).
+
+        In the chosen basis sets of the approximated function spaces L^2(X) and L^2(Y), the approximated kernel function
+        is computed as: k_r(x,y) = 1 + Σ_i,j=1^r Cxy_ij f_i(x) h_j(y).
+
+        TODO: When the singular basis are appropriatedly identified after training we can compute the kernel function by
+        k_r(x,y) = 1 + Σ_i=1^r σ_i f_i(x) h_i(y).
+
+        Args:
+            fx: (torch.Tensor) of shape (..., r) representing the singular functions of a subspace of L^2(X).
+            hy: (torch.Tensor) of shape (..., r) representing the singular functions of a subspace of L^
+        Returns:
+            (torch.Tensor) representing the expected mutual information between x and y.
+        """
+        fx_c, hy_c = fx - self.mean_fx, hy - self.mean_hy
+        # Compute the kernel function
+        kr = 1 + torch.einsum('nr,rc,nc->n', fx_c, self.Cxy, hy_c)
+        # Check no NaN  or Inf values
+        assert torch.isfinite(kr).all(), "NaN or Inf values found in the kernel function."
+        return kr
+
     def loss(self, fx: torch.Tensor, hy: torch.Tensor):
         """ TODO
         Args:
@@ -68,39 +98,52 @@ class NCP(torch.nn.Module):
         """
         assert fx.shape[-1] == hy.shape[-1] == self.embedding_dim, \
             f"Expected number of singular functions to be {self.embedding_dim}, got {fx.shape[-1]} and {hy.shape[-1]}."
+        n_samples = fx.shape[0]
 
         self.update_fns_statistics(fx, hy)  # Update mean_fx and mean_hy
-        # Main loss
-        # truncation_err = -2 ||Cxy||_F^2 + tr(Cxy Cy Cxy^T Cx) - 1
-        Cxy_f_norm = matrix_norm(self.Cxy, ord='fro') ** 2
-        A = torch.einsum('ab,bc,cd,de->ae', self.Cxy, self.Cy, self.Cxy, self.Cx)
-        truncation_err = -2 * Cxy_f_norm + torch.trace(A)
-        # truncation_err = self.truncation_error(fx, hy)
+        fx_c, hy_c = fx - self.mean_fx, hy - self.mean_hy
+        p_perm = torch.randperm(n_samples, device=fx.device)  # Permutation to obtain (x', y') ~ p(x, y)
+        pp_perm = torch.randperm(n_samples, device=fx.device)  # Permutation to obtain (x'', y'') ~ p(x, y)
+        fx_cp, hy_cp = fx_c[p_perm], hy_c[p_perm]  # f_c(x') and h_c(y')
 
-        # Regularization terms, encouraging orthonormality and centered basis functions
-        # orth_reg = ||Cx - I||_F^2 + ||Cy - I||_F^2
-        # I = torch.eye(self.embedding_dim, device=fx.device, dtype=fx.dtype)
-        # orth_reg = matrix_norm(self.Cx - I, ord='fro') ** 2 + matrix_norm(self.Cy - I, ord='fro') ** 2
-        # center_reg = ||mean_fx := E_p(x) f(x)||_F^2 + ||mean_hy := E_p(y) h(y)||_F^2
-        mean_fx_norm, mean_hy_norm = torch.linalg.norm(self.mean_fx), torch.linalg.norm(self.mean_hy)
-        # center_reg = mean_fx_norm ** 2 + mean_hy_norm ** 2
-        # reg = orth_reg + 2 * center_reg  # Numerically unstability appears here
-        reg = self.orthonormality_penalization(fx, self.mean_fx) + self.orthonormality_penalization(hy, self.mean_hy)
-        # Total loss ___________________________________________________________
+        # Orthonormal regularization and centering penalization _________________________________________
+        # orth_reg_fx = ||Cx - I||_F^2 + ||Cy - I||_F^2 + 2 ||E_p(x) f(x)||_F^2 + 2 ||E_p(y) h(y)||_F^2
+        orthonormal_reg, metrics, inner_prod = self.orthonormality_penalization(
+            fx_c, hy_c, return_inner_prod=True, permutation=p_perm
+            )
+        fx_fxp, hy_hyp = inner_prod  # [fx_fxp]nm = (f_c(x_n).T f_c(x'_m)), [hy_hyp]nm = (h_c(y_n).T h_c(y'_m))
+
+        # Operator truncation error = -2 ||Cxy||_F^2 + tr(Cxy Cy Cxy^T Cx) - 1___________________________
+        # Biased estimation:
+        # Cxy_F_2_biased = matrix_norm(self.Cxy, ord='fro') ** 2
+        Pxyx = torch.einsum('ab,bc,cd,de->ae', self.Cxy, self.Cy, self.Cxy, self.Cx)
+        tr_Pxyx_biased = torch.trace(Pxyx)
+        # Unbiased estimation:   [fxp_hypp]nm = (f_c(x'_n).T h_c(y''_m)), [fxpp_hyp]nm = (f_c(x''_n).T h_c(y'_m))
+        Cxy_F_2, (fxp_hypp, fxpp_hyp) = cross_cov_norm_squared_unbiased_estimation(fx_cp, hy_cp,
+                                                                                   return_inner_prods=True)
+        # Pxyx = 1/N^4 Σ_n,m,l,k (f(x_n).T f(x'_m)) (h(y_n).T h(y'_m))(h(y'_m).T f(x''_l))(h(y''_l).T f(x'_k))
+        # tr_Pxyx = torch.einsum('nm,nm,lm,kl->', fx_fxp, hy_hyp, fxpp_hyp, fxp_hypp) / (n_samples ** 4)  # not working
+        truncation_err = -2 * Cxy_F_2 - 1 + tr_Pxyx_biased - 1
+        # truncation_err = -2 * Cxy_F_2_biased + tr_Pxyx - 1  # TODO: Unbiased tr_Pxyx not working properly
+
+        # Total loss ____________________________________________________________________________________
         # loss = truncation_err + self.gamma * (orth_reg + center_reg)
-        loss = truncation_err + (self.embedding_dim * self.gamma) * reg
-        # Logging metrics ______________________________________________________
-        metrics = {
-            "||E - E_r||_HS": truncation_err.detach(),
-            # "orth_reg":       orth_reg.detach(),
-            "||Cxy||_F^2":    Cxy_f_norm.detach() / self.embedding_dim,
-            "||mu_x||":       mean_fx_norm.detach(),
-            "||mu_y||":       mean_hy_norm.detach(),
-            }
-        metrics |= self.batch_metrics()
+        loss = truncation_err + (self.embedding_dim * self.gamma) * (orthonormal_reg)
+        # Logging metrics _______________________________________________________________________________
+        with torch.no_grad():
+            metrics |= {
+                "||E - E_r||_HS":             truncation_err.detach(),
+                "||E - E_r||_HS/biased":      self.biased_truncation_error(fx, hy).detach(),
+                "||Cxy||_F^2":                Cxy_F_2.detach() / self.embedding_dim,
+                # "tr(Cxy Cy Cxy^T Cx)": tr_Pxyx.detach() / self.embedding_dim,
+                "tr(Cxy Cy Cxy^T Cx)/biased": tr_Pxyx_biased.detach() / self.embedding_dim,
+                "||Cxy||_F^2/biased":         torch.linalg.matrix_norm(self.Cxy) ** 2 / self.embedding_dim,
+                "||Cx||_F^2/biased":          torch.linalg.matrix_norm(self.Cx) ** 2 / self.embedding_dim,
+                "||Cy||_F^2/biased":          torch.linalg.matrix_norm(self.Cy) ** 2 / self.embedding_dim,
+                }
         return loss, metrics
 
-    def truncation_error(self, fx, hy):
+    def biased_truncation_error(self, fx, hy):
         eps = 1e-6 * torch.eye(self.embedding_dim, device=fx.device, dtype=fx.dtype)
         n_samples = fx.shape[0]
         fx_c = fx - fx.mean(dim=0, keepdim=True)
@@ -112,19 +155,9 @@ class NCP(torch.nn.Module):
 
         A = torch.einsum('ab,bc,cd,de->ae', Cxy, Cy, Cxy, Cx)
 
-        return - 2 * torch.sum(Cxy ** 2) + torch.trace(A)
+        return - 2 * torch.sum(Cxy ** 2) + torch.trace(A) - 1
 
-    # def reg_term(self, fx, hy):
-    #     fx_p = fx[torch.randperm(fx.shape[0])]
-    #     hy_p = hy[torch.randperm(hy.shape[0])]
-    #     t1_u = torch.mean((torch.einsum('ik,jk->ij', fx, fx_p) + 1) ** 2)
-    #     t1_v = torch.mean((torch.einsum('ik,jk->ij', hy, hy_p) + 1) ** 2)
-    #     t2_u = - 2 * torch.einsum('ik,ik->', fx, fx) / fx.shape[0]
-    #     t2_v = - 2 * torch.einsum('ik,ik->', hy, hy) / hy.shape[0]
-    #     return t1_u + t1_v + t2_u + t2_v + (fx.shape[1] + hy.shape[1] - 2)
-
-    @staticmethod
-    def orthonormality_penalization(fx, fx_mean=None):
+    def orthonormality_penalization(self, fx_c, hy_c, return_inner_prod=False, permutation=None):
         """ Computes orthonormality and centering regularization penalization for a batch of feature vectors.
 
         Computes finite sample unbiased empirical estimates of the term:
@@ -139,74 +172,57 @@ class NCP(torch.nn.Module):
         practice we shuffle D to obtain D' and to get f(x) and f(x').
         Then we have that the unbiased estimate is computed by:
 
-        || Vx - I ||_F^2 ≈ E_(x,x')~p(x) [(f_c(x).T f_c(x'))^2] - 2 E_p(x)[f_c(x).T f_c(x)] + r + 2 E_p(x) f(x)^T f(x)
-                         ≈ 1/N^2 Σ_i,j=1^N (f_c(x_i).T f_c(x_j))^2 -
-                         2/N Σ_i=1^N (f_c(x_i).T f_c(x_i)) +
-                         r +
-                         2 ||1/N Σ_i=1^N (f(x_i))||^2
-        Args:
-            fx: (n_samples, r) Feature vectors f(x) = [f_1(x), ..., f_r(x)].
-            fx_mean: (r,) Mean of the feature vectors E_p(x) f(x).
+        || Vx - I ||_F^2 ≈ E_(x,x')~p(x) [(f_c(x).T f_c(x'))^2] - 2 tr(Cx) + r + 2 ||f_mean||^2
 
+        Args:
+            fx_c: (n_samples, r) Centered feature vectors f_c(x) = [f_c,1(x), ..., f_c,r(x)].
+            hy_c: (n_samples, r) Centered feature vectors h_c(y) = [h_c,1(y), ..., h_c,r(y)].
+            return_inner_prod: (bool) If True, return intermediate inner products.
+            permutation: (torch.Tensor) Permutation tensor to shuffle the samples in the batch.
         Returns:
             Regularization term as a scalar tensor.
         """
-        n_samples = fx.shape[0]
-        # Compute centered vectors if not provided
-        fx_mean = fx_mean if fx_mean is not None else fx.mean(dim=0, keepdim=True)
-        fx_c = fx - fx_mean     #  f_c = f - E_p(x) f(x) = [f_c,1(x), ..., f_c,r(x)]
-        fx_c_p = fx_c[torch.randperm(n_samples)]       # = [f_c,1(x'), ..., f_c,r(x')]
 
-        # Precompute inner products for centered and uncentered vectors
-        inner_prod_x_xp = torch.mm(fx_c, fx_c_p.T)             # (n_samples, n_samples)  Symmetric matrix.
-        # diag_vec = torch.diag(inner_prod_x_xp)               # 1. Get the diagonal as a flattened 1D tensor
-        # # 2. Get the strictly upper-triangular elements (excluding diagonal) as a flattened 1D tensor
-        # row_idx, col_idx = torch.triu_indices(n_samples, n_samples, offset=1)
-        # upper_diag_flat = inner_prod_x_xp[row_idx, col_idx]
-        # entries = torch.concatenate((diag_vec**2, 2*upper_diag_flat**2))
-        # term1 = ((diag_vec**2).sum() + (2*upper_diag_flat**2).sum()) / (n_samples ** 2)
+        # Compute unbiased empirical estimates ||Cx||_F^2 = E_(x,x')~p(x) [(f_c(x).T f_c(x'))^2]
+        if return_inner_prod:
+            Cx_fro_2, fx_fxp = cov_norm_squared_unbiased_estimation(fx_c, True, permutation=permutation)
+            Cy_fro_2, hy_hyp = cov_norm_squared_unbiased_estimation(hy_c, True, permutation=permutation)
+        else:
+            Cx_fro_2 = cov_norm_squared_unbiased_estimation(fx_c, False, permutation=permutation)
+            Cy_fro_2 = cov_norm_squared_unbiased_estimation(hy_c, False, permutation=permutation)
+            fx_fxp, hy_hyp = None, None
 
-        # Compute unbiased empirical estimates
-        term1 = (inner_prod_x_xp ** 2).mean()                           # E_(x,x')~p(x) [(f_c(x)^T f_c(x'))^2]
-        term2 = -2 * torch.sum(fx_c * fx_c, dim=1).mean()              # -2 E[f_c(x)^T f_c(x)]
-        cst = fx.shape[-1]                                             # Dimensionality r
-        centering_loss = 2 * (fx_mean ** 2).sum()                       # 2 ||E_p(x) (f(x_i))||^2
+        tr_Cx = torch.trace(self.Cx)  # E[f_c(x)^T f_c(x)] =  tr(Cx)
+        fx_centering_loss = (self.mean_fx ** 2).sum()  # ||E_p(x) (f(x_i))||^2
 
+        tr_Cy = torch.trace(self.Cy)  # E[h_c(y)^T h_c(y)] = tr(Cy)
+        hy_centering_loss = (self.mean_hy ** 2).sum()  # ||E_p(y) (h(y_i))||^2
+
+        embedding_dim = fx_c.shape[-1]  # Dimensionality r
+
+        # orthonormality_fx = tr(Cx^2) - 2 tr(Cx) + 2 || E_p(x) f(x) ||^2 + r
+        orthonormality_fx = Cx_fro_2 - 2 * tr_Cx + 2 * fx_centering_loss + embedding_dim
+        # orthonormality_hy = tr(Cy^2) - 2 tr(Cy) + 2 || E_p(y) h(y) ||^2 + r
+        orthonormality_hy = Cy_fro_2 - 2 * tr_Cy + 2 * hy_centering_loss + embedding_dim
         # Combine terms
-        regularization = term1 + term2 + cst + centering_loss
-        return regularization
+        regularization = orthonormality_fx + orthonormality_hy
 
+        with torch.no_grad():
+            metrics = {
+                f"||Cx||_F^2":     Cx_fro_2 / embedding_dim,
+                f"||mu_x||":       torch.sqrt(fx_centering_loss),
+                f"||Vx - I||_F^2": orthonormality_fx / embedding_dim,
+                f"||tr(Cx)||":     tr_Cx / embedding_dim,
+                f"||Cy||_F^2":     Cy_fro_2 / embedding_dim,
+                f"||mu_y||":       torch.sqrt(hy_centering_loss),
+                f"||Vy - I||_F^2": orthonormality_hy / embedding_dim,
+                f"||tr(Cy)||":     tr_Cy / embedding_dim,
+                }
 
-    def mutual_information(self, x: torch.Tensor, y: torch.Tensor):
-        """Compute the exponential of the mutual information between the random variables x and y.
-
-        The conditional expectation's kernel function k(x,y) = p(x,y) / p(x)p(y), is by definition the exponential of
-        the mutual information between two evaluations of the random variables x and y, that is: MI = ln(k(x,y)).
-
-        In the chosen basis sets of the approximated function spaces L^2(X) and L^2(Y), the approximated kernel function
-        is computed as: k_r(x,y) = 1 + Σ_i,j=1^r Cxy_ij f_i(x) h_j(y).
-
-        TODO: When the singular basis are appropriatedly identified after training we can compute the kernel function by
-        k_r(x,y) = 1 + Σ_i=1^r σ_i f_i(x) h_i(y).
-
-        Args:
-            x: (torch.Tensor) of shape (..., d) representing the input random variable x.
-            y: (torch.Tensor) of shape (..., d) representing the input random variable y.
-        Returns:
-            (torch.Tensor) representing the expected mutual information between x and y.
-        """
-        fx, hy = self(x, y)
-        fx_centered, hy_centered = fx - self.mean_fx, hy - self.mean_hy
-        # Compute the kernel function
-        kr = 1 + torch.einsum('nr,rc,nc->n', fx_centered, self.Cxy, hy_centered)
-        return torch.log(kr)
-
-    @torch.no_grad()
-    def batch_metrics(self):
-        return {
-            "||Cx||_F": torch.linalg.norm(self.Cx, ord='fro') ** 2 / self.embedding_dim,  # Should converge to 1
-            "||Cy||_F": torch.linalg.norm(self.Cy, ord='fro') ** 2 / self.embedding_dim,  # Should converge to 1
-            }
+        if return_inner_prod:
+            return regularization, metrics, (fx_fxp, hy_hyp)
+        else:
+            return regularization, metrics
 
     def update_fns_statistics(self, fx: torch.Tensor, hy: torch.Tensor):
         n_samples = fx.shape[0]
@@ -249,5 +265,6 @@ if __name__ == "__main__":
     loss, metrics = ncp.loss(fx, hy)
     print(loss)
     with torch.no_grad():
-        mi = ncp.mutual_information(x, y)
+        fx, hy = ncp(x, y)
+        mi = ncp.mutual_information(fx, hy)
     print(mi)
