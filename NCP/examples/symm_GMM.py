@@ -9,6 +9,7 @@ import seaborn as sns
 import torch
 from escnn.group import Group, Representation
 from escnn.nn import FieldType, GeometricTensor
+from lightning import seed_everything
 from lightning.pytorch.loggers import WandbLogger
 from matplotlib import pyplot as plt
 from omegaconf import DictConfig, OmegaConf
@@ -18,15 +19,11 @@ from NCP.cde_fork.density_simulation.symmGMM import SymmGaussianMixture
 from NCP.models.ncp_lightning_module import NCPModule
 
 
-def plot_analytic_joint_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representation, rep_Y: Representation):
+def plot_analytic_joint_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representation, rep_Y: Representation, x_samples, y_samples):
     grid = sns.JointGrid()
-    # Define grid for the plot
-    x_samples, y_samples = gmm.simulate(n_samples=5000)
-    assert x_samples.shape[-1] == 1 and y_samples.shape[-1] == 1, "Only 1D samples are supported for this plot"
-
     x_samples = x_samples.squeeze()
     y_samples = y_samples.squeeze()
-    x_max, y_max = max(abs(x_samples.max()), abs(x_samples.max())), max(abs(y_samples.max()), abs(y_samples.max()))
+    x_max, y_max = np.max(np.abs(x_samples)), np.max(np.abs(y_samples))
     x_range = np.linspace(-x_max, x_max, 200)
     y_range = np.linspace(-y_max, y_max, 200)
     X_grid, Y_grid = np.meshgrid(x_range, y_range)
@@ -108,15 +105,13 @@ def plot_analytic_joint_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representa
     return grid
 
 
-def plot_analytic_mi_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representation, rep_Y: Representation):
+def plot_analytic_mi_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representation, rep_Y: Representation, x_samples,
+                        y_samples):
     grid = sns.JointGrid()
     # Define grid for the plot
-    x_samples, y_samples = gmm.simulate(n_samples=5000)
-    assert x_samples.shape[-1] == 1 and y_samples.shape[-1] == 1, "Only 1D samples are supported for this plot"
-
     x_samples = x_samples.squeeze()
     y_samples = y_samples.squeeze()
-    x_max, y_max = max(abs(x_samples.max()), abs(x_samples.max())), max(abs(y_samples.max()), abs(y_samples.max()))
+    x_max, y_max = np.max(np.abs(x_samples)), np.max(np.abs(y_samples))
     x_range = np.linspace(-x_max, x_max, 200)
     y_range = np.linspace(-y_max, y_max, 200)
     X_grid, Y_grid = np.meshgrid(x_range, y_range)
@@ -128,7 +123,7 @@ def plot_analytic_mi_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representatio
     # Compute the mutual information
     mi_flat = gmm.mutual_information(X=X_input, Y=Y_input)
     Z = mi_flat.reshape(X_grid.shape)
-    grid.ax_joint.contourf(X_grid, Y_grid, Z, cmap=sns.color_palette("rocket", as_cmap=True), levels=35)
+    grid.ax_joint.contourf(X_grid, Y_grid, Z, sns.color_palette("mako", as_cmap=True), levels=35)
 
     # Select a random sample to test the conditional expectation
     x_t, y_t = x_samples[0], y_samples[0]
@@ -157,7 +152,6 @@ def plot_analytic_mi_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representatio
     mi_y_vals = gmm.mutual_information(X=x_range, Y=np.repeat(y_t, len(x_range)))
     mi_gy_vals = gmm.mutual_information(X=x_range, Y=np.repeat(gy_t, len(x_range)))
 
-    mi_min, mi_max = min(mi_x_vals.min(), mi_gx_vals.min()), max(mi_x_vals.max(), mi_gx_vals.max())
     # Plot filled distributions with lines
     style = {
         "mi_x":  {
@@ -171,16 +165,16 @@ def plot_analytic_mi_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representatio
             "legend": r"$MI(y, g \;\triangleright_{\mathcal{X}}\; x)$",
             },
         "mi_y":  {
-            "color": "red",
-            "fill":  "pink",
+            "color":  "red",
+            "fill":   "pink",
             "legend": r"$MI(y,x)$",
             },
         "mi_gy": {
-            "color": "green",
-            "fill":  "lightgreen",
+            "color":  "green",
+            "fill":   "lightgreen",
             "legend": r"$MI(g \;\triangleright_{\mathcal{Y}}\; y, x)$",
             },
-        "pdf":    {
+        "pdf":   {
             "color":  "blue",
             "fill":   "lightblue",
             "legend": r"$p(y)$",
@@ -197,9 +191,8 @@ def plot_analytic_mi_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representatio
     # Add legend
     grid.ax_marg_y.legend(loc="upper left", fontsize=8)
     grid.ax_marg_x.legend(loc="upper left", fontsize=8)
-    # Set bot marg x,y to have the same image scale
-    grid.ax_marg_x.set_ylim([mi_min, mi_max])
-    grid.ax_marg_y.set_xlim([mi_min, mi_max])
+    grid.ax_marg_y.axvline(0, color='gray', alpha=0.5)
+    grid.ax_marg_x.axhline(0, color='gray', alpha=0.5)
     grid.fig.suptitle(r"Analytic mutual information $\frac{p(x,y)}{p(y)p(x)}$")
     grid.fig.tight_layout()
     return grid
@@ -212,8 +205,8 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
         from NCP.nn.equiv_layers import EMLP
 
         kwargs = dict(out_type=lat_type,
-                     hidden_layers=cfg.embedding.hidden_layers,
-                     hidden_units=cfg.embedding.hidden_units, bias=False)
+                      hidden_layers=cfg.embedding.hidden_layers,
+                      hidden_units=cfg.embedding.hidden_units, bias=False)
         χ_embedding = EMLP(in_type=x_type, **kwargs)
         y_embedding = EMLP(in_type=y_type, **kwargs)
         eNCPop = ENCPOperator(x_fns=χ_embedding, y_fns=y_embedding, gamma=cfg.gamma)
@@ -264,11 +257,92 @@ def gmm_dataset(n_samples: int, gmm: SymmGaussianMixture, rep_X: Representation,
     val_dataset = TensorDataset(X_val, Y_val)
     test_dataset = TensorDataset(X_test, Y_test)
 
-    return (x_samples, y_samples), (train_dataset, val_dataset, test_dataset)
+    return (x_samples, y_samples), (x_mean, y_mean), (x_var, y_var), (train_dataset, val_dataset, test_dataset)
+
+
+@torch.no_grad()
+def measure_analytic_mi_error(gmm, ncp, x_samples, y_samples, x_type, y_type, x_mean, y_mean, x_var, y_var, plot=False):
+    G = x_type.fibergroup
+    n_total_samples = 1000
+    n_samples_per_g = int(n_total_samples // G.order())
+
+    device = next(ncp.parameters()).device
+    dtype = next(ncp.parameters()).dtype
+
+    idx = np.random.choice(len(x_samples), n_samples_per_g, replace=False)
+
+    x_max, y_max = max(np.abs(x_samples)), max(np.abs(y_samples))
+    X_np = np.atleast_2d(x_samples)[idx]
+    Y_np = np.atleast_2d(y_samples)[idx]
+    G_X_np, G_Y_np = [X_np], [Y_np]
+    # Perform data augmentation using the group actions
+    for g in G.elements[1:]:
+        G_X_np.append(np.einsum("ij,...j->...i", x_type.representation(g), X_np))
+        G_Y_np.append(np.einsum("ij,...j->...i", y_type.representation(g), Y_np))
+    X_np = np.vstack(G_X_np)
+    Y_np = np.vstack(G_Y_np)
+
+    X_c = ((torch.Tensor(X_np) - x_mean) / torch.sqrt(x_var)).to(device=device)
+    Y_c = ((torch.Tensor(Y_np) - y_mean) / torch.sqrt(y_var)).to(device=device)
+
+    # Compute the estimate of the NCP model of the mutual information _______________
+    fx, hy = ncp(x=X_c, y=Y_c)
+    mi_xy = ncp.mutual_information(fx, hy)  # k_r(x,y) ≈ p(x,y) / p(x)p(y)
+    # Compute the analytic mutual information _______________________________________
+    mi_xy_gt = gmm.mutual_information(X=X_np, Y=Y_np)  # p(x,y) / p(x)p(y)
+    # Compute the mean squared error between the two estimates
+    mi_mse = ((mi_xy.cpu().numpy() - mi_xy_gt) ** 2).mean()
+    # Since k(x, y) = k(g.x, g.y) for all g in G, we want to compute the variance of the estimate under g-action
+    mi_xy_g_var = mi_xy.view(G.order(), -1).var(dim=0)
+
+    # Sample 4 random conditioning values of x
+    range_n_samples = 100
+    n_cond_points = 4
+    cond_idx = np.random.choice(len(X_np), n_cond_points, replace=False)
+    X_cond_np = X_np[cond_idx]
+    X_c_cond = X_c[cond_idx]
+
+    # X_range_np = np.linspace(-x_max, x_max, range_n_samples)
+    Y_range_np = np.linspace(-y_max, y_max, range_n_samples)
+    p_Y_range_np = gmm.pdf_y(Y_range_np)
+    P_Y_range = torch.from_numpy(p_Y_range_np).to(device=device, dtype=dtype)
+    Y_c_range = ((torch.from_numpy(Y_range_np) - y_mean) / torch.sqrt(y_var)).to(device=device, dtype=dtype)
+
+    CDFs_mse, CDFs_gt, CDFs = [], [], []
+    for x_cond, x_c_cond in zip(X_cond_np, X_c_cond):  # Comptue p(y | x) for each conditioning value
+        cdf_gt = gmm.pdf(X=np.broadcast_to(x_cond, Y_range_np.shape), Y=Y_range_np)
+        fx, hy = ncp(x=torch.broadcast_to(x_c_cond, Y_c_range.shape), y=Y_c_range)
+        mi_xy = ncp.mutual_information(fx, hy)  # k_r(x,y) ≈ p(x,y) / p(x)p(y)
+
+        cdf = (mi_xy * P_Y_range).cpu().numpy()  # k(x,y) * p(y) = p(y | x)
+        CDFs_gt.append(cdf_gt)
+        CDFs.append(cdf)
+        CDFs_mse.append(((cdf - cdf_gt) ** 2).mean())
+
+    metrics = {"MI/mse": mi_mse,
+               "MI/equiv_err": mi_xy_g_var.mean(),
+               "CDF/mse": np.mean(CDFs_mse)}
+
+    if plot:
+        # Plot the 4 CDFs each pair in a separate subplot
+        fig, axs = plt.subplots(4, 1, figsize=(10, 10))
+        for i, (cdf, cdf_gt) in enumerate(zip(CDFs, CDFs_gt)):
+            axs[i].plot(Y_range_np, p_Y_range_np, label="p(y)", linestyle="--")
+            axs[i].plot(Y_range_np, cdf, label=r"$\hat{p}_{\text{ncp}}(y | x)$")
+            axs[i].plot(Y_range_np, cdf_gt, label=r"$p(y | x)$")
+            axs[i].set_title(f"Conditioning value {i}")
+            axs[i].legend()
+        fig.tight_layout()
+        return metrics, fig
+
+    return metrics
 
 
 @hydra.main(config_path='cfg', config_name='config', version_base='1.3')
 def main(cfg: DictConfig):
+    seed = cfg.seed if cfg.seed > 0 else np.random.randint(0, 1000)
+    seed_everything(seed)
+
     C2 = escnn.group.CyclicGroup(2)  # Reflection group = Cyclic group of order 2
     # rep_X = C2.regular_representation  # ρ_Χ
     # rep_Y = C2.regular_representation  # ρ_Y
@@ -276,18 +350,16 @@ def main(cfg: DictConfig):
     rep_Y = C2.representations['irrep_1']  # ρ_Y
     rep_X.name, rep_Y.name = "rep_X", "rep_Y"
 
-    gmm = SymmGaussianMixture(n_kernels=6, rep_X=rep_X, rep_Y=rep_Y, means_std=2.0, random_seed=10)
+    gmm = SymmGaussianMixture(n_kernels=cfg.gmm.n_kernels, rep_X=rep_X, rep_Y=rep_Y, means_std=2.0, random_seed=10)
 
-    # grid = plot_analytic_joint_2D(gmm, G=C2, rep_X=rep_X, rep_Y=rep_Y)
+    # x_samples, y_samples = gmm.simulate(n_samples=5000)
+    # grid = plot_analytic_joint_2D(gmm, G=C2, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
     # plt.show()
-    # grid = plot_analytic_mi_2D(gmm, G=C2, rep_X=rep_X, rep_Y=rep_Y)
+    # grid = plot_analytic_mi_2D(gmm, G=C2, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
     # plt.show()
 
-    (x_samples, y_samples), (train_ds, val_ds, test_ds) = gmm_dataset(cfg.n_samples, gmm, rep_X, rep_Y)
-
-    # Plot y vs x
-    # plt.scatter(x_samples, y_samples, alpha=0.5, color='C0', label='Data')
-    # plt.show()
+    (x_samples, y_samples), (x_mean, y_mean), (x_var, y_var), datasets = gmm_dataset(cfg.n_samples, gmm, rep_X, rep_Y)
+    train_ds, val_ds, test_ds = datasets
 
     # Define the Input and Latent types for ESCNN
     x_type = FieldType(gspace=escnn.gspaces.no_base_space(C2), representations=[rep_X])
@@ -312,17 +384,19 @@ def main(cfg: DictConfig):
     val_dataloader = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=collate_fn)
     test_dataloader = DataLoader(test_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=collate_fn)
 
-
     lightning_module = NCPModule(
         model=ncp_op,
         optimizer_fn=torch.optim.Adam,
         optimizer_kwargs={"lr": cfg.lr},
         loss_fn=ncp_op.loss,
+        val_metrics=lambda x: measure_analytic_mi_error(
+            gmm, ncp_op, x_samples, y_samples, x_type, y_type, x_mean, y_mean, x_var, y_var
+            ),
         )
 
     pathlib.Path("lightning_logs").mkdir(exist_ok=True)
     logger = WandbLogger(save_dir="lightning_logs",
-                         project="NCP-GMM-C2",
+                         project=cfg.exp_name,
                          log_model=False,
                          config=OmegaConf.to_container(cfg, resolve=True))
     # logger.watch(ncp_op, log="all", log_graph=False)
@@ -330,11 +404,17 @@ def main(cfg: DictConfig):
     trainer = lightning.Trainer(accelerator='auto',
                                 max_epochs=cfg.max_epochs, logger=logger,
                                 enable_progress_bar=True,
-                                log_every_n_steps=5,
-                                check_val_every_n_epoch=5)
+                                log_every_n_steps=50,
+                                check_val_every_n_epoch=20,
+                                )
 
     torch.set_float32_matmul_precision('medium')
     trainer.fit(lightning_module, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
+
+    m, f = measure_analytic_mi_error(
+        gmm, ncp_op, x_samples, y_samples, x_type, y_type, x_mean, y_mean, x_var, y_var, plot=True
+        )
+    f.show()
 
     a = trainer.test(lightning_module, dataloaders=test_dataloader)
     print(a)

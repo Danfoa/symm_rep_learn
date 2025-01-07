@@ -1,17 +1,22 @@
+defaults:
+  - override hydra/launcher: joblib  # Parallel runs
 
-model : eNCP
+seed: -1
+debug: False
+exp_name: "NCP-GMM-C2"
 
+model : NCP
 gamma: 0.001     # Weight of the NCP regularization loss term.
-lr: 1e-3
+lr: 5e-4
 batch_size: 2024
-n_samples: 10000
-max_epochs: 5000
+n_samples: 5000
+max_epochs: 2000
 
 gmm:
-  n_kernels: 6
+  n_kernels: 5
 
 embedding:
-  hidden_units: 64
-  hidden_layers: 4
-  embedding_dim: 25
-  activation: ReLU
+  hidden_units: 32
+  hidden_layers: 2
+  embedding_dim: 7
+  activation: GELU
