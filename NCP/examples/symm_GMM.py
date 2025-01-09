@@ -10,7 +10,10 @@ import torch
 from escnn.group import Group, Representation
 from escnn.nn import FieldType, GeometricTensor
 from lightning import seed_everything
+from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
+import matplotlib
+matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, default_collate, TensorDataset
@@ -18,8 +21,13 @@ from torch.utils.data import DataLoader, default_collate, TensorDataset
 from NCP.cde_fork.density_simulation.symmGMM import SymmGaussianMixture
 from NCP.models.ncp_lightning_module import NCPModule
 
+import logging
 
-def plot_analytic_joint_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representation, rep_Y: Representation, x_samples, y_samples):
+log = logging.getLogger(__name__)
+
+
+def plot_analytic_joint_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representation, rep_Y: Representation, x_samples,
+                           y_samples):
     grid = sns.JointGrid()
     x_samples = x_samples.squeeze()
     y_samples = y_samples.squeeze()
@@ -224,7 +232,13 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
                       activation=activation)
         fx = MLP(input_shape=x_type.size, **kwargs)
         fy = MLP(input_shape=y_type.size, **kwargs)
-        ncp = NCP(fx, fy, embedding_dim=embedding_dim, gamma=cfg.gamma * lat_type.size)
+        ncp = NCP(fx,
+                  fy,
+                  embedding_dim=embedding_dim,
+                  gamma=cfg.gamma * lat_type.size,
+                  learnable_svals=cfg.trainable_svals,
+                  mix_mode=cfg.mix_mode,
+                  )
         return ncp
     else:
         raise ValueError(f"Model {cfg.model} not recognized")
@@ -241,10 +255,14 @@ def gmm_dataset(n_samples: int, gmm: SymmGaussianMixture, rep_X: Representation,
     train_ratio, val_ratio, test_ratio = 0.7, 0.15, 0.15
     n_samples = len(x_samples)
     n_train, n_val, n_test = np.asarray(np.array([train_ratio, val_ratio, test_ratio]) * n_samples, dtype=int)
-    X = (x_samples - x_mean.numpy()) / np.sqrt(x_var.numpy())
-    Y = (y_samples - y_mean.numpy()) / np.sqrt(y_var.numpy())
-    x_train, x_val, x_test = X[:n_train], X[n_train:n_train + n_val], X[n_train + n_val:]
-    y_train, y_val, y_test = Y[:n_train], Y[n_train:n_train + n_val], Y[n_train + n_val:]
+    train_samples = x_samples[:n_train], y_samples[:n_train]
+    val_samples = x_samples[n_train:n_train + n_val], y_samples[n_train:n_train + n_val]
+    test_samples = x_samples[n_train + n_val:], y_samples[n_train + n_val:]
+
+    X_c = (x_samples - x_mean.numpy()) / np.sqrt(x_var.numpy())
+    Y_c = (y_samples - y_mean.numpy()) / np.sqrt(y_var.numpy())
+    x_train, x_val, x_test = X_c[:n_train], X_c[n_train:n_train + n_val], X_c[n_train + n_val:]
+    y_train, y_val, y_test = Y_c[:n_train], Y_c[n_train:n_train + n_val], Y_c[n_train + n_val:]
 
     X_train = torch.atleast_2d(torch.from_numpy(x_train).float())
     Y_train = torch.atleast_2d(torch.from_numpy(y_train).float())
@@ -257,7 +275,7 @@ def gmm_dataset(n_samples: int, gmm: SymmGaussianMixture, rep_X: Representation,
     val_dataset = TensorDataset(X_val, Y_val)
     test_dataset = TensorDataset(X_test, Y_test)
 
-    return (x_samples, y_samples), (x_mean, y_mean), (x_var, y_var), (train_dataset, val_dataset, test_dataset)
+    return (train_samples, val_samples, test_samples), (x_mean, y_mean), (x_var, y_var), (train_dataset, val_dataset, test_dataset)
 
 
 @torch.no_grad()
@@ -319,16 +337,16 @@ def measure_analytic_mi_error(gmm, ncp, x_samples, y_samples, x_type, y_type, x_
         CDFs.append(cdf)
         CDFs_mse.append(((cdf - cdf_gt) ** 2).mean())
 
-    metrics = {"MI/mse": mi_mse,
+    metrics = {"MI/mse":       mi_mse,
                "MI/equiv_err": mi_xy_g_var.mean(),
-               "CDF/mse": np.mean(CDFs_mse)}
+               "CDF/mse":      np.mean(CDFs_mse)}
 
     if plot:
         # Plot the 4 CDFs each pair in a separate subplot
         fig, axs = plt.subplots(4, 1, figsize=(10, 10))
         for i, (cdf, cdf_gt) in enumerate(zip(CDFs, CDFs_gt)):
             axs[i].plot(Y_range_np, p_Y_range_np, label="p(y)", linestyle="--")
-            axs[i].plot(Y_range_np, cdf, label=r"$\hat{p}_{\text{ncp}}(y | x)$")
+            axs[i].plot(Y_range_np, cdf, label=r"$\hat{p}(y | x)$")
             axs[i].plot(Y_range_np, cdf_gt, label=r"$p(y | x)$")
             axs[i].set_title(f"Conditioning value {i}")
             axs[i].legend()
@@ -340,7 +358,7 @@ def measure_analytic_mi_error(gmm, ncp, x_samples, y_samples, x_type, y_type, x_
 
 @hydra.main(config_path='cfg', config_name='config', version_base='1.3')
 def main(cfg: DictConfig):
-    seed = cfg.seed if cfg.seed > 0 else np.random.randint(0, 1000)
+    seed = cfg.seed if cfg.seed >= 0 else np.random.randint(0, 1000)
     seed_everything(seed)
 
     C2 = escnn.group.CyclicGroup(2)  # Reflection group = Cyclic group of order 2
@@ -352,13 +370,22 @@ def main(cfg: DictConfig):
 
     gmm = SymmGaussianMixture(n_kernels=cfg.gmm.n_kernels, rep_X=rep_X, rep_Y=rep_Y, means_std=2.0, random_seed=10)
 
-    # x_samples, y_samples = gmm.simulate(n_samples=5000)
-    # grid = plot_analytic_joint_2D(gmm, G=C2, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
+    run_path = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
+    x_samples, y_samples = gmm.simulate(n_samples=5000)
+    grid = plot_analytic_joint_2D(gmm, G=C2, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
+    grid.fig.savefig(pathlib.Path(run_path).parent.parent / "joint_pdf.png")
     # plt.show()
-    # grid = plot_analytic_mi_2D(gmm, G=C2, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
+    grid = plot_analytic_mi_2D(gmm, G=C2, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
+    grid.fig.savefig(pathlib.Path(run_path).parent.parent / "mutual_information.png")
     # plt.show()
 
-    (x_samples, y_samples), (x_mean, y_mean), (x_var, y_var), datasets = gmm_dataset(cfg.n_samples, gmm, rep_X, rep_Y)
+    (train_samples, val_samples, test_samples), (x_mean, y_mean), (x_var, y_var), datasets = gmm_dataset(
+        cfg.gmm.n_samples, gmm, rep_X, rep_Y
+        )
+    x_train, y_train = train_samples
+    x_val, y_val = val_samples
+    x_test, y_test = test_samples
+
     train_ds, val_ds, test_ds = datasets
 
     # Define the Input and Latent types for ESCNN
@@ -390,35 +417,45 @@ def main(cfg: DictConfig):
         optimizer_kwargs={"lr": cfg.lr},
         loss_fn=ncp_op.loss,
         val_metrics=lambda x: measure_analytic_mi_error(
-            gmm, ncp_op, x_samples, y_samples, x_type, y_type, x_mean, y_mean, x_var, y_var
+            gmm, ncp_op, x_val, y_val, x_type, y_type, x_mean, y_mean, x_var, y_var
+            ),
+        test_metrics=lambda x: measure_analytic_mi_error(
+            gmm, ncp_op, x_test, y_test, x_type, y_type, x_mean, y_mean, x_var, y_var
             ),
         )
 
-    pathlib.Path("lightning_logs").mkdir(exist_ok=True)
-    logger = WandbLogger(save_dir="lightning_logs",
-                         project=cfg.exp_name,
-                         log_model=False,
-                         config=OmegaConf.to_container(cfg, resolve=True))
-    # logger.watch(ncp_op, log="all", log_graph=False)
+    # Define the logger and callbacks
+    log.info(f"Run path: {run_path}")
+    run_cfg = OmegaConf.to_container(cfg, resolve=True)
+    logger = WandbLogger(save_dir=run_path, project=cfg.exp_name, log_model=False, config=run_cfg)
+    ckpt_call = ModelCheckpoint(
+        dirpath=run_path, filename="best", monitor='loss/val', save_top_k=1, save_last=True, mode='min'
+        )
+    early_call = EarlyStopping(monitor='loss/val', patience=cfg.patience, mode='min')
 
     trainer = lightning.Trainer(accelerator='auto',
                                 max_epochs=cfg.max_epochs, logger=logger,
                                 enable_progress_bar=True,
                                 log_every_n_steps=50,
                                 check_val_every_n_epoch=20,
+                                callbacks=[ckpt_call, early_call],
+                                fast_dev_run=10 if cfg.debug else False,
                                 )
 
     torch.set_float32_matmul_precision('medium')
     trainer.fit(lightning_module, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
 
-    m, f = measure_analytic_mi_error(
-        gmm, ncp_op, x_samples, y_samples, x_type, y_type, x_mean, y_mean, x_var, y_var, plot=True
-        )
-    f.show()
-
+    # m, f = measure_analytic_mi_error(
+    #     gmm, ncp_op, x_samples, y_samples, x_type, y_type, x_mean, y_mean, x_var, y_var, plot=True
+    #     )
+    # f.savefig(pathlib.Path(run_path) / f"conditional_pdf-{seed}.png")
     a = trainer.test(lightning_module, dataloaders=test_dataloader)
     print(a)
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+        pass
+    except Exception as e:
+        log.error("An error occurred", exc_info=True)

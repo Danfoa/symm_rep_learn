@@ -4,19 +4,65 @@ defaults:
 seed: -1
 debug: False
 exp_name: "NCP-GMM-C2"
+exp_label: "test"
+patience: 40
+trainable_svals: False
+mix_mode: False
 
 model : NCP
 gamma: 0.001     # Weight of the NCP regularization loss term.
 lr: 5e-4
 batch_size: 2024
-n_samples: 5000
-max_epochs: 2000
+max_epochs: 1000
 
 gmm:
   n_kernels: 5
+  n_samples: 10000
+  seed: 10  # Seed for the reproducibility of the GMM dataset
 
 embedding:
   hidden_units: 32
   hidden_layers: 2
-  embedding_dim: 7
+  embedding_dim: 14
   activation: GELU
+
+embedding_desc: "hu${embedding.hidden_units}_hl${embedding.hidden_layers}_ed${embedding.embedding_dim}_act${embedding.activation}"
+gmm_desc: "nk${gmm.n_kernels}_ns${gmm.n_samples}"
+model_desc: "${model}_gamma${gamma}_lr${lr}_bs${batch_size}_me${max_epochs}"
+
+hydra:
+  run:
+    #  ${hydra.job.override_dirname} Puts the override values in the directory name
+    dir: "../experiments/${exp_name}/${exp_label}/${gmm_desc}/${model_desc}--${embedding_desc}/${hydra.job.override_dirname}-seed${seed}"
+
+  sweep:
+    dir: ./experiments/${exp_name}/${exp_label}
+    subdir: ${gmm_desc}/${model_desc}--${embedding_desc}/${hydra.job.override_dirname} seed=${seed}
+
+  job:
+    name: ${exp_name}
+    num: ${seed}
+    env_set:
+      HYDRA_FULL_ERROR: '1'
+      MPLBACKEND: 'Agg'   # Matplotlib interactive backend crashes in parallel runs
+    config:
+      override_dirname:
+        kv_sep: "="
+        item_sep: " "
+        exclude_keys:
+          - debug
+          - seed
+          - exp_name
+          - exp_label
+          - max_epochs
+          - embedding.hidden_units
+          - embedding.hidden_layers
+          - embedding.embedding_dim
+          - embedding.activation
+          - gmm.n_kernels
+          - gmm.n_samples
+          - model
+          - gamma
+          - lr
+          - batch_size
+          - max_epochs

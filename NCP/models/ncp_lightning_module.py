@@ -40,18 +40,24 @@ class NCPModule(lightning.LightningModule):
         self.loss_fn = loss_fn if loss_fn is not None else model.loss
         self.train_loss = []
         self.val_loss = []
+        self._n_train_samples = torch.tensor(0).to(dtype=torch.int64)
 
     def configure_optimizers(self):
         kw = self.opt_kwargs | {"lr": self.lr}
         return self._optimizer(self.parameters(), **kw)
 
+    def on_train_start(self) -> None:
+        self._n_train_samples *= 0
 
     def training_step(self, batch, batch_idx):
         outputs = self.model(*batch)
         loss, metrics = self.loss_fn(*outputs)
 
-        self.log("loss/train", loss, prog_bar=True, batch_size=self.get_batch_dim(batch))
-        self.log_metrics(metrics, suffix="train", batch_size=self.get_batch_dim(batch))
+        batch_dim = self.get_batch_dim(batch)
+        self._n_train_samples += batch_dim
+        self.log("loss/train", loss, prog_bar=True, batch_size=batch_dim)
+        self.log("train_samples [k]", self._n_train_samples / 1000, on_step=True, on_epoch=False)
+        self.log_metrics(metrics, suffix="train", batch_size=batch_dim)
         return loss
 
     def validation_step(self, batch, batch_idx):

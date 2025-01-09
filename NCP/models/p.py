@@ -1,1 +1,0 @@
-# Created by danfoa at 05/01/25

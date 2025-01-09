@@ -44,7 +44,6 @@ class SymmGaussianMixture(GaussianMixture):
         self.means = self.random_state_params.normal(
             loc=np.zeros([self.ndim]), scale=self.means_std, size=[n_kernels, self.ndim]
         )  # shape(n_kernels, n_dims)
-        print(self.means)
         """ Sample cov matrices and assure that cov matrix is pos definite"""
         self.covariances_x = self.sample_covariances(dim=self.ndim_x, scale=0.5, means_std=self.means_std, num=n_kernels)
         self.covariances_y = self.sample_covariances(dim=self.ndim_y, scale=0.5, means_std=self.means_std, num=n_kernels)
