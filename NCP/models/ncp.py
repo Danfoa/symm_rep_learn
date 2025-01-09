@@ -18,14 +18,23 @@ log = logging.getLogger(__name__)
 # Neural Conditional Probability (NCP) model.
 class NCP(torch.nn.Module):
 
-    def __init__(self, x_fns: torch.nn.Module, y_fns: torch.nn.Module, embedding_dim=None, gamma=0.01):
+    def __init__(self,
+                 x_fns: torch.nn.Module,
+                 y_fns: torch.nn.Module,
+                 embedding_dim=None,
+                 gamma=0.001,                    # Will be multiplied by the embedding_dim
+                 truncated_op_bias: str = 'Cxy', # 'Cxy', 'diag', 'svals'
+                 ):
         super(NCP, self).__init__()
         self.gamma = gamma
         self.embedding_dim = embedding_dim
         self.singular_fns_x = x_fns
         self.singular_fns_y = y_fns
+        self.truncated_op_bias = truncated_op_bias
         # NCP does not need to have trainable svals.
-        self.svals = torch.nn.Parameter(torch.zeros(embedding_dim), requires_grad=False)
+        self.log_svals = torch.nn.Parameter(
+            torch.normal(mean=0.,std=2./embedding_dim,size=(embedding_dim,)), requires_grad=True
+            )
         self._svals_estimated = False
         # Matrix containing the cross-covariance matrix form of the operator Cyx: L^2(Y) -> L^2(X)
         self.register_buffer('Cxy', torch.zeros(embedding_dim, embedding_dim))
@@ -36,7 +45,7 @@ class NCP(torch.nn.Module):
         # Expectation of the embedding functions
         self.register_buffer('mean_fx', torch.zeros((1, embedding_dim)))
         self.register_buffer('mean_hy', torch.zeros((1, embedding_dim)))
-        # Use multiple batch information to keep bettwe estimates of expectations
+        # Use multiple batch information to keep between estimates of expectations
         self._running_stats = False  # TODO: Implement running mean
 
     def forward(self, x: torch.Tensor, y: torch.Tensor):
@@ -100,62 +109,60 @@ class NCP(torch.nn.Module):
             f"Expected number of singular functions to be {self.embedding_dim}, got {fx.shape[-1]} and {hy.shape[-1]}."
         n_samples = fx.shape[0]
 
-        self.update_fns_statistics(fx, hy)  # Update mean_fx and mean_hy
+        self.update_fns_statistics(fx, hy)  # Update mean_fx, mean_hy, Cx, Cy, Cxy
+
         fx_c, hy_c = fx - self.mean_fx, hy - self.mean_hy
         p_perm = torch.randperm(n_samples, device=fx.device)  # Permutation to obtain (x', y') ~ p(x, y)
-        pp_perm = torch.randperm(n_samples, device=fx.device)  # Permutation to obtain (x'', y'') ~ p(x, y)
         fx_cp, hy_cp = fx_c[p_perm], hy_c[p_perm]  # f_c(x') and h_c(y')
 
         # Orthonormal regularization and centering penalization _________________________________________
         # orth_reg_fx = ||Cx - I||_F^2 + ||Cy - I||_F^2 + 2 ||E_p(x) f(x)||_F^2 + 2 ||E_p(y) h(y)||_F^2
-        orthonormal_reg, metrics, inner_prod = self.orthonormality_penalization(
-            fx_c, hy_c, return_inner_prod=True, permutation=p_perm
-            )
-        fx_fxp, hy_hyp = inner_prod  # [fx_fxp]nm = (f_c(x_n).T f_c(x'_m)), [hy_hyp]nm = (h_c(y_n).T h_c(y'_m))
+        orthonormal_reg, metrics = self.orthonormality_penalization(fx_c, hy_c, False, permutation=p_perm)
 
-        # Operator truncation error = -2 ||Cxy||_F^2 + tr(Cxy Cy Cxy^T Cx) - 1___________________________
-        # Biased estimation:
-        # Cxy_F_2_biased = matrix_norm(self.Cxy, ord='fro') ** 2
-        Pxyx = torch.einsum('ab,bc,cd,de->ae', self.Cxy, self.Cy, self.Cxy, self.Cx)
-        tr_Pxyx_biased = torch.trace(Pxyx)
-        # Unbiased estimation:   [fxp_hypp]nm = (f_c(x'_n).T h_c(y''_m)), [fxpp_hyp]nm = (f_c(x''_n).T h_c(y'_m))
-        Cxy_F_2, (fxp_hypp, fxpp_hyp) = cross_cov_norm_squared_unbiased_estimation(fx_cp, hy_cp,
-                                                                                   return_inner_prods=True)
-        # Pxyx = 1/N^4 Σ_n,m,l,k (f(x_n).T f(x'_m)) (h(y_n).T h(y'_m))(h(y'_m).T f(x''_l))(h(y''_l).T f(x'_k))
-        # tr_Pxyx = torch.einsum('nm,nm,lm,kl->', fx_fxp, hy_hyp, fxpp_hyp, fxp_hypp) / (n_samples ** 4)  # not working
-        truncation_err = -2 * Cxy_F_2 - 1 + tr_Pxyx_biased - 1
-        # truncation_err = -2 * Cxy_F_2_biased + tr_Pxyx - 1  # TODO: Unbiased tr_Pxyx not working properly
+        # Operator truncation error = ||E - E_r||_HS^2 ____________________________________________________
+        if self.truncated_op_bias == 'Cxy':  # Under the assumption of orthogonal Fx and Hy bases sets
+            # E_r = Cxy -> ||E - E_r||_HS - ||E||_HS = -2 ||Cxy||_F^2 + tr(Cxy Cy Cxy^T Cx) + 1
+            Cxy_F_2 = cross_cov_norm_squared_unbiased_estimation(fx_cp, hy_cp)
+            Pxyx = torch.einsum('ab,bc,cd,de->ae', self.Cxy, self.Cy, self.Cxy, self.Cx)
+            tr_Pxyx_biased = torch.trace(Pxyx)
+            truncation_err = -2 * Cxy_F_2 + tr_Pxyx_biased
+        else:
+            truncation_err = self.unbiased_truncation_error_diag_truncated_op(fx, hy)
 
         # Total loss ____________________________________________________________________________________
         # loss = truncation_err + self.gamma * (orth_reg + center_reg)
         loss = truncation_err + (self.embedding_dim * self.gamma) * (orthonormal_reg)
+        # TODO: Non-negativity regularization k(x,y) >= 0
         # Logging metrics _______________________________________________________________________________
         with torch.no_grad():
             metrics |= {
                 "||E - E_r||_HS":             truncation_err.detach(),
-                "||E - E_r||_HS/biased":      self.biased_truncation_error(fx, hy).detach(),
-                "||Cxy||_F^2":                Cxy_F_2.detach() / self.embedding_dim,
-                # "tr(Cxy Cy Cxy^T Cx)": tr_Pxyx.detach() / self.embedding_dim,
-                "tr(Cxy Cy Cxy^T Cx)/biased": tr_Pxyx_biased.detach() / self.embedding_dim,
+                "||E - E_r||_HS/diag":        truncation_err if not self.truncated_op_bias == 'Cxy' else self.unbiased_truncation_error_diag_truncated_op(fx, hy),
                 "||Cxy||_F^2/biased":         torch.linalg.matrix_norm(self.Cxy) ** 2 / self.embedding_dim,
-                "||Cx||_F^2/biased":          torch.linalg.matrix_norm(self.Cx) ** 2 / self.embedding_dim,
-                "||Cy||_F^2/biased":          torch.linalg.matrix_norm(self.Cy) ** 2 / self.embedding_dim,
                 }
         return loss, metrics
 
-    def biased_truncation_error(self, fx, hy):
-        eps = 1e-6 * torch.eye(self.embedding_dim, device=fx.device, dtype=fx.dtype)
-        n_samples = fx.shape[0]
-        fx_c = fx - fx.mean(dim=0, keepdim=True)
-        hy_c = hy - hy.mean(dim=0, keepdim=True)
+    def unbiased_truncation_error_diag_truncated_op(self, fx, hy):
+        """ Implementation of ||E - E_r||_HS^2, while assuming E_r is diagonal.
+        Args:
+            fx:
+            hy:
+        Returns:
+            (torch.Tensor) representing the unbiased truncation error.
+        """
+        # Vladi's implementation
+        fx_c = fx - self.mean_fx
+        hy_c = hy - self.mean_hy
+        use_expectations = self.truncated_op_bias == 'diag' or self.truncated_op_bias == 'Cxy'
 
-        Cxy = torch.einsum('nr,nc->rc', fx_c, hy_c) / (n_samples - 1)
-        Cx = torch.einsum('nr,nc->rc', fx_c, fx_c) / (n_samples - 1) + eps
-        Cy = torch.einsum('nr,nc->rc', hy_c, hy_c) / (n_samples - 1) + eps
-
-        A = torch.einsum('ab,bc,cd,de->ae', Cxy, Cy, Cxy, Cx)
-
-        return - 2 * torch.sum(Cxy ** 2) + torch.trace(A) - 1
+        # TODO: Need code the unbiased estimation when use_expectations = True
+        # diag(E_r) = = [1, diag(D_r)]
+        D_r = torch.exp(-self.log_svals**2) if not use_expectations else torch.diag(self.Cxy)
+        # Tr (Vx Σ Vy Σ)    E_p(x)p(y) k_r(x,y)^2
+        t = torch.einsum("ik, il, k, jl, jk, l->", fx_c, fx_c, D_r, hy_c, hy_c, D_r) / (fx_c.shape[0] - 1)**2
+        # 2 * tr (Cxy Σ)
+        t3 = 2 * torch.einsum("ik, ik, k->", fx_c, hy_c, D_r) / (fx_c.shape[0] - 1)
+        return t - t3
 
     def orthonormality_penalization(self, fx_c, hy_c, return_inner_prod=False, permutation=None):
         """ Computes orthonormality and centering regularization penalization for a batch of feature vectors.
@@ -198,25 +205,26 @@ class NCP(torch.nn.Module):
         tr_Cy = torch.trace(self.Cy)  # E[h_c(y)^T h_c(y)] = tr(Cy)
         hy_centering_loss = (self.mean_hy ** 2).sum()  # ||E_p(y) (h(y_i))||^2
 
-        embedding_dim = fx_c.shape[-1]  # Dimensionality r
-
-        # orthonormality_fx = tr(Cx^2) - 2 tr(Cx) + 2 || E_p(x) f(x) ||^2 + r
-        orthonormality_fx = Cx_fro_2 - 2 * tr_Cx + 2 * fx_centering_loss + embedding_dim
-        # orthonormality_hy = tr(Cy^2) - 2 tr(Cy) + 2 || E_p(y) h(y) ||^2 + r
-        orthonormality_hy = Cy_fro_2 - 2 * tr_Cy + 2 * hy_centering_loss + embedding_dim
+        embedding_dim_x = fx_c.shape[-1]
+        embedding_dim_y = hy_c.shape[-1]
+        # orthonormality_fx = tr(Cx^2) - 2 tr(Cx) + 2 || E_p(x) f(x) ||^2 + r_x = |Fx|
+        orthonormality_fx = Cx_fro_2 - 2 * tr_Cx + 2 * fx_centering_loss + embedding_dim_x
+        # orthonormality_hy = tr(Cy^2) - 2 tr(Cy) + 2 || E_p(y) h(y) ||^2 + r_y = |Hy|
+        orthonormality_hy = Cy_fro_2 - 2 * tr_Cy + 2 * hy_centering_loss + embedding_dim_y
         # Combine terms
         regularization = orthonormality_fx + orthonormality_hy
 
         with torch.no_grad():
             metrics = {
-                f"||Cx||_F^2":     Cx_fro_2 / embedding_dim,
+                f"||Cx||_F^2":     Cx_fro_2 / embedding_dim_x,
                 f"||mu_x||":       torch.sqrt(fx_centering_loss),
-                f"||Vx - I||_F^2": orthonormality_fx / embedding_dim,
-                f"||tr(Cx)||":     tr_Cx / embedding_dim,
-                f"||Cy||_F^2":     Cy_fro_2 / embedding_dim,
+                f"||Vx - I||_F^2": orthonormality_fx / embedding_dim_x,
+                f"||tr(Cx)||":     tr_Cx / embedding_dim_x,
+                #
+                f"||Cy||_F^2":     Cy_fro_2 / embedding_dim_y,
                 f"||mu_y||":       torch.sqrt(hy_centering_loss),
-                f"||Vy - I||_F^2": orthonormality_hy / embedding_dim,
-                f"||tr(Cy)||":     tr_Cy / embedding_dim,
+                f"||Vy - I||_F^2": orthonormality_hy / embedding_dim_y,
+                f"||tr(Cy)||":     tr_Cy / embedding_dim_y,
                 }
 
         if return_inner_prod:
@@ -225,6 +233,14 @@ class NCP(torch.nn.Module):
             return regularization, metrics
 
     def update_fns_statistics(self, fx: torch.Tensor, hy: torch.Tensor):
+        """ Update the statistics of the embedding functions.
+
+        Computes the mean and covariance matrices of the embedding functions f(x) and h(y) for the batch of samples.
+
+        Args:
+            fx: (torch.Tensor) of shape (n_samples, r) representing the singular functions of a subspace of L^2(X).
+            hy: (torch.Tensor) of shape (n_samples, r) representing the singular functions of a subspace of L^2(Y).
+        """
         n_samples = fx.shape[0]
 
         if self._running_stats:
@@ -234,18 +250,11 @@ class NCP(torch.nn.Module):
             self.mean_fx = fx.mean(dim=0, keepdim=True)
             self.mean_hy = hy.mean(dim=0, keepdim=True)
 
+            # Centering before (centered/un-centered) covariance estimation is key for numerical stability.
             fx_c, hy_c = fx - self.mean_fx, hy - self.mean_hy
-            # Center covariances
             self.Cxy = torch.einsum('nr,nc->rc', fx_c, hy_c) / (n_samples - 1)
             self.Cx = torch.einsum('nr,nc->rc', fx_c, fx_c) / (n_samples - 1) + eps
             self.Cy = torch.einsum('nr,nc->rc', hy_c, hy_c) / (n_samples - 1) + eps
-            # Center covariances without unnecessary subtraction on the batch data
-            # Cxy_mean = self.mean_fx.T @ self.mean_hy * n_samples
-            # self.Cxy = (torch.einsum('nr,nc->rc', fx, hy) - Cxy_mean) / (n_samples - 1)
-            # Cx_mean = self.mean_fx.T @ self.mean_fx * n_samples
-            # self.Cx = (torch.einsum('nr,nc->rc', fx, fx) - Cx_mean) / (n_samples - 1) + eps
-            # Cy_mean = self.mean_hy.T @ self.mean_hy * n_samples
-            # self.Cy = (torch.einsum('nr,nc->rc', hy, hy) - Cy_mean) / (n_samples - 1) + eps
 
 
 if __name__ == "__main__":

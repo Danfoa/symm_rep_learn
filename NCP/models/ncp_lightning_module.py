@@ -88,6 +88,11 @@ class NCPModule(lightning.LightningModule):
             metrics = self._val_metrics(None)
             self.log_metrics(metrics, suffix="val", batch_size=None)
 
+    def on_test_epoch_end(self) -> None:
+        if self._test_metrics is not None:
+            metrics = self._test_metrics(None)
+            self.log_metrics(metrics, suffix="test", batch_size=None)
+
     @torch.no_grad()
     def log_metrics(self, metrics: dict, suffix='', batch_size=None, **kwargs):
         flat_metrics = flatten_dict(metrics)
