@@ -7,44 +7,33 @@ import torch
 
 import logging
 
-from torch.linalg import matrix_norm
-from wandb.sdk.internal.profiler import torch_trace_handler
-
 from NCP.mysc.statistics import cov_norm_squared_unbiased_estimation, cross_cov_norm_squared_unbiased_estimation
 
 log = logging.getLogger(__name__)
 
 
-# Neural Conditional Probability (NCP) model.
+# Neural Conditional Probability (NCP) modelule ========================================================================
 class NCP(torch.nn.Module):
 
     def __init__(self,
-                 x_fns: torch.nn.Module,
-                 y_fns: torch.nn.Module,
-                 embedding_dim=None,
-                 gamma=0.001,                    # Will be multiplied by the embedding_dim
-                 truncated_op_bias: str = 'Cxy', # 'Cxy', 'diag', 'svals'
+                 embedding_x: torch.nn.Module,
+                 embedding_y: torch.nn.Module,
+                 embedding_dim: int,
+                 gamma=0.001,  # Will be multiplied by the embedding_dim
+                 truncated_op_bias: str = 'Cxy',  # 'Cxy', 'diag', 'svals'
                  ):
         super(NCP, self).__init__()
         self.gamma = gamma
         self.embedding_dim = embedding_dim
-        self.singular_fns_x = x_fns
-        self.singular_fns_y = y_fns
+        self.embedding_x = embedding_x
+        self.embedding_y = embedding_y
         self.truncated_op_bias = truncated_op_bias
         # NCP does not need to have trainable svals.
         self.log_svals = torch.nn.Parameter(
             torch.normal(mean=0.,std=2./embedding_dim,size=(embedding_dim,)), requires_grad=True
             )
-        self._svals_estimated = False
-        # Matrix containing the cross-covariance matrix form of the operator Cyx: L^2(Y) -> L^2(X)
-        self.register_buffer('Cxy', torch.zeros(embedding_dim, embedding_dim))
-        # Matrix containing the covariance matrix form of the operator Cx: L^2(X) -> L^2(X)
-        self.register_buffer('Cx', torch.zeros(embedding_dim, embedding_dim))
-        # Matrix containing the covariance matrix form of the operator Cy: L^2(Y) -> L^2(Y)
-        self.register_buffer('Cy', torch.zeros(embedding_dim, embedding_dim))
-        # Expectation of the embedding functions
-        self.register_buffer('mean_fx', torch.zeros((1, embedding_dim)))
-        self.register_buffer('mean_hy', torch.zeros((1, embedding_dim)))
+
+        self._register_running_stats_buffers()
         # Use multiple batch information to keep between estimates of expectations
         self._running_stats = False  # TODO: Implement running mean
 
@@ -62,8 +51,8 @@ class NCP(torch.nn.Module):
             fx: (torch.Tensor) of shape (..., r) representing the singular functions of a subspace of L^2(X).
             hy: (torch.Tensor) of shape (..., r) representing the singular functions of a subspace of L^2(Y).
         """
-        fx = self.singular_fns_x(x)  # f(x) = [f_1(x), ..., f_r(x)]
-        hy = self.singular_fns_y(y)  # h(y) = [h_1(y), ..., h_r(y)]
+        fx = self.embedding_x(x)  # f(x) = [f_1(x), ..., f_r(x)]
+        hy = self.embedding_y(y)  # h(y) = [h_1(y), ..., h_r(y)]
 
         # TODO: After svals are identified applied change of basis to the singular functions.
         pass
@@ -89,10 +78,24 @@ class NCP(torch.nn.Module):
             (torch.Tensor) representing the expected mutual information between x and y.
         """
         fx_c, hy_c = fx - self.mean_fx, hy - self.mean_hy
+
         # Compute the kernel function
-        kr = 1 + torch.einsum('nr,rc,nc->n', fx_c, self.Cxy, hy_c)
+        if self.truncated_op_bias == 'Cxy':
+            kr = 1 + torch.einsum('nr,rc,nc->n', fx_c, self.Cxy, hy_c)
+        elif self.truncated_op_bias == 'diag':
+            kr = 1 + torch.einsum('nr,r,nc->n', fx_c, torch.diag(self.Cxy), hy_c)
+        elif self.truncated_op_bias == 'svals':
+            svals = torch.exp(-self.log_svals**2)
+            kr = 1 + torch.einsum('nr,r,nc->n', fx_c, svals, hy_c)
+        else:
+            raise ValueError(f"Unknown truncated operator bias: {self.truncated_op_bias}.")
+
+        if not self.training:
+            # Truncate estimated mutual information to be positive:
+            kr = torch.clamp(kr, min=0)
         # Check no NaN  or Inf values
         assert torch.isfinite(kr).all(), "NaN or Inf values found in the kernel function."
+
         return kr
 
     def loss(self, fx: torch.Tensor, hy: torch.Tensor):
@@ -121,13 +124,10 @@ class NCP(torch.nn.Module):
 
         # Operator truncation error = ||E - E_r||_HS^2 ____________________________________________________
         if self.truncated_op_bias == 'Cxy':  # Under the assumption of orthogonal Fx and Hy bases sets
-            # E_r = Cxy -> ||E - E_r||_HS - ||E||_HS = -2 ||Cxy||_F^2 + tr(Cxy Cy Cxy^T Cx) + 1
-            Cxy_F_2 = cross_cov_norm_squared_unbiased_estimation(fx_cp, hy_cp)
-            Pxyx = torch.einsum('ab,bc,cd,de->ae', self.Cxy, self.Cy, self.Cxy, self.Cx)
-            tr_Pxyx_biased = torch.trace(Pxyx)
-            truncation_err = -2 * Cxy_F_2 + tr_Pxyx_biased
+            # E_r = Cxy -> ||E - E_r||_HS - ||E||_HS = -2 ||Cxy||_F^2 + tr(Cxy Cy Cxy^T Cx)
+            truncation_err = self.unbiased_truncation_error_matrix_truncated_op(fx_c, hy_c)
         else:
-            truncation_err = self.unbiased_truncation_error_diag_truncated_op(fx, hy)
+            truncation_err = self.unbiased_truncation_error_diag_truncated_op(fx_c, hy_c)
 
         # Total loss ____________________________________________________________________________________
         # loss = truncation_err + self.gamma * (orth_reg + center_reg)
@@ -142,8 +142,29 @@ class NCP(torch.nn.Module):
                 }
         return loss, metrics
 
-    def unbiased_truncation_error_diag_truncated_op(self, fx, hy):
+    def unbiased_truncation_error_matrix_truncated_op(self, fx_c, hy_c):
+        """ Implementation of ||E - E_r||_HS^2, while assuming E_r is a full matrix.
+
+        Case 1: Orthogonal basis functions give:
+            E_r = Cxy -> ||E - E_r||_HS - ||E||_HS = -2 ||Cxy||_F^2 + tr(Cxy Cy Cxy^T Cx) + 1
+        Case 2: TODO: Trainable E_r matrix
+
+        Args:
+            fx_c: (torch.Tensor) of shape (n_samples, r) representing the centered singular functions of a subspace of L^2(X).
+            hy_c: (torch.Tensor) of shape (n_samples, r) representing the centered singular functions of a subspace of L^2(Y).
+        Returns:
+            (torch.Tensor) representing the unbiased truncation error.
+        """
+        Cxy_F_2 = cross_cov_norm_squared_unbiased_estimation(fx_c, hy_c)
+        Pxyx = torch.einsum('ab,bc,cd,de->ae', self.Cxy, self.Cy, self.Cxy, self.Cx)
+        tr_Pxyx_biased = torch.trace(Pxyx)
+        truncation_err = -2 * Cxy_F_2 + tr_Pxyx_biased
+        return truncation_err
+
+    def unbiased_truncation_error_diag_truncated_op(self, fx_c, hy_c):
         """ Implementation of ||E - E_r||_HS^2, while assuming E_r is diagonal.
+
+        TODO: Document this appropriatedly
         Args:
             fx:
             hy:
@@ -151,8 +172,6 @@ class NCP(torch.nn.Module):
             (torch.Tensor) representing the unbiased truncation error.
         """
         # Vladi's implementation
-        fx_c = fx - self.mean_fx
-        hy_c = hy - self.mean_hy
         use_expectations = self.truncated_op_bias == 'diag' or self.truncated_op_bias == 'Cxy'
 
         # TODO: Need code the unbiased estimation when use_expectations = True
@@ -256,6 +275,16 @@ class NCP(torch.nn.Module):
             self.Cx = torch.einsum('nr,nc->rc', fx_c, fx_c) / (n_samples - 1) + eps
             self.Cy = torch.einsum('nr,nc->rc', hy_c, hy_c) / (n_samples - 1) + eps
 
+    def _register_running_stats_buffers(self):
+        # Matrix containing the cross-covariance matrix form of the operator Cyx: L^2(Y) -> L^2(X)
+        self.register_buffer('Cxy', torch.zeros(embedding_dim, embedding_dim))
+        # Matrix containing the covariance matrix form of the operator Cx: L^2(X) -> L^2(X)
+        self.register_buffer('Cx', torch.zeros(embedding_dim, embedding_dim))
+        # Matrix containing the covariance matrix form of the operator Cy: L^2(Y) -> L^2(Y)
+        self.register_buffer('Cy', torch.zeros(embedding_dim, embedding_dim))
+        # Expectation of the embedding functions
+        self.register_buffer('mean_fx', torch.zeros((1, embedding_dim)))
+        self.register_buffer('mean_hy', torch.zeros((1, embedding_dim)))
 
 if __name__ == "__main__":
     from NCP.nn.layers import MLP

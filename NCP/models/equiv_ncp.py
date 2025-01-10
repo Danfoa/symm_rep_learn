@@ -7,32 +7,37 @@ import lightning
 import numpy as np
 import torch
 from escnn.group import directsum
-from escnn.nn import EquivariantModule, FieldType, GeometricTensor
+from escnn.nn import FieldType, GeometricTensor
 
+from NCP.models.ncp import NCP
 from NCP.mysc.rep_theory_utils import field_type_to_isotypic_basis
 from NCP.mysc.symm_algebra import isotypic_cross_cov
-from NCP.nn.layers import SingularLayer
 
 log = logging.getLogger(__name__)
 
-class ENCPOperator(torch.nn.Module):
 
-    def __init__(self, x_fns: EquivariantModule, y_fns: EquivariantModule, gamma=0.01):
-        super(ENCPOperator, self).__init__()
-        self.gamma = gamma
+# Equivariant Neural Conditional Probabily (e-NCP) module ==============================================================
+class ENCP(NCP):
+
+    def __init__(self,
+                 embedding_x: escnn.nn.EquivariantModule,
+                 embedding_y: escnn.nn.EquivariantModule,
+                 gamma=0.001,
+                 truncated_op_bias: str = 'Cxy',
+                 ):
         # Get field type in the singular-isotypic basis
-        assert x_fns.out_type == y_fns.out_type, "Embeddings field types must be the same"
-        lat_singular_type = field_type_to_isotypic_basis(x_fns.out_type)
+        assert embedding_x.out_type == embedding_y.out_type, "Embeddings field types must be the same"
+        lat_singular_type = field_type_to_isotypic_basis(embedding_x.out_type)
+        self.G = lat_singular_type.fibergroup
         # Take any input field-type, add a G-equivariant linear layer, parameterizing a change of basis to the
         # Iso-singular basis. (singular functions clustered by isotypic subspaces)
-        x2singular = escnn.nn.Linear(in_type=x_fns.out_type, out_type=lat_singular_type, bias=False)
-        y2singular = escnn.nn.Linear(in_type=y_fns.out_type, out_type=lat_singular_type, bias=False)
-        self.singular_fns_x = escnn.nn.SequentialModule(x_fns, x2singular)
-        self.singular_fns_y = escnn.nn.SequentialModule(y_fns, y2singular)
-        self.G = self.singular_fns_x.in_type.fibergroup
+        x2singular = escnn.nn.Linear(in_type=embedding_x.out_type, out_type=lat_singular_type, bias=False)
+        y2singular = escnn.nn.Linear(in_type=embedding_y.out_type, out_type=lat_singular_type, bias=False)
+        embedding_x = escnn.nn.SequentialModule(embedding_x, x2singular)
+        embedding_y = escnn.nn.SequentialModule(embedding_y, y2singular)
 
-        assert lat_singular_type.size == lat_singular_type.size, "Fn spaces of diff dimensionality not yet supported"
         # Isotypic subspace are identified by the irrep id associated with the subspace
+        self.n_iso_subspaces = len(lat_singular_type.representations)
         self.iso_subspaces_id = [iso_rep.irreps[0] for iso_rep in lat_singular_type.representations]
         self.iso_subspaces_dim = [iso_rep.size for iso_rep in lat_singular_type.representations]
         self.irreps_dim = {irrep_id: self.G.irrep(*irrep_id).size for irrep_id in self.iso_subspaces_id}
@@ -45,16 +50,24 @@ class ENCPOperator(torch.nn.Module):
         else:
             self.idx_inv_subspace = None
 
+        # Intialize the NCP module
+        super().__init__(embedding_x=embedding_x,
+                         embedding_y=embedding_y,
+                         embedding_dim=lat_singular_type.size,
+                         gamma=gamma,
+                         truncated_op_bias=truncated_op_bias)
+
         # Store the sval trainable parameters / degrees of freedom (dof)
         num_sval_dof = np.sum(self.iso_irreps_multiplicities)  # There is one sval per irrep
         assert num_sval_dof == len(lat_singular_type.irreps), f"{num_sval_dof} != {len(lat_singular_type.irreps)}"
-        # TODO: Enable different initializations for this parameter
-        self.sval_dof = SingularLayer(num_sval_dof)
+        self.log_svals = torch.nn.Parameter(
+            torch.normal(mean=0., std=2. / num_sval_dof, size=(num_sval_dof,)), requires_grad=True
+            )
         # vector storing the multiplicity of each singular value
         self.sval_multiplicities = torch.tensor(
             [self.irreps_dim[irrep_id] for irrep_id in lat_singular_type.irreps]
             )
-        # TODO: Buffers for centering and whitening
+        # Buffers for centering and whitening
 
     @property
     def svals(self):
@@ -67,9 +80,8 @@ class ENCPOperator(torch.nn.Module):
         Returns:
             The singular values in the form of a tensor.
         """
-        unique_svals = self.sval_dof.svals
+        unique_svals = torch.exp(-self.log_svals**2)
         return unique_svals.repeat_interleave(repeats=self.sval_multiplicities.to(unique_svals.device))
-
 
     def forward(self, x: GeometricTensor, y: GeometricTensor):
         """Forward pass of the eNCP operator.
@@ -86,8 +98,8 @@ class ENCPOperator(torch.nn.Module):
             fx: (GeometricTensor) of shape (..., r) representing the singular functions of a subspace of L^2(X)
             hy: (GeometricTensor) of shape (..., r) representing the singular functions of a subspace of L^2(Y)
         """
-        fx = self.singular_fns_x(x)  # f(x) = [f_1(x), ..., f_r(x)]
-        hy = self.singular_fns_y(y)  # h(y) = [h_1(y), ..., h_r(y)]
+        fx = self.embedding_x(x)  # f(x) = [f_1(x), ..., f_r(x)]
+        hy = self.embedding_y(y)  # h(y) = [h_1(y), ..., h_r(y)]
         return fx, hy
 
     def exp_mutual_information(self, svals: torch.Tensor, fx: torch.Tensor, hy: torch.Tensor):
@@ -107,14 +119,17 @@ class ENCPOperator(torch.nn.Module):
         """
         assert isinstance(fx, GeometricTensor) and isinstance(hy, GeometricTensor), \
             f"Expected Geometric Tensors got f(x): {type(fx)} and h(y): {type(hy)}"
-        assert fx.type == self.singular_fns_x.out_type and hy.type == self.singular_fns_y.out_type
+        assert fx.type == self.embedding_x.out_type and hy.type == self.embedding_y.out_type
         device, dtype = fx.tensor.device, fx.tensor.dtype
+
+        self.update_fns_statistics(fx, hy)
+
         _tensor_kwargs = dict(device=device, dtype=dtype)
         metrics = dict()
 
         sqrt_svals = torch.sqrt(self.svals)
 
-        # mi_loss, metrics = self.loss_mi(fx, hy)
+        mi_loss = self.loss_mi(fx, hy)
 
         # Center functions by computing the empirical mean only from the G-invariant subspace
         fx_c, mean_fx = self.center_fns(fx)
@@ -139,23 +154,26 @@ class ENCPOperator(torch.nn.Module):
             Ix, Iy = torch.eye(Cx_k.shape[0], **_tensor_kwargs), torch.eye(Cy_k.shape[0], **_tensor_kwargs)
             orth_x_k = torch.linalg.matrix_norm(Cx_k - Ix, ord='fro') ** 2  # ||C_x - I||_F^2
             orth_y_k = torch.linalg.matrix_norm(Cy_k - Iy, ord='fro') ** 2  # ||C_y - I||_F^2
-            loss_k = torch.trace((Cx_k @ Cy_k) - 2 * Cxy_k)         # tr(C_x C_y - 2 C_xy)
+            loss_k = torch.trace((Cx_k @ Cy_k) - 2 * Cxy_k)  # tr(C_x C_y - 2 C_xy)
             Cx_iso.append(Cx_k), Cy_iso.append(Cy_k), Cxy_iso.append(Cxy_k)
             orth_iso_x.append(orth_x_k), orth_iso_y.append(orth_y_k), loss_iso.append(loss_k)
 
-        mi_loss = sum(loss_iso)                                # tr(block_diag(C1,...Cn)) = Σ_i tr(Ci)
-        orth_reg = (sum(orth_iso_x) + sum(orth_iso_y))          # ||block_diag(C1,...Cn) - I||_F^2 = Σ_i ||Ci - I||_F^2
-        center_reg = mean_fx.norm() ** 2 + mean_hy.norm() ** 2   # Centering regularization
-        loss = mi_loss + self.gamma * (orth_reg + 2*center_reg)
+        # mi_loss = sum(loss_iso)                                # tr(block_diag(C1,...Cn)) = Σ_i tr(Ci)
+        orth_reg = (sum(orth_iso_x) + sum(orth_iso_y))  # ||block_diag(C1,...Cn) - I||_F^2 = Σ_i ||Ci - I||_F^2
+        center_reg = mean_fx.norm() ** 2 + mean_hy.norm() ** 2  # Centering regularization
+        loss = mi_loss + self.gamma * (orth_reg + 2 * center_reg)
 
         # Metrics computations
-        metrics |= dict(mi_loss=mi_loss.detach(),
-                        orth_reg=orth_reg.detach() / (self.singular_fns_x.out_type.size ** 2) / 2,
-                        center_reg=center_reg.detach())
-        for id, Cxy, Cx, Cy in zip(self.iso_subspaces_id, Cxy_iso, Cx_iso, Cy_iso):
-            metrics[f"||Cxy||_F-{id}"] = torch.linalg.matrix_norm(Cxy, ord='fro').detach()**2 / Cxy.shape[0]
-            metrics[f"||Cx||_F-{id}"] = torch.linalg.matrix_norm(Cx, ord='fro').detach()**2 / Cx.shape[0]
-            metrics[f"||Cy||_F-{id}"] = torch.linalg.matrix_norm(Cy, ord='fro').detach()**2 / Cy.shape[0]
+        with torch.no_grad():
+            metrics |= dict(mi_loss=mi_loss,
+                            orth_reg=orth_reg / (self.embedding_x.out_type.size ** 2) / 2,
+                            center_reg=center_reg,
+                            mi_loss2=self.loss_mi(fx, hy),
+                            )
+            for id, Cxy, Cx, Cy in zip(self.iso_subspaces_id, Cxy_iso, Cx_iso, Cy_iso):
+                metrics[f"||Cxy||_F/{id}"] = torch.linalg.matrix_norm(Cxy, ord='fro') ** 2 / Cxy.shape[0]
+                metrics[f"||Cx||_F/{id}"] = torch.linalg.matrix_norm(Cx, ord='fro') ** 2 / Cx.shape[0]
+                metrics[f"||Cy||_F/{id}"] = torch.linalg.matrix_norm(Cy, ord='fro') ** 2 / Cy.shape[0]
         return loss, metrics
 
     def loss_mi(self, fx: GeometricTensor, hy: GeometricTensor):
@@ -170,8 +188,6 @@ class ENCPOperator(torch.nn.Module):
             hy: (GeometricTensor) of shape (..., r) representing the singular functions of a subspace of L^2(Y)
         Returns:
             loss: (torch.Tensor) The loss value.
-            metrics: 'normalization_err': E_(x,y)∼p(x,y) [1 - k(x,y)]. This value should be close to 0, for perfect
-                normalization of the conditional probability density.
         """
         # Randomly permute the batch samples of fx, to break the joint-probability sampling structure.
         fx_p = fx[torch.randperm(fx.shape[0])]
@@ -180,10 +196,7 @@ class ENCPOperator(torch.nn.Module):
         # Compute the mutual information from sampling of the joint distribution p(x,y)
         k_joint = self.exp_mutual_information(self.svals, fx, hy)
         # L = E_(x,y)∼p(x)p(y) [k(x,y)^2] - 2 E_(x,y)∼p(x,y) [k(x,y)] + 1
-        loss = torch.mean(k_prod ** 2) - 2 * torch.mean(k_joint) + 1
-        metrics = dict(normalization_err=(torch.mean(1 - k_joint)).detach())
-        return loss, metrics
-
+        return torch.mean(k_prod ** 2) - 2 * torch.mean(k_joint) + 1
     def center_fns(self, f: GeometricTensor):
         """Centers the functions by removing the mean of their G-invariant components.
 
@@ -211,14 +224,34 @@ class ENCPOperator(torch.nn.Module):
 
         return f_c, mean_f
 
+    def update_fns_statistics(self, fx: GeometricTensor, hy: GeometricTensor):
+        pass
+
+
+    def _register_running_stats_buffers(self):
+        """Register the buffers for the running mean, Covariance and Cross-Covariance matrix matrix."""
+        self.register_buffer('mean_fx', torch.zeros((1, self.embedding_x.out_type.size)))
+        self.register_buffer('mean_hy', torch.zeros((1, self.embedding_y.out_type.size)))
+
+        for iso_idx, iso_id, iso_subspace_dim in zip(
+                range(self.n_iso_subspaces), self.iso_subspaces_id, self.iso_subspaces_dim
+                ):
+            irrep_dim = self.irreps_dim[iso_id]  # |ρ_k|  Dimension of the irrep
+            effective_dim = int(iso_subspace_dim // irrep_dim)
+            # Matrix containing the DoF of Cxy^(k) = Dxy ⊗ Iρ_k: L^2(Y^(k)) -> L^2(X^(k))
+            self.register_buffer(f'Dxy_{iso_idx}', torch.zeros(effective_dim, effective_dim))
+            # Matrix containing the DoF of Cx^(k) = Dx ⊗ Iρ_k: L^2(X^(k)) -> L^2(X^(k))
+            self.register_buffer(f'Dx_{iso_idx}', torch.zeros(effective_dim, effective_dim))
+            # Matrix containing the DoF of Cy^(k) = Dy ⊗ Iρ_k: L^2(Y^(k)) -> L^2(Y^(k))
+            self.register_buffer(f'Dy_{iso_idx}', torch.zeros(effective_dim, effective_dim))
+
 
 if __name__ == "__main__":
-
     G = escnn.group.DihedralGroup(5)
 
-    x_rep = G.regular_representation                       # ρ_Χ
-    y_rep = directsum([G.regular_representation] * 10)     # ρ_Y
-    lat_rep = directsum([G.regular_representation] * 12)   # ρ_Ζ
+    x_rep = G.regular_representation  # ρ_Χ
+    y_rep = directsum([G.regular_representation] * 10)  # ρ_Y
+    lat_rep = directsum([G.regular_representation] * 12)  # ρ_Ζ
     x_rep.name, y_rep.name, lat_rep.name = "rep_X", "rep_Y", "rep_L2"
 
     type_X = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=[x_rep])
@@ -228,7 +261,7 @@ if __name__ == "__main__":
     χ_embedding = escnn.nn.Linear(type_X, lat_type)
     y_embedding = escnn.nn.Linear(type_Y, lat_type)
 
-    model = ENCPOperator(χ_embedding, y_embedding)
+    model = ENCP(χ_embedding, y_embedding)
 
     print(model)
     n_samples = 100
@@ -239,12 +272,15 @@ if __name__ == "__main__":
 
     # Check all training pipeline ========================================
     from torch.utils.data import DataLoader, TensorDataset, default_collate
+
     batch_size = 256
+
 
     # ESCNN equivariant models expect GeometricTensors.
     def geom_tensor_collate_fn(batch) -> [GeometricTensor, GeometricTensor]:
         x_batch, y_batch = default_collate(batch)
         return GeometricTensor(x_batch, type_X), GeometricTensor(y_batch, type_Y)
+
 
     n_samples = 1000
     X_train, X_val = torch.randn(n_samples, x_rep.size), torch.randn(int(n_samples * 0.15), x_rep.size)
@@ -254,8 +290,9 @@ if __name__ == "__main__":
     train_dataset = TensorDataset(X_train, Y_train)
     val_dataset = TensorDataset(X_val, Y_val)
     # Dataloaders
-    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=geom_tensor_collate_fn)
-    val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=geom_tensor_collate_fn)
+    collate_fn = geom_tensor_collate_fn if isinstance(model, ENCP) else default_collate
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+    val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
     # Train using lightning_______________________________________________
     from lightning.pytorch.loggers import CSVLogger, WandbLogger
@@ -269,17 +306,3 @@ if __name__ == "__main__":
 
     torch.set_float32_matmul_precision('medium')
     trainer.fit(light_module, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
-
-
-    # # Training
-    # optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    # for epoch in range(100):
-    #     for i, (x, y) in tqdm(enumerate(train_dataloader)):
-    #         optimizer.zero_grad()
-    #         loss, metrics = model.loss(x, y)
-    #         loss.backward()
-    #         optimizer.step()
-    #         tqdm.write(f"Epoch {epoch}, Batch {i}, Loss: {loss.item()}")
-    # print("Done")
-
-

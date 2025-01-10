@@ -7,14 +7,14 @@ from copy import deepcopy
 import lightning
 import torch
 
-from NCP.models.equiv_ncp import ENCPOperator
+from NCP.models.ncp import NCP
 from NCP.mysc.utils import flatten_dict
 
 
 class NCPModule(lightning.LightningModule):
     def __init__(
             self,
-            model: ENCPOperator,
+            model: NCP,
             optimizer_fn: torch.optim.Optimizer,
             optimizer_kwargs: dict,
             loss_fn: torch.nn.Module | callable,
