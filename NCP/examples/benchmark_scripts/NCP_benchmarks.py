@@ -26,7 +26,7 @@ from NCP.cde_fork.density_simulation import (
 from NCP.cdf import compute_marginal, integrate_pdf
 from NCP.examples.tools.data_gen import LGGMD
 from NCP.metrics import compute_metrics
-from NCP.models.ncp import NCPModule, NCPOperator
+from NCP.model import NCPModule, NCPOperator
 from NCP.nn.layers import MLP
 from NCP.nn.losses import CMELoss
 from NCP.mysc.utils import FastTensorDataLoader, from_np

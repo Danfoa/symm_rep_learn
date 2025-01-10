@@ -6,17 +6,16 @@ debug: False
 exp_name: "NCP-GMM-C2"
 exp_label: "test"
 patience: 40
-trainable_svals: False
-mix_mode: False
+truncated_op_bias: 'Cxy'  # 'Cxy' or 'diagCxy' or 'svals'
 
-model : NCP
-gamma: 0.001     # Weight of the NCP regularization loss term.
-lr: 5e-4
-batch_size: 2024
-max_epochs: 1000
+model: NCP
+gamma: 1e-2        # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
+lr: 5e-4           # Learning rate NCP train best at low lr values < 1e-3
+batch_size: 2024   # The higher the best
+max_epochs: 1000   # Number of passes over ${gmm.n_samples} before stop training. Early stopping is used.
 
 gmm:
-  n_kernels: 5
+  n_kernels: 2
   n_samples: 10000
   seed: 10  # Seed for the reproducibility of the GMM dataset
 
@@ -33,18 +32,18 @@ model_desc: "${model}_gamma${gamma}_lr${lr}_bs${batch_size}_me${max_epochs}"
 hydra:
   run:
     #  ${hydra.job.override_dirname} Puts the override values in the directory name
-    dir: "../experiments/${exp_name}/${exp_label}/${gmm_desc}/${model_desc}--${embedding_desc}/${hydra.job.override_dirname}-seed${seed}"
+    dir: "../experiments/${exp_name}/${exp_label}/${gmm_desc}/${model_desc}--${embedding_desc}/${hydra.job.override_dirname} seed=${seed}"
 
   sweep:
-    dir: ./experiments/${exp_name}/${exp_label}
-    subdir: ${gmm_desc}/${model_desc}--${embedding_desc}/${hydra.job.override_dirname} seed=${seed}
+    dir: ./experiments/${exp_name}/${exp_label}/${gmm_desc}/
+    subdir: ${model_desc}--${embedding_desc}/${hydra.job.override_dirname} seed=${seed}
 
   job:
     name: ${exp_name}
     num: ${seed}
     env_set:
       HYDRA_FULL_ERROR: '1'
-      MPLBACKEND: 'Agg'   # Matplotlib interactive backend crashes in parallel runs
+      WANDB_START_METHOD: 'thread'
     config:
       override_dirname:
         kv_sep: "="

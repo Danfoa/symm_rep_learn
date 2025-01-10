@@ -440,7 +440,7 @@ def main(cfg: DictConfig):
     test_dataloader = DataLoader(test_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=collate_fn)
 
     # Define the Lightning module ________________________________________________________
-    lightning_module = NCPModule(
+    ncp_lightning_module = NCPModule(
         model=ncp_op,
         optimizer_fn=torch.optim.Adam,
         optimizer_kwargs={"lr": cfg.lr},
@@ -473,10 +473,13 @@ def main(cfg: DictConfig):
                                 )
 
     torch.set_float32_matmul_precision('medium')
-    trainer.fit(lightning_module, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
+    trainer.fit(ncp_lightning_module, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
 
     # Loads the best model.
-    trainer.test(lightning_module, dataloaders=test_dataloader)
+    trainer.test(ncp_lightning_module, dataloaders=test_dataloader)
+    # Flush the logger.
+    logger.finalize(trainer.state)
+
     # Computes GT metrics on the entire testing dataset
     m, fig = measure_analytic_mi_error(
         gmm, ncp_op, x_test, y_test, x_type, y_type, x_mean, y_mean, x_var, y_var, plot=True, samples='all',

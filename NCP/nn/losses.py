@@ -1,7 +1,7 @@
 import torch
 from normflows import MultiscaleFlow
 
-from NCP.models.ncp import NCPOperator
+from NCP.model import NCPOperator
 from NCP.nn.diffusion_conditional import DDPM
 from NCP.nn.functional import cme_score_cov, cme_score_opti, cme_score_Ustat
 

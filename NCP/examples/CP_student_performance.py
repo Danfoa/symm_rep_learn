@@ -23,7 +23,7 @@ from NCP.cdf import (
     quantile_regression_from_cdf,
 )
 from NCP.metrics import smooth_cdf
-from NCP.models.ncp import NCPModule, NCPOperator
+from NCP.model import NCPModule, NCPOperator
 from NCP.nn.layers import MLP
 from NCP.nn.losses import CMELoss
 from NCP.nn.nf_module import NFModule
