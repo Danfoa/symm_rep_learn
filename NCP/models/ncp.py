@@ -33,7 +33,7 @@ class NCP(torch.nn.Module):
             torch.normal(mean=0.,std=2./embedding_dim,size=(embedding_dim,)), requires_grad=True
             )
 
-        self._register_running_stats_buffers()
+        self._register_stats_buffers()
         # Use multiple batch information to keep between estimates of expectations
         self._running_stats = False  # TODO: Implement running mean
 
@@ -238,12 +238,10 @@ class NCP(torch.nn.Module):
                 f"||Cx||_F^2":     Cx_fro_2 / embedding_dim_x,
                 f"||mu_x||":       torch.sqrt(fx_centering_loss),
                 f"||Vx - I||_F^2": orthonormality_fx / embedding_dim_x,
-                f"||tr(Cx)||":     tr_Cx / embedding_dim_x,
                 #
                 f"||Cy||_F^2":     Cy_fro_2 / embedding_dim_y,
                 f"||mu_y||":       torch.sqrt(hy_centering_loss),
                 f"||Vy - I||_F^2": orthonormality_hy / embedding_dim_y,
-                f"||tr(Cy)||":     tr_Cy / embedding_dim_y,
                 }
 
         if return_inner_prod:
@@ -275,7 +273,7 @@ class NCP(torch.nn.Module):
             self.Cx = torch.einsum('nr,nc->rc', fx_c, fx_c) / (n_samples - 1) + eps
             self.Cy = torch.einsum('nr,nc->rc', hy_c, hy_c) / (n_samples - 1) + eps
 
-    def _register_running_stats_buffers(self):
+    def _register_stats_buffers(self):
         # Matrix containing the cross-covariance matrix form of the operator Cyx: L^2(Y) -> L^2(X)
         self.register_buffer('Cxy', torch.zeros(embedding_dim, embedding_dim))
         # Matrix containing the covariance matrix form of the operator Cx: L^2(X) -> L^2(X)

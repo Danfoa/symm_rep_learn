@@ -101,6 +101,7 @@ class IterativeWhitening(Module):
         if X.shape[1] != self.input_size:
             return ValueError(f"The feature dimension of the input tensor ({X.shape[1]}) does not match the input_size attribute ({self.input_size})")
         covX = torch.cov(X.T, correction=0) + self.eps*torch.eye(self.input_size, dtype=X.dtype, device=X.device)
+        # Normalize the maximum eigenvalue of the cov matrix to be one such that Newton's method converges (eq.4)
         norm_covX = covX / torch.trace(covX)
         P = torch.eye(self.input_size, dtype=X.dtype, device=X.device)
         for k in range(self.newton_iterations):
