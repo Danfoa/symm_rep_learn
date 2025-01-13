@@ -11,7 +11,7 @@ from escnn.nn import FieldType, GeometricTensor
 
 from NCP.models.ncp import NCP
 from NCP.mysc.rep_theory_utils import field_type_to_isotypic_basis
-from NCP.mysc.statistics import cov_norm_squared_unbiased_estimation
+from NCP.mysc.statistics import cov_norm_squared_unbiased_estimation, cross_cov_norm_squared_unbiased_estimation
 from NCP.mysc.symm_algebra import (invariant_orthogonal_projector, isotypic_cross_cov,
                                    isotypic_signal2irreducible_subspaces)
 
@@ -116,73 +116,18 @@ class ENCP(NCP):
                 Cxy_i = self.Cxy(iso_idx=iso_idx)
                 k_iso.append(torch.einsum('nr,r,nc->n', fx_ci, torch.diag(Cxy_i), hy_ci))
         elif self.truncated_op_bias == 'svals':
-            k_iso.append(torch.einsum('nr,r,nc->n', fx_c, self.svals, hy_c))
+            k_iso.append(torch.einsum('nr,r,nc->n', torch.cat(fx_c, dim=-1), self.svals, torch.cat(hy_c, dim=-1)))
         else:
             raise ValueError(f"Invalid truncated operator bias: {self.truncated_op_bias}")
 
         k = 1 + sum(k_iso)
         return k
 
-    def loss(self, fx: GeometricTensor, hy: GeometricTensor):
-        """ Compute the loss as in eq(5) of the Neural Conditional Probabilities for Uncertainty Quantification paper.
-
-        Args:
-            fx: (GeometricTensor) of shape (..., r) representing the singular functions of a subspace of L^2(X)
-            hy: (GeometricTensor) of shape (..., r) representing the singular functions of a subspace of L^2(Y)
-        Returns:
-        """
-        assert isinstance(fx, GeometricTensor) and isinstance(hy, GeometricTensor), \
-            f"Expected Geometric Tensors got f(x): {type(fx)} and h(y): {type(hy)}"
-        assert fx.type == self.embedding_x.out_type and hy.type == self.embedding_y.out_type
-        device, dtype = fx.tensor.device, fx.tensor.dtype
-
-        self.update_fns_statistics(fx, hy)
-
-        # Center basis functions. Centering occurs only at the G-invariant subspace.
-        fx_c, hy_c = fx.tensor, hy.tensor
-        if self.idx_inv_subspace is not None:
-            inv_subspace_dims = self.iso_subspace_slice[self.idx_inv_subspace]
-            fx_c[..., inv_subspace_dims] = fx.tensor[..., inv_subspace_dims] - self.mean_fx
-            hy_c[..., inv_subspace_dims] = hy.tensor[..., inv_subspace_dims] - self.mean_hy
-        fx_c = GeometricTensor(fx_c, self.embedding_x.out_type)
-        hy_c = GeometricTensor(hy_c, self.embedding_y.out_type)
-        # Orthonormal regularization and centering penalization _________________________________________
-        # orth_reg_fx = ||Cx - I||_F^2 + ||Cy - I||_F^2 + 2 ||E_p(x) f(x)||_F^2 + 2 ||E_p(y) h(y)||_F^2
-        orth_reg, metrics = self.orthonormality_penalization(fx_c, hy_c)
-
-        # loss_iso, Cx_iso, Cy_iso, Cxy_iso = [], [], [], []
-        # orth_iso_x, orth_iso_y, cent_iso_x, cent_iso_y = [], [], [], []
-        # for fx_k, hy_k, rep_x_k, rep_y_k, sqrt_sval_k in zip(fx_iso, hy_iso, reps_Fx_iso, reps_Hy_iso,
-        # sqrt_svals_iso):
-        #     Cx_k = isotypic_cross_cov(X=fx_k, Y=fx_k, rep_X=rep_x_k, rep_Y=rep_x_k, centered=False)
-        #     Cy_k = isotypic_cross_cov(X=hy_k, Y=hy_k, rep_X=rep_y_k, rep_Y=rep_y_k, centered=False)
-        #     Cxy_k = isotypic_cross_cov(X=fx_k, Y=hy_k, rep_X=rep_x_k, rep_Y=rep_y_k, centered=False)
-        #     Ix, Iy = torch.eye(Cx_k.shape[0], **_tensor_kwargs), torch.eye(Cy_k.shape[0], **_tensor_kwargs)
-        #     orth_x_k = torch.linalg.matrix_norm(Cx_k - Ix, ord='fro') ** 2  # ||C_x - I||_F^2
-        #     orth_y_k = torch.linalg.matrix_norm(Cy_k - Iy, ord='fro') ** 2  # ||C_y - I||_F^2
-        #     loss_k = torch.trace((Cx_k @ Cy_k) - 2 * Cxy_k)  # tr(C_x C_y - 2 C_xy)
-        #     Cx_iso.append(Cx_k), Cy_iso.append(Cy_k), Cxy_iso.append(Cxy_k)
-        #     orth_iso_x.append(orth_x_k), orth_iso_y.append(orth_y_k), loss_iso.append(loss_k)
-
-        # # mi_loss = sum(loss_iso)                                # tr(block_diag(C1,...Cn)) = Σ_i tr(Ci)
-        # orth_reg = (sum(orth_iso_x) + sum(orth_iso_y))  # ||block_diag(C1,...Cn) - I||_F^2 = Σ_i ||Ci - I||_F^2
-        # center_reg = mean_fx.norm() ** 2 + mean_hy.norm() ** 2  # Centering regularization
-        # loss = mi_loss + self.gamma * (orth_reg + 2 * center_reg)
-
-        # Metrics computations
-        with torch.no_grad():
-            metrics |= dict(mi_loss=mi_loss,
-                            orth_reg=orth_reg / (self.embedding_x.out_type.size ** 2) / 2,
-                            center_reg=center_reg,
-                            mi_loss2=self.loss_mi(fx, hy),
-                            )
-            for id, Cxy, Cx, Cy in zip(self.iso_subspace_ids, Cxy_iso, Cx_iso, Cy_iso):
-                metrics[f"||Cxy||_F/{id}"] = torch.linalg.matrix_norm(Cxy, ord='fro') ** 2 / Cxy.shape[0]
-                metrics[f"||Cx||_F/{id}"] = torch.linalg.matrix_norm(Cx, ord='fro') ** 2 / Cx.shape[0]
-                metrics[f"||Cy||_F/{id}"] = torch.linalg.matrix_norm(Cy, ord='fro') ** 2 / Cy.shape[0]
-        return loss, metrics
-
-    def orthonormality_penalization(self, fx_c, hy_c, return_inner_prod=False, permutation=None):
+    def orthonormality_penalization(self,
+                                    fx_c: GeometricTensor,
+                                    hy_c: GeometricTensor,
+                                    return_inner_prod=False,
+                                    permutation=None):
         """ Computes orthonormality and centering regularization penalization for a batch of feature vectors.
 
         Computes finite sample unbiased empirical estimates of the term:
@@ -207,8 +152,7 @@ class ENCP(NCP):
         hy_c_iso, reps_Hy_iso = self._orth_proj_isotypic_subspaces(z=hy_c), hy_c.type.representations
 
         Cx_iso_fro_2, Cy_iso_fro_2 = [], []
-        for k, fx_ck, rep_x_k, hy_ck, rep_y_k in zip(range(self.n_iso_subspaces), fx_c_iso, reps_Fx_iso, hy_c_iso,
-                                                     reps_Hy_iso):
+        for k, (fx_ck, rep_x_k, hy_ck, rep_y_k) in enumerate(zip(fx_c_iso, reps_Fx_iso, hy_c_iso, reps_Hy_iso)):
             irrep_dim = self.irreps_dim[self.iso_subspace_ids[k]]
             # Flatten the realizations along irreducible subspaces, while preserving sampling from the joint dist.
             zx = isotypic_signal2irreducible_subspaces(fx_ck, rep_x_k)  # (n_samples * |ρ_k|, r_k / |ρ_k|)
@@ -220,25 +164,26 @@ class ENCP(NCP):
             # Trace terms without need of unbiased estimation
             tr_Dx_k = torch.trace(self.__getattr__(f'Dx_{k}'))  # tr(Dx_k)
             tr_Dy_k = torch.trace(self.__getattr__(f'Dy_{k}'))  # tr(Dy_k)
-            #  || Cx_k ||_F^2 := |ρk| (||Dx_k||_F^2 - 2tr(Dx_k)) + r_k
+            #  ||Cx_k||_F^2 := |ρk| (||Dx_k||_F^2 - 2tr(Dx_k)) + r_k
             Cx_k_fro_2 = irrep_dim * (Dx_k_fro_2 - 2 * tr_Dx_k) + r_xk
-            #  || Cy_k ||_F^2 := |ρk| (||Dy_k||_F^2 - 2tr(Dy_k)) + r_k
+            #  ||Cy_k||_F^2 := |ρk| (||Dy_k||_F^2 - 2tr(Dy_k)) + r_k
             Cy_k_fro_2 = irrep_dim * (Dy_k_fro_2 - 2 * tr_Dy_k) + r_yk
             Cx_iso_fro_2.append(Cx_k_fro_2)
             Cy_iso_fro_2.append(Cy_k_fro_2)
-
             # Cx_k_fro_2_biased = torch.linalg.matrix_norm(self.Cx(k)) ** 2
             # Cy_k_fro_2_biased = torch.linalg.matrix_norm(self.Cy(k)) ** 2
 
-        Cx_fro_2 = sum(Cx_iso_fro_2)  # ||Cx - I||_F^2 = Σ_k || Cx_k - I_r_k ||_F^2,
-        Cy_fro_2 = sum(Cy_iso_fro_2)  # ||Cy - I||_F^2 = Σ_k || Cy_k - I_r_k ||_F^2
+        Cx_fro_2 = sum(Cx_iso_fro_2)  # ||Cx - I||_F^2 = Σ_k ||Cx_k - I_r_k||_F^2,
+        Cy_fro_2 = sum(Cy_iso_fro_2)  # ||Cy - I||_F^2 = Σ_k ||Cy_k - I_r_k||_F^2
+        # Cx_fro_2_biased = torch.linalg.matrix_norm(self.Cx(None)) ** 2
+        # Cy_fro_2_biased = torch.linalg.matrix_norm(self.Cy(None)) ** 2
 
-        # TODO: Unbiased estimation of squared of mean
+        # TODO: Unbiased estimation of mean squared
         fx_centering_loss = (self.mean_fx ** 2).sum()  # ||E_p(x) (f(x_i))||^2
         hy_centering_loss = (self.mean_hy ** 2).sum()  # ||E_p(y) (h(y_i))||^2
 
-        orthonormality_fx = Cx_fro_2 + 2 * fx_centering_loss  # || Cx - I ||_F^2 + 2 || E_p(x) f(x) ||^2
-        orthonormality_hy = Cy_fro_2 + 2 * hy_centering_loss  # || Cy - I ||_F^2 + 2 || E_p(y) h(y) ||^2
+        orthonormality_fx = Cx_fro_2 + 2 * fx_centering_loss  # ||Vx - I||_F^2 = ||Cx - I||_F^2 + 2||E_p(x) f(x)||^2
+        orthonormality_hy = Cy_fro_2 + 2 * hy_centering_loss  # ||Vy - I||_F^2 = ||Cy - I||_F^2 + 2||E_p(y) h(y)||^2
         # Combine terms
         regularization = orthonormality_fx + orthonormality_hy
 
@@ -265,7 +210,82 @@ class ENCP(NCP):
         else:
             return regularization, metrics
 
+    def unbiased_truncation_error_matrix_truncated_op(self, fx_c: GeometricTensor, hy_c: GeometricTensor):
+        """ Implementation of ||E - E_r||_HS^2, while assuming E_r is a full matrix.
+
+        Case 1: Orthogonal basis functions give:
+            E_r = Cxy -> ||E - E_r||_HS - ||E||_HS = -2 ||Cxy||_F^2 + tr(Cxy Cy Cxy^T Cx) + 1
+        Case 2: TODO: Trainable E_r matrix
+
+        Args:
+            fx_c: (torch.Tensor) of shape (n_samples, r) representing the centered singular functions of a subspace
+            of L^2(X).
+            hy_c: (torch.Tensor) of shape (n_samples, r) representing the centered singular functions of a subspace
+            of L^2(Y).
+        Returns:
+            (torch.Tensor) representing the unbiased truncation error.
+        """
+        assert fx_c.type == self.embedding_x.out_type and hy_c.type == self.embedding_y.out_type  # Iso basis.
+        # Project embedding into the isotypic subspaces
+        fx_c_iso, reps_Fx_iso = self._orth_proj_isotypic_subspaces(z=fx_c), fx_c.type.representations
+        hy_c_iso, reps_Hy_iso = self._orth_proj_isotypic_subspaces(z=hy_c), hy_c.type.representations
+
+        Cxy_iso_fro_2, tr_Pxyx_iso = [], []
+        for k, (fx_ck, rep_x_k, hy_ck, rep_y_k) in enumerate(zip(fx_c_iso, reps_Fx_iso, hy_c_iso, reps_Hy_iso)):
+            irrep_dim = self.irreps_dim[self.iso_subspace_ids[k]]
+            # Flatten the realizations along irreducible subspaces, while preserving sampling from the joint dist.
+            zx = isotypic_signal2irreducible_subspaces(fx_ck, rep_x_k)  # (n_samples * |ρ_k|, r_k / |ρ_k|)
+            zy = isotypic_signal2irreducible_subspaces(hy_ck, rep_y_k)  # (n_samples * |ρ_k|, r_k / |ρ_k|)
+            Dxy_k_fro_2 = cross_cov_norm_squared_unbiased_estimation(x=zx, y=zy)
+            #  ||Cxy_k||_F^2 := |ρk| ||Dxy_k||_F^2
+            Cxy_k_fro_2 = irrep_dim * Dxy_k_fro_2
+            # Cxy_k_fro_2_biased = torch.linalg.matrix_norm(self.Cxy(k)) ** 2
+            Cxy_iso_fro_2.append(Cxy_k_fro_2)
+            # Trace term: Pxyx_k := Cxy_k Cy_k Cxy_k Cx_k = (Dxy_k Dy_k Dxy_k.T Dx_k) ⊗ I_|ρk|
+            Dxy_k, Dx_k, Dy_k = self.__getattr__(f'Dxy_{k}'), self.__getattr__(f'Dx_{k}'), self.__getattr__(f'Dy_{k}')
+            Dxyx_k = torch.einsum('ab,bc,cd,de->ae', Dxy_k, Dy_k, Dxy_k, Dx_k)
+            # tr(Pxyx_k) := tr(Dxy_k Dy_k Dxy_k.T Dx_k) * |ρk|
+            tr_Pxyx_iso.append(torch.trace(Dxyx_k) * irrep_dim)
+
+        Cxy_fro_2 = sum(Cxy_iso_fro_2)  # ||Cxy||_F^2 = Σ_k ||Cxy_k||_F^2,
+        tr_Pxyx_biased = sum(tr_Pxyx_iso)  # tr(Pxyx) = Σ_k tr(Pxyx_k)
+        truncation_err = -2 * Cxy_fro_2 + tr_Pxyx_biased
+        return truncation_err
+
+    def unbiased_truncation_error_diag_truncated_op(self, fx_c: GeometricTensor, hy_c: GeometricTensor):
+        """ Implementation of ||E - E_r||_HS^2, while assuming E_r is diagonal. """
+        assert fx_c.type == self.embedding_x.out_type and hy_c.type == self.embedding_y.out_type  # Iso basis.
+        # Project embedding into the isotypic subspaces
+        fx_c_iso, reps_Fx_iso = self._orth_proj_isotypic_subspaces(z=fx_c), fx_c.type.representations
+        hy_c_iso, reps_Hy_iso = self._orth_proj_isotypic_subspaces(z=hy_c), hy_c.type.representations
+
+        # Basis of singular functions and isotypic basis have the same symmetry group reoresentation, hence:
+        use_expectations = self.truncated_op_bias == 'diag' or self.truncated_op_bias == 'Cxy'
+        # Singular vectors with symmetry constrained multiplicities.
+        Dr = self.svals if not use_expectations else torch.diag(self.Cxy())
+        Dr_iso = [Dr[s:e] for s, e in zip(fx_c.type.fields_start, fx_c.type.fields_end)]
+
+        tr_CxSCyS_iso, tr_CxyS_iso = [], []
+        for k, (fx_ck, hy_ck, Dr_k) in enumerate(zip(fx_c_iso, hy_c_iso, Dr_iso)):
+            irrep_dim = self.irreps_dim[self.iso_subspace_ids[k]]
+            # Tr (Cx Σ Cy Σ) = Σ_k tr(Cx_k Dr_k Cy_k Dr_k) * |ρ_k|
+            tr_CxSCyS = torch.einsum("ik, il, k, jl, jk, l->", fx_ck, fx_ck, Dr_k, hy_ck, hy_ck, Dr_k) / (fx_ck.shape[0] - 1) ** 2
+            # Tr(Cxy Σ) = Σ_k tr(Cxy_k Dr_k)
+            tr_CxyS = torch.einsum("ik, ik, k->", fx_ck, hy_ck, Dr_k)  / (fx_ck.shape[0] - 1)
+            tr_CxSCyS_iso.append(tr_CxSCyS)
+            tr_CxyS_iso.append(tr_CxyS)
+
+        tr_Cxy = sum(tr_CxyS_iso)  # tr(Cxy Σ) = Σ_k tr(Cxy_k Dr_k)
+        tr_CxSCyS = sum(tr_CxSCyS_iso)  # tr(Cx Σ Cy Σ) = Σ_k tr(Cx_k Dr_k Cy_k Dr_k)
+        # L = -2 tr (Cxy Σ) + tr (Cx Σ Cy Σ)
+        return -2 * tr_Cxy + tr_CxSCyS
+
     def update_fns_statistics(self, fx: GeometricTensor, hy: GeometricTensor):
+        assert isinstance(fx, GeometricTensor) and isinstance(hy, GeometricTensor), \
+            f"Expected Geometric Tensors got f(x): {type(fx)} and h(y): {type(hy)}"
+        assert fx.type == self.embedding_x.out_type and hy.type == self.embedding_y.out_type
+        device, dtype = fx.tensor.device, fx.tensor.dtype
+
         # Get projections into isotypic subspaces.  fx_iso[k] = fx^(k), hy_iso[k] = hy^(k)
         fx_iso, reps_Fx_iso = self._orth_proj_isotypic_subspaces(z=fx), fx.type.representations
         hy_iso, reps_Hy_iso = self._orth_proj_isotypic_subspaces(z=hy), hy.type.representations
@@ -289,6 +309,17 @@ class ENCP(NCP):
                 setattr(self, f'Dxy_{k}', Dxy_k)
                 setattr(self, f'Dx_{k}', Dx_k)
                 setattr(self, f'Dy_{k}', Dy_k)
+
+        # Center basis functions. Centering occurs only at the G-invariant subspace.
+        fx_c, hy_c = fx.tensor.clone(), hy.tensor.clone()
+        if self.idx_inv_subspace is not None:
+            inv_subspace_dims = self.iso_subspace_slice[self.idx_inv_subspace]
+            fx_c[..., inv_subspace_dims] = fx.tensor[..., inv_subspace_dims] - self.mean_fx
+            hy_c[..., inv_subspace_dims] = hy.tensor[..., inv_subspace_dims] - self.mean_hy
+        fx_c = GeometricTensor(fx_c, self.embedding_x.out_type)
+        hy_c = GeometricTensor(hy_c, self.embedding_y.out_type)
+
+        return fx_c, hy_c
 
     @property
     def svals(self):
@@ -315,13 +346,13 @@ class ENCP(NCP):
         """
         if iso_idx is None:
             Cxy_iso = [self.Cxy(k) for k in range(self.n_iso_subspaces)]
-            return torch.linalg.block_diag(*Cxy_iso)
+            return torch.block_diag(*Cxy_iso)
         else:
             assert 0 <= iso_idx < self.n_iso_subspaces, \
                 f"Invalid isotypic subspace index {iso_idx} !in [0,{self.n_iso_subspaces}]"
             irrep_dim = self.irreps_dim[self.iso_subspace_ids[iso_idx]]
-            dtype, device = self.Dxy[iso_idx].dtype, self.Dxy[iso_idx].device
-            return torch.kron(self.Dxy[iso_idx], torch.eye(irrep_dim, dtype=dtype, device=device))
+            Dxy_k = self.__getattr__(f"Dxy_{iso_idx}")
+            return torch.kron(Dxy_k, torch.eye(irrep_dim, dtype=Dxy_k.dtype, device=Dxy_k.device))
 
     def Cx(self, iso_idx=None):
         """Compute the covariance matrix Cx.
@@ -334,7 +365,7 @@ class ENCP(NCP):
         """
         if iso_idx is None:
             Cx_iso = [self.Cx(k) for k in range(self.n_iso_subspaces)]
-            return torch.linalg.block_diag(*Cx_iso)
+            return torch.block_diag(*Cx_iso)
         else:
             assert 0 <= iso_idx < self.n_iso_subspaces, \
                 f"Invalid isotypic subspace index {iso_idx} !in [0,{self.n_iso_subspaces}]"
@@ -353,7 +384,7 @@ class ENCP(NCP):
         """
         if iso_idx is None:
             Cy_iso = [self.Cy(k) for k in range(self.n_iso_subspaces)]
-            return torch.linalg.block_diag(*Cy_iso)
+            return torch.block_diag(*Cy_iso)
         else:
             assert 0 <= iso_idx < self.n_iso_subspaces, \
                 f"Invalid isotypic subspace index {iso_idx} !in [0,{self.n_iso_subspaces}]"
@@ -418,7 +449,6 @@ if __name__ == "__main__":
 
     batch_size = 256
 
-
     # ESCNN equivariant models expect GeometricTensors.
     def geom_tensor_collate_fn(batch) -> [GeometricTensor, GeometricTensor]:
         x_batch, y_batch = default_collate(batch)
@@ -436,6 +466,18 @@ if __name__ == "__main__":
     collate_fn = geom_tensor_collate_fn if isinstance(model, ENCP) else default_collate
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+
+    # Simple train and backward loop test:
+
+    model.train()
+    for _ in range(100):
+        for x, y in train_dataloader:
+            with torch.autograd.set_detect_anomaly(True):
+                fx, hy = model(x, y)
+                loss, metrics = model.loss(fx, hy)
+                loss.backward()
+            break
+        break
 
     # Train using lightning_______________________________________________
     from lightning.pytorch.loggers import CSVLogger, WandbLogger

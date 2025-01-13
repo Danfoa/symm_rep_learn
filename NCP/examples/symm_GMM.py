@@ -210,15 +210,21 @@ def plot_analytic_mi_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representatio
 def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
     embedding_dim = lat_type.size
     if cfg.model.lower() == "encp":  # Equivariant NCP
-        from NCP.models.equiv_ncp import ENCPOperator
+        from NCP.models.equiv_ncp import ENCP
         from NCP.nn.equiv_layers import EMLP
 
         kwargs = dict(out_type=lat_type,
                       hidden_layers=cfg.embedding.hidden_layers,
-                      hidden_units=cfg.embedding.hidden_units, bias=False)
+                      activation=cfg.embedding.activation,
+                      hidden_units=cfg.embedding.hidden_units,
+                      bias=False)
         χ_embedding = EMLP(in_type=x_type, **kwargs)
         y_embedding = EMLP(in_type=y_type, **kwargs)
-        eNCPop = ENCPOperator(x_fns=χ_embedding, y_fns=y_embedding, gamma=cfg.gamma)
+        eNCPop = ENCP(embedding_x=χ_embedding,
+                      embedding_y=y_embedding,
+                      gamma=cfg.gamma,
+                      truncated_op_bias=cfg.truncated_op_bias,
+                      )
 
         return eNCPop
     elif cfg.model.lower() == "ncp":  # NCP
@@ -230,11 +236,12 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
         kwargs = dict(output_shape=embedding_dim,
                       n_hidden=cfg.embedding.hidden_layers,
                       layer_size=cfg.embedding.hidden_units,
-                      activation=activation)
+                      activation=activation,
+                      bias=False)
         fx = MLP(input_shape=x_type.size, **kwargs)
         fy = MLP(input_shape=y_type.size, **kwargs)
-        ncp = NCP(fx,
-                  fy,
+        ncp = NCP(embedding_x=fx,
+                  embedding_y=fy,
                   embedding_dim=embedding_dim,
                   gamma=cfg.gamma,
                   truncated_op_bias=cfg.truncated_op_bias,
@@ -244,7 +251,7 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
         raise ValueError(f"Model {cfg.model} not recognized")
 
 
-def gmm_dataset(n_samples: int, gmm: SymmGaussianMixture, rep_X: Representation, rep_Y: Representation):
+def gmm_dataset(n_samples: int, gmm: SymmGaussianMixture, rep_X: Representation, rep_Y: Representation, device='cpu'):
     from NCP.mysc.symm_algebra import symmetric_moments
 
     x_samples, y_samples = gmm.simulate(n_samples=n_samples)
@@ -264,8 +271,8 @@ def gmm_dataset(n_samples: int, gmm: SymmGaussianMixture, rep_X: Representation,
     x_train, x_val, x_test = X_c[:n_train], X_c[n_train:n_train + n_val], X_c[n_train + n_val:]
     y_train, y_val, y_test = Y_c[:n_train], Y_c[n_train:n_train + n_val], Y_c[n_train + n_val:]
 
-    X_train = torch.atleast_2d(torch.from_numpy(x_train).float())
-    Y_train = torch.atleast_2d(torch.from_numpy(y_train).float())
+    X_train = torch.atleast_2d(torch.from_numpy(x_train).float()).to(device=device)
+    Y_train = torch.atleast_2d(torch.from_numpy(y_train).float()).to(device=device)
     X_val = torch.atleast_2d(torch.from_numpy(x_val).float())
     Y_val = torch.atleast_2d(torch.from_numpy(y_val).float())
     X_test = torch.atleast_2d(torch.from_numpy(x_test).float())
@@ -306,7 +313,8 @@ def measure_analytic_mi_error(gmm, ncp, x_samples, y_samples, x_type, y_type, x_
     Y_c = ((torch.Tensor(Y_np) - y_mean) / torch.sqrt(y_var)).to(device=device)
 
     # Compute the estimate of the NCP model of the mutual information _______________
-    fx, hy = ncp(x=X_c, y=Y_c)
+    from NCP.models.equiv_ncp import ENCP
+    fx, hy = ncp(x=X_c, y=Y_c) if not isinstance(ncp, ENCP) else ncp(x=x_type(X_c), y=y_type(Y_c))
     mi_xy = ncp.mutual_information(fx, hy)  # k_r(x,y) ≈ p(x,y) / p(x)p(y)
     # Compute the analytic mutual information _______________________________________
     mi_xy_gt = gmm.mutual_information(X=X_np, Y=Y_np)  # p(x,y) / p(x)p(y)
@@ -333,7 +341,8 @@ def measure_analytic_mi_error(gmm, ncp, x_samples, y_samples, x_type, y_type, x_
     CDFs_mse, CDFs_gt, CDFs = [], [], []
     for x_cond, x_c_cond in zip(X_cond_np, X_c_cond):  # Comptue p(y | x) for each conditioning value
         cdf_gt = gmm.pdf(X=np.broadcast_to(x_cond, Y_range_np.shape), Y=Y_range_np)
-        fx, hy = ncp(x=torch.broadcast_to(x_c_cond, Y_c_range.shape), y=Y_c_range)
+        fx, hy = ncp(x=torch.broadcast_to(x_c_cond, Y_c_range.shape), y=Y_c_range) if not isinstance(ncp, ENCP) else (
+            ncp(x=x_type(torch.broadcast_to(x_c_cond, Y_c_range.shape)), y=y_type(Y_c_range)))
         mi_xy = ncp.mutual_information(fx, hy)  # k_r(x,y) ≈ p(x,y) / p(x)p(y)
 
         cdf = (mi_xy * P_Y_range).cpu().numpy()  # k(x,y) * p(y) = p(y | x)
@@ -379,6 +388,18 @@ def measure_analytic_mi_error(gmm, ncp, x_samples, y_samples, x_type, y_type, x_
 
     return metrics
 
+def get_symmetry_group(group_label: str):
+    # group_label = "C{N}" -> CyclicGroup(N)
+    if group_label[0] == "C" and group_label[1:].isdigit():
+        N = int(group_label[1:])
+        return escnn.group.CyclicGroup(N)
+    elif group_label[0] == "D" and group_label[1:].isdigit():
+        N = int(group_label[1:])
+        return escnn.group.DihedralGroup(N)
+    elif group_label.lower() == "ico":
+        return escnn.group.Icosahedral()
+    elif group_label.lower() == "octa":
+        return escnn.group.Octahedral()
 
 @hydra.main(config_path='cfg', config_name='config', version_base='1.3')
 def main(cfg: DictConfig):
@@ -398,7 +419,7 @@ def main(cfg: DictConfig):
     gmm = SymmGaussianMixture(n_kernels=cfg.gmm.n_kernels, rep_X=rep_X, rep_Y=rep_Y, means_std=2.0, random_seed=10)
     seed_everything(seed)  # Random/Selected seed for weight initialization and training.
     (train_samples, val_samples, test_samples), (x_mean, y_mean), (x_var, y_var), datasets = gmm_dataset(
-        cfg.gmm.n_samples, gmm, rep_X, rep_Y
+        cfg.gmm.n_samples, gmm, rep_X, rep_Y, device=cfg.device if cfg.data_on_device else 'cpu'
         )
     # x_train, y_train = train_samples
     x_val, y_val = val_samples
@@ -423,18 +444,19 @@ def main(cfg: DictConfig):
     run_path = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
     gmm_plot_path = pathlib.Path(run_path).parent.parent / "joint_pdf.png"
     if not gmm_plot_path.exists():
-        x_samples, y_samples = gmm.simulate(n_samples=5000)
-        grid = plot_analytic_joint_2D(gmm, G=C2, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-        grid.fig.savefig(pathlib.Path(run_path).parent.parent / "joint_pdf.png")
-        grid = plot_analytic_mi_2D(gmm, G=C2, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-        grid.fig.savefig(pathlib.Path(run_path).parent.parent / "mutual_information.png")
+        if x_type.size == 1 and y_type.size == 1:
+            x_samples, y_samples = gmm.simulate(n_samples=5000)
+            grid = plot_analytic_joint_2D(gmm, G=C2, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
+            grid.fig.savefig(pathlib.Path(run_path).parent.parent / "joint_pdf.png")
+            grid = plot_analytic_mi_2D(gmm, G=C2, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
+            grid.fig.savefig(pathlib.Path(run_path).parent.parent / "mutual_information.png")
 
     # Get the model ______________________________________________________________________
     ncp_op = get_model(cfg, x_type, y_type, lat_type)
 
     # Define the dataloaders
-    from escnn.nn import EquivariantModule
-    collate_fn = geom_tensor_collate_fn if isinstance(ncp_op, EquivariantModule) else default_collate
+    from NCP.models.equiv_ncp import ENCP
+    collate_fn = geom_tensor_collate_fn if isinstance(ncp_op, ENCP) else default_collate
     train_dataloader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_fn)
     val_dataloader = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=collate_fn)
     test_dataloader = DataLoader(test_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=collate_fn)
@@ -463,7 +485,8 @@ def main(cfg: DictConfig):
     # NCP seems to saturate MI mse when "||E - E_r||_HS" is minimized
     early_call = EarlyStopping(monitor='||E - E_r||_HS/val', patience=cfg.patience, mode='min')
 
-    trainer = lightning.Trainer(accelerator='auto',
+    trainer = lightning.Trainer(accelerator='gpu',
+                                devices=[cfg.device] if cfg.device != -1 else cfg.device, # -1 for all available GPUs
                                 max_epochs=cfg.max_epochs, logger=logger,
                                 enable_progress_bar=True,
                                 log_every_n_steps=25,
@@ -485,7 +508,9 @@ def main(cfg: DictConfig):
         gmm, ncp_op, x_test, y_test, x_type, y_type, x_mean, y_mean, x_var, y_var, plot=True, samples='all',
         )
     # set title to fig:
-    fig.update_layout(title_text=run_id)
+    # Get the str of the name of the current and parent directories
+    run_desc = f"{pathlib.Path(run_path).parent.name}/{pathlib.Path(run_path).name}"
+    fig.update_layout(title_text=run_desc, title_font=dict(size=10))
     pio.write_html(fig, file=pathlib.Path(run_path) / f"conditional_pdf-{logger.version}.html", auto_open=False)
     pio.write_image(fig, file=pathlib.Path(run_path) / f"conditional_pdf-{logger.version}.png", scale=1.5)
 

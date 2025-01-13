@@ -75,7 +75,7 @@ def symmetric_moments(x: torch.Tensor | np.numpy, rep_X: Representation) -> [tor
         # Compute the mean in a single vectorized operation
         mean_empirical = torch.mean(x, dim=0)
         # Project to the inv-subspace and map back to the original basis
-        mean = torch.einsum('...ij,..j->...i', avg_projector, mean_empirical)
+        mean = torch.einsum('...ij,...j->...i', avg_projector, mean_empirical)
 
     # Compute the variance of the observable by computing a single variance per irrep G-stable subspace.
     # To do this, we project the observations to the basis exposing the irreps, compute the variance per
