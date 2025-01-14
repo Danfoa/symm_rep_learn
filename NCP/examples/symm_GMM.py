@@ -7,7 +7,7 @@ import lightning
 import numpy as np
 import seaborn as sns
 import torch
-from escnn.group import Group, Representation
+from escnn.group import directsum, Group, Representation
 from escnn.nn import FieldType, GeometricTensor
 from hydra.core.hydra_config import HydraConfig
 from lightning import seed_everything
@@ -17,6 +17,7 @@ from plotly.subplots import make_subplots
 import plotly.io as pio
 
 from omegaconf import DictConfig, OmegaConf
+from sympy.combinatorics import CyclicGroup
 from torch.utils.data import DataLoader, default_collate, TensorDataset
 
 from NCP.cde_fork.density_simulation.symmGMM import SymmGaussianMixture
@@ -388,18 +389,24 @@ def measure_analytic_mi_error(gmm, ncp, x_samples, y_samples, x_type, y_type, x_
 
     return metrics
 
-def get_symmetry_group(group_label: str):
+def get_symmetry_group(cfg: DictConfig):
+    group_label = cfg.symm_group
     # group_label = "C{N}" -> CyclicGroup(N)
     if group_label[0] == "C" and group_label[1:].isdigit():
         N = int(group_label[1:])
-        return escnn.group.CyclicGroup(N)
+        G = escnn.group.CyclicGroup(N)
     elif group_label[0] == "D" and group_label[1:].isdigit():
         N = int(group_label[1:])
-        return escnn.group.DihedralGroup(N)
+        G = escnn.group.DihedralGroup(N)
     elif group_label.lower() == "ico":
-        return escnn.group.Icosahedral()
+        G = escnn.group.Icosahedral()
     elif group_label.lower() == "octa":
-        return escnn.group.Octahedral()
+        G = escnn.group.Octahedral()
+    else:
+        raise ValueError(f"Group {group_label} not recognized")
+
+    log.info(f"Symmetry Group G: {G} of order {G.order()}")
+    return G
 
 @hydra.main(config_path='cfg', config_name='config', version_base='1.3')
 def main(cfg: DictConfig):
@@ -407,16 +414,25 @@ def main(cfg: DictConfig):
     # Ensure HydraConfig is initialized
     run_id = HydraConfig.get().job.override_dirname if HydraConfig.initialized() else ""
 
-    C2 = escnn.group.CyclicGroup(2)  # Reflection group = Cyclic group of order 2
-    # rep_X = C2.regular_representation  # ρ_Χ
-    # rep_Y = C2.regular_representation  # ρ_Y
-    rep_X = C2.representations['irrep_1']  # ρ_Χ
-    rep_Y = C2.representations['irrep_1']  # ρ_Y
+    # Symmetry group G. Symmetry subgroup H. H2G: H -> G. G2H: G -> H
+    G = get_symmetry_group(cfg)
+    rep_X = directsum([G.regular_representation] * cfg.regular_multiplicitiy)  # ρ_Χ
+    rep_Y = directsum([G.regular_representation] * cfg.regular_multiplicitiy)  # ρ_Y
+    if isinstance(G, escnn.group.CyclicGroup) and G.order() == 2 and  cfg.regular_multiplicitiy == 0:
+        rep_X = G.representations['irrep_1']  # ρ_Χ
+        rep_Y = G.representations['irrep_1']  # ρ_Y
     rep_X.name, rep_Y.name = "rep_X", "rep_Y"
 
     # GENERATE the training data _______________________________________________________
     seed_everything(cfg.gmm.seed)  # Get same GMM for all seeds.
-    gmm = SymmGaussianMixture(n_kernels=cfg.gmm.n_kernels, rep_X=rep_X, rep_Y=rep_Y, means_std=2.0, random_seed=10)
+    gmm = SymmGaussianMixture(
+        n_kernels=cfg.gmm.n_kernels,
+        rep_X=rep_X,
+        rep_Y=rep_Y,
+        means_std=2.0, random_seed=10,
+        x_subgroup_id=eval(cfg.x_symm_subgroup_id) if not isinstance(cfg.x_symm_subgroup_id, int) else cfg.y_symm_subgroup_id,
+        y_subgroup_id=eval(cfg.y_symm_subgroup_id) if not isinstance(cfg.y_symm_subgroup_id, int) else cfg.y_symm_subgroup_id,
+        )
     seed_everything(seed)  # Random/Selected seed for weight initialization and training.
     (train_samples, val_samples, test_samples), (x_mean, y_mean), (x_var, y_var), datasets = gmm_dataset(
         cfg.gmm.n_samples, gmm, rep_X, rep_Y, device=cfg.device if cfg.data_on_device else 'cpu'
@@ -426,11 +442,11 @@ def main(cfg: DictConfig):
     x_test, y_test = test_samples
 
     # Define the Input and Latent types for ESCNN
-    x_type = FieldType(gspace=escnn.gspaces.no_base_space(C2), representations=[rep_X])
-    y_type = FieldType(gspace=escnn.gspaces.no_base_space(C2), representations=[rep_Y])
+    x_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=[rep_X])
+    y_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=[rep_Y])
     lat_type = FieldType(
-        gspace=escnn.gspaces.no_base_space(C2),
-        representations=[C2.regular_representation] * (cfg.embedding['embedding_dim'] // C2.order())
+        gspace=escnn.gspaces.no_base_space(G),
+        representations=[G.regular_representation] * (cfg.embedding['embedding_dim'] // G.order())
         )
 
     train_ds, val_ds, test_ds = datasets
@@ -446,9 +462,10 @@ def main(cfg: DictConfig):
     if not gmm_plot_path.exists():
         if x_type.size == 1 and y_type.size == 1:
             x_samples, y_samples = gmm.simulate(n_samples=5000)
-            grid = plot_analytic_joint_2D(gmm, G=C2, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
+            grid = plot_analytic_joint_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
             grid.fig.savefig(pathlib.Path(run_path).parent.parent / "joint_pdf.png")
-            grid = plot_analytic_mi_2D(gmm, G=C2, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
+            grid.fig.show()
+            grid = plot_analytic_mi_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
             grid.fig.savefig(pathlib.Path(run_path).parent.parent / "mutual_information.png")
 
     # Get the model ______________________________________________________________________

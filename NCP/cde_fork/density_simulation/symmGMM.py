@@ -1,3 +1,4 @@
+from __future__ import annotations
 import escnn
 import numpy as np
 import scipy.stats as stats
@@ -6,6 +7,8 @@ from escnn.group import Representation, directsum
 from NCP.cde_fork.density_simulation import GaussianMixture
 from NCP.cde_fork.utils.misc import project_to_pos_semi_def
 
+import logging
+log = logging.getLogger(__name__)
 
 class SymmGaussianMixture(GaussianMixture):
     """TODO: Add docstring
@@ -19,8 +22,10 @@ class SymmGaussianMixture(GaussianMixture):
     """
 
     def __init__(
-        self, n_kernels: int, rep_X: Representation, rep_Y: Representation, means_std=1.5, random_seed=None
-    ):
+            self, n_kernels: int, rep_X: Representation, rep_Y: Representation, means_std=2.0,
+            x_subgroup_id=None, y_subgroup_id=None,
+            random_seed=None
+            ):
 
         self.random_state = np.random.RandomState(seed=random_seed)  # random state for sampling data
         self.random_state_params = np.random.RandomState(seed=20)  # fixed random state for sampling GMM params
@@ -30,23 +35,42 @@ class SymmGaussianMixture(GaussianMixture):
         self.has_cdf = True
         self.can_sample = True
 
+        # Symmetry group
         self.G = rep_X.group
+        # If a subgroup is specified, restrict the GMM to that subgroup
+        if x_subgroup_id is not None:
+            x_subgroup_id = G.subgroup_trivial_id if x_subgroup_id == "trivial" else x_subgroup_id
+            self.Hx, self.Hx2G, self.G2Hx = self.G.subgroup(x_subgroup_id)
+            rep_X = rep_X.restrict(x_subgroup_id)
+            log.info(f"Restricting the X component to subgroup {self.Hx} of order {self.Hx.order()}")
+        else:
+            self.Hx, self.Hx2G, self.G2Hx = self.G, lambda x: x, lambda x: x
+        if y_subgroup_id is not None:
+            y_subgroup_id = G.subgroup_trivial_id if y_subgroup_id == "trivial" else y_subgroup_id
+            self.Hy, self.Hy2G, self.G2Hy = self.G.subgroup(y_subgroup_id)
+            rep_Y = rep_Y.restrict(y_subgroup_id)
+            log.info(f"Restricting the Y component to subgroup {self.Hy} of order {self.Hy.order()}")
+        else:
+            self.Hy, self.Hy2G, self.G2Hy = self.G, lambda x: x, lambda x: x
+
         """  set parameters, calculate weights, means and covariances """
         self.n_kernels = n_kernels
         self.ndim = rep_X.size + rep_Y.size
-        self.rep = directsum([rep_X, rep_Y])
+
         self.rep_X, self.rep_Y = rep_X, rep_Y
-        self.rep.name = "rep_Ω"
+
         self.ndim_x = rep_X.size
         self.ndim_y = rep_Y.size
         self.means_std = means_std
         self.weights = self._sample_weights(n_kernels)  # shape(n_kernels,), sums to one
         self.means = self.random_state_params.normal(
             loc=np.zeros([self.ndim]), scale=self.means_std, size=[n_kernels, self.ndim]
-        )  # shape(n_kernels, n_dims)
+            )  # shape(n_kernels, n_dims)
         """ Sample cov matrices and assure that cov matrix is pos definite"""
-        self.covariances_x = self.sample_covariances(dim=self.ndim_x, scale=0.5, means_std=self.means_std, num=n_kernels)
-        self.covariances_y = self.sample_covariances(dim=self.ndim_y, scale=0.5, means_std=self.means_std, num=n_kernels)
+        self.covariances_x = self.sample_covariances(dim=self.ndim_x, scale=0.1 * self.means_std, means_std=self.means_std,
+                                                     num=n_kernels)
+        self.covariances_y = self.sample_covariances(dim=self.ndim_y, scale=0.1 * self.means_std, means_std=self.means_std,
+                                                     num=n_kernels)
 
         if not self.G.continuous:
             # To make these distributions invariant under the group action, we need to average over the group
@@ -55,13 +79,32 @@ class SymmGaussianMixture(GaussianMixture):
             Cxs, Cys = [self.covariances_x], [self.covariances_y]
             for g in self.G.elements:
                 if g == self.G.identity: continue
-                means.append(np.einsum('ij,...j->...i', self.rep(g), self.means))
-                Cxs.append(np.einsum('ij,kjm,mn->kin', self.rep_X(g), self.covariances_x, self.rep_X(~g)))
-                Cys.append(np.einsum('ij,kjm,mn->kin', self.rep_Y(g), self.covariances_y, self.rep_Y(~g)))
+                if self.G2Hx(g) is not None: # Element in the Subgroup Hx
+                    g_mean_x = np.einsum('ij,kj->ki', self.rep_X(self.G2Hx(g)), self.means[:, :self.ndim_x])
+                    g_Cx = np.einsum(
+                        'ij,kjm,mn->kin', self.rep_X(self.G2Hx(g)), self.covariances_x, self.rep_X(~self.G2Hx(g)))
+                else:
+                    g_mean_x, g_Cx = self.means[:, :self.ndim_x], self.covariances_x
+                if self.G2Hy(g) is not None: # Element in the Subgroup Hy
+                    g_mean_y = np.einsum('ij,kj->ki', self.rep_Y(self.G2Hy(g)), self.means[:, self.ndim_x:])
+                    g_Cy = np.einsum(
+                        'ij,kjm,mn->kin', self.rep_Y(self.G2Hy(g)), self.covariances_y, self.rep_Y(~self.G2Hy(g)))
+                else:
+                    g_mean_y, g_Cy = self.means[:, self.ndim_x:], self.covariances_y
+                Cxs.append(g_Cx)
+                Cys.append(g_Cy)
+                g_means = np.concatenate([g_mean_x, g_mean_y], axis=-1)
+                means.append(g_means)
             self.means = np.concatenate(means, axis=0)
             self.covariances_x = np.concatenate(Cxs, axis=0)
             self.covariances_y = np.concatenate(Cys, axis=0)
-            self.weights = np.concatenate([self.weights] * self.G.order())
+            # Prune identical kernels.
+            unique_idx = np.unique(self.means, axis=0, return_index=True)[1]
+            self.n_kernels = len(unique_idx)
+            self.means = self.means[unique_idx]
+            self.covariances_x = self.covariances_x[unique_idx]
+            self.covariances_y = self.covariances_y[unique_idx]
+            self.weights = np.concatenate([self.weights] * self.G.order())[unique_idx]
             self.weights /= np.sum(self.weights)
         else:
             raise NotImplementedError("Only finite groups are supported at the moment")
@@ -100,9 +143,11 @@ class SymmGaussianMixture(GaussianMixture):
         # Sample diagonal entries / eigenvalues of the covariance matrix
         eigenvalues = np.abs(self.random_state_params.normal(loc=1, scale=scale, size=(num, dim)))
         # Ensure the minimum eigenvalue is 10% of the means_std
-        min_eig = 0.15 * means_std
+        min_eig = 0.10 * means_std
+        max_eig = 0.75 * means_std
         # This controls that no kernel appears to be supported on a single line/point. / stochasticity
         eigenvalues = np.maximum(eigenvalues, min_eig)
+        eigenvalues = np.minimum(eigenvalues, max_eig)
 
         # eigenvalues /= eigenvalues.max()
         # Sample num orthogonal matrices usign QR decomposition
@@ -126,7 +171,7 @@ class SymmGaussianMixture(GaussianMixture):
         """ Return mean and std of the y component of the data """
         from NCP.mysc.symm_algebra import symmetric_moments
 
-        X, Y = self.simulate(n_samples=10**4)
+        X, Y = self.simulate(n_samples=10 ** 4)
         Y_mean, Y_var = symmetric_moments(Y, self.rep_Y)
         return Y_mean.detach().numpy(), np.sqrt(Y_var.detach().numpy())
 
@@ -138,6 +183,7 @@ class SymmGaussianMixture(GaussianMixture):
             the marginal distribution of Y with shape:(n_samples,)
         """
         Y = self._handle_input_dimensionality(Y)
+        assert Y.shape[-1] == self.ndim_y, f"Y has the wrong dimensionality: {Y.shape[-1]} != {self.ndim_y}"
         p_y = np.sum([self.weights[i] * self.gaussians_y[i].pdf(Y) for i in range(self.n_kernels)], axis=0)
         return p_y
 
@@ -149,6 +195,7 @@ class SymmGaussianMixture(GaussianMixture):
             the marginal distribution of X with shape:(n_samples,)
         """
         X = self._handle_input_dimensionality(X)
+        assert X.shape[-1] == self.ndim_x, f"X has the wrong dimensionality: {X.shape[-1]} != {self.ndim_x}"
         p_x = np.sum([self.weights[i] * self.gaussians_x[i].pdf(X) for i in range(self.n_kernels)], axis=0)
         return p_x
 
@@ -169,16 +216,27 @@ class SymmGaussianMixture(GaussianMixture):
         p_y = self.pdf_y(Y)
         return p_xy / (p_x * p_y)
 
+
 if __name__ == "__main__":
+    # G = escnn.group.DihedralGroup(6)
+    # x_rep = G.representations['irrep_1,2']  # ρ_Χ
+    # y_rep = G.representations['irrep_1,0']
+    G = escnn.group.CyclicGroup(2)
+    x_rep = G.representations['regular']  # ρ_Χ
+    y_rep = G.representations['irrep_1']
 
-    G = escnn.group.DihedralGroup(5)
-
-    x_rep = G.representations['irrep_1,2']                       # ρ_Χ
-    y_rep = G.representations['irrep_1,0']
     x_rep.name, y_rep.name = "rep_X", "rep_Y"
 
-    n_kernels = 3
-    gmm = SymmGaussianMixture(n_kernels, x_rep, y_rep, means_std=5, random_seed=np.random.randint(0, 1000))
+    n_kernels = 5
+    gmm = SymmGaussianMixture(
+        n_kernels,
+        x_rep,
+        y_rep,
+        means_std=4,
+        random_seed=np.random.randint(0, 1000),
+        x_subgroup_id="trivial",
+        y_subgroup_id="trivial"
+        )
 
     X, Y = gmm.simulate(n_samples=10 ** 4)
 
@@ -198,6 +256,33 @@ if __name__ == "__main__":
         selector=dict(mode='markers')  # Apply only to markers
         )
 
+    wall = min(np.min(X), np.min(Y))
+    fig.add_scatter3d(
+        x=gmm.means_x[:, 0],
+        y=gmm.means_x[:, 1],
+        z=(gmm.means_y[:, 0] * 0) - np.abs(1.5 * wall),
+        mode='markers',
+        marker=dict(
+            color=np.abs(Y[:, 0]),  # Color by the absolute value of the z coordinate
+            colorscale='Viridis',
+            size=3,
+            opacity=0.8
+            )
+        )
+
+    fig.add_scatter3d(
+        x=gmm.means_x[:, 0],
+        y=(gmm.means_x[:, 1] * 0) - np.abs(1.5 * wall),
+        z=gmm.means_y[:, 0],
+        mode='markers',
+        marker=dict(
+            color=np.abs(Y[:, 0]),  # Color by the absolute value of the z coordinate
+            colorscale='Viridis',
+            size=3,
+            opacity=0.8
+            )
+        )
+
     # Add the samples
     fig.add_scatter3d(
         x=X[:, 0],
@@ -209,28 +294,73 @@ if __name__ == "__main__":
             colorscale='Viridis',
             size=3,
             opacity=0.15
+            )
         )
-    )
-
-    fig.show()
-    # Plot marginal distributions on the XY plane and the ZY plane
-    import plotly.graph_objects as go
-
-    fig = go.Figure(go.Histogram2dContour(
-        x=X[:, 0],
-        y=X[:, 1],
-        colorscale='Viridis',
-        xaxis='x',
-        yaxis='y'
-        ))
+    # Set aspect ratio to be equal
     fig.update_layout(
-        xaxis=dict(title='x'),
-        yaxis=dict(title='y'),
-        title='KDE Marginal distribution of X = [x,y]'
+        title=f"G={gmm.G}, n_kernels={gmm.n_kernels}, Hx={gmm.Hx}, Hy={gmm.Hy}",
+        scene=dict(
+            aspectmode='cube',
+            xaxis=dict(title='x'),
+            yaxis=dict(title='y'),
+            zaxis=dict(title='z')
+            )
         )
+
+
     fig.show()
 
+    for n in range(10):
+        x_test, y_test = X[[n]], Y[[n]]
+        G_px, G_py = [np.squeeze(gmm.pdf_x(x_test))], [np.squeeze(gmm.pdf_y(y_test))]
+        G_pxy = [np.squeeze(gmm.joint_pdf(x_test, y_test))]
+
+        H_px, H_py = [np.squeeze(gmm.pdf_x(x_test))], [np.squeeze(gmm.pdf_y(y_test))]
+        H_pxy = [np.squeeze(gmm.joint_pdf(x_test, y_test))]
+        for g in G.elements:
+            g_x = np.einsum('ij,nj->ni', x_rep(g), x_test)
+            G_px.append(np.squeeze(gmm.pdf_x(g_x)))
+            g_y = np.einsum('ij,nj->ni', y_rep(g), y_test)
+            G_py.append(np.squeeze(gmm.pdf_y(g_y)))
+            G_pxy.append(np.squeeze(gmm.joint_pdf(g_x, g_y)))
+            # Compute using the subgroups of the GMM using the data symmetry group
+            g_Hx = gmm.G2Hx(g) if gmm.G2Hx(g) else gmm.Hx.identity
+            g_Hy = gmm.G2Hy(g) if gmm.G2Hy(g) else gmm.Hy.identity
+            g_Hx_x = np.einsum('ij,nj->ni', gmm.rep_X(g_Hx), x_test)
+            H_px.append(np.squeeze(gmm.pdf_x(g_Hx_x)))
+            g_Hy_y = np.einsum('ij,nj->ni', gmm.rep_Y(g_Hy), y_test)
+            H_py.append(np.squeeze(gmm.pdf_y(g_Hy_y)))
+            H_pxy.append(np.squeeze(gmm.joint_pdf(g_Hx_x, g_Hy_y)))
+
+            if G == gmm.Hx and G == gmm.Hy:
+                assert np.allclose(G_px, G_px[0]), \
+                    f"The marginal distribution of X is not invariant under the group action: {G_px}"
+                assert np.allclose(G_py, G_py[0]), \
+                    f"The marginal distribution of Y is not invariant under the group action: {G_py}"
+                assert np.allclose(G_pxy, G_pxy[0]), \
+                    f"The joint distribution of X and Y is not invariant under the group action: {G_pxy}"
+            else:
+                assert np.allclose(H_px, H_px[0]), \
+                    f"The marginal distribution of X is not invariant under the group action: {H_px}"
+                assert np.allclose(H_py, H_py[0]), \
+                    f"The marginal distribution of Y is not invariant under the group action: {H_py}"
+                assert np.allclose(H_pxy, H_pxy[0]), \
+                    f"The joint distribution of X and Y is not invariant under the group action: {H_pxy}"
 
 
-
-
+    # # Plot marginal distributions on the XY plane and the ZY plane
+    # import plotly.graph_objects as go
+    #
+    # fig = go.Figure(go.Histogram2dContour(
+    #     x=X[:, 0],
+    #     y=X[:, 1],
+    #     colorscale='Viridis',
+    #     xaxis='x',
+    #     yaxis='y'
+    #     ))
+    # fig.update_layout(
+    #     xaxis=dict(title='x'),
+    #     yaxis=dict(title='y'),
+    #     title='KDE Marginal distribution of X = [x,y]'
+    #     )
+    # fig.show()
