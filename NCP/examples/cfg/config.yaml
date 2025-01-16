@@ -13,7 +13,7 @@ symm_group: C2 # CN / DN / Ico / Octa   # Hypothesis symmetry group ASSUMED for 
 #y_symm_subgroup_id: "trivial"                # ACTUAL/EMPIRICAL symmetry subgroup used for the GMM
 x_symm_subgroup_id: null                 # ACTUAL/EMPIRICAL symmetry subgroup used for the GMM
 y_symm_subgroup_id: null                 # ACTUAL/EMPIRICAL symmetry subgroup used for the GMM
-regular_multiplicitiy: 1                 # Multiplicity of the regular representation
+regular_multiplicitiy: 0                 # Multiplicity of the regular representation
 
 # MODEL CONFIG
 model: NCP
@@ -35,7 +35,7 @@ data_on_device: False  # Load dataset to GPU (usefull for fast training of small
 
 # EXPERIMENT CONFIG
 gmm:
-  n_kernels: 10
+  n_kernels: 5
   n_samples: 10000
   seed: 10  # Seed for the reproducibility of the GMM dataset
 

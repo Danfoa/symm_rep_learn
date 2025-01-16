@@ -48,8 +48,13 @@ class TrainingModule(lightning.LightningModule):
         self._n_train_samples *= 0
 
     def training_step(self, batch, batch_idx):
-        outputs = self.model(*batch)
-        loss, metrics = self.loss_fn(*outputs)
+        out = self.model(*batch)
+        if isinstance(out, tuple):
+            loss, metrics = self.loss_fn(*out)
+        elif isinstance(out, dict):
+            loss, metrics = self.loss_fn(**out)
+        else:
+            loss, metrics = self.loss_fn(out)
 
         batch_dim = self.get_batch_dim(batch)
         self._n_train_samples += batch_dim
@@ -59,16 +64,26 @@ class TrainingModule(lightning.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        outputs = self.model(*batch)
-        loss, metrics = self.loss_fn(*outputs)
+        out = self.model(*batch)
+        if isinstance(out, tuple):
+            loss, metrics = self.loss_fn(*out)
+        elif isinstance(out, dict):
+            loss, metrics = self.loss_fn(**out)
+        else:
+            loss, metrics = self.loss_fn(out)
 
         self.log("loss/val", loss, prog_bar=True, batch_size=self.get_batch_dim(batch))
         self.log_metrics(metrics, suffix="val", batch_size=self.get_batch_dim(batch))
         return loss
 
     def test_step(self, batch, batch_idx):
-        outputs = self.model(*batch)
-        loss, metrics = self.loss_fn(*outputs)
+        out = self.model(*batch)
+        if isinstance(out, tuple):
+            loss, metrics = self.loss_fn(*out)
+        elif isinstance(out, dict):
+            loss, metrics = self.loss_fn(**out)
+        else:
+            loss, metrics = self.loss_fn(out)
 
         self.log("loss/test", loss, prog_bar=True, batch_size=self.get_batch_dim(batch))
         self.log_metrics(metrics, suffix="test", batch_size=self.get_batch_dim(batch))

@@ -249,6 +249,20 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
                   truncated_op_bias=cfg.truncated_op_bias,
                   )
         return ncp
+    elif cfg.model.lower() == "drf":  # Density Ratio Fitting
+        from NCP.models.density_ratio_fitting import DRF
+        from NCP.nn.layers import MLP
+        from NCP.mysc.utils import class_from_name
+
+        activation = class_from_name('torch.nn', cfg.embedding.activation)
+        embedding = MLP(input_shape=x_type.size + y_type.size,  # z = (x,y)
+                        output_shape=1,
+                        n_hidden=cfg.embedding.hidden_layers,
+                        layer_size=cfg.embedding.hidden_units * 2,
+                        activation=activation,
+                        bias=False)
+        drf = DRF(embedding=embedding, gamma=cfg.gamma)
+        return drf
     else:
         raise ValueError(f"Model {cfg.model} not recognized")
 
@@ -331,7 +345,6 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_ty
     Y_c = ((torch.Tensor(Y_np) - y_mean) / torch.sqrt(y_var)).to(device=device)
     # Compute the estimate of the NCP model of the mutual information _______________
     from NCP.models.equiv_ncp import ENCP
-    a = isinstance(nn_model, ENCP)
     _x, _y = (x_type(X_c), y_type(Y_c)) if isinstance(nn_model, ENCP) else (X_c, Y_c)
     pmd_xy = nn_model.pointwise_mutual_dependency(_x, _y).cpu().numpy()  # k_r(x,y) ≈ p(x,y) / p(x)p(y)
     # Compute the analytic PMD _______________________________________
@@ -497,11 +510,11 @@ def main(cfg: DictConfig):
         x_subgroup_id=cfg.x_symm_subgroup_id,
         y_subgroup_id=cfg.y_symm_subgroup_id,
         )
-
     seed_everything(seed)  # Random/Selected seed for weight initialization and training.
     (train_samples, val_samples, test_samples), (x_mean, y_mean), (x_var, y_var), datasets = gmm_dataset(
         cfg.gmm.n_samples, gmm, rep_X, rep_Y, device=cfg.device if cfg.data_on_device else 'cpu'
         )
+
     # x_train, y_train = train_samples
     x_val, y_val = val_samples
     x_test, y_test = test_samples
@@ -534,27 +547,27 @@ def main(cfg: DictConfig):
             grid.fig.savefig(pathlib.Path(run_path).parent.parent / "mutual_information.png")
 
     # Get the model ______________________________________________________________________
-    ncp_op = get_model(cfg, x_type, y_type, lat_type)
-    print(ncp_op)
+    nnPME = get_model(cfg, x_type, y_type, lat_type)
+    print(nnPME)
 
     # Define the dataloaders
     from NCP.models.equiv_ncp import ENCP
-    collate_fn = geom_tensor_collate_fn if isinstance(ncp_op, ENCP) else default_collate
+    collate_fn = geom_tensor_collate_fn if isinstance(nnPME, ENCP) else default_collate
     train_dataloader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_fn)
     val_dataloader = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=collate_fn)
     test_dataloader = DataLoader(test_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=collate_fn)
 
     # Define the Lightning module ________________________________________________________
     ncp_lightning_module = TrainingModule(
-        model=ncp_op,
+        model=nnPME,
         optimizer_fn=torch.optim.Adam,
         optimizer_kwargs={"lr": cfg.lr},
-        loss_fn=ncp_op.loss,
+        loss_fn=nnPME.loss,
         val_metrics=lambda x: measure_analytic_pmi_error(
-            gmm, ncp_op, x_val, y_val, x_type, y_type, x_mean, y_mean, x_var, y_var
+            gmm, nnPME, x_val, y_val, x_type, y_type, x_mean, y_mean, x_var, y_var
             ),
         test_metrics=lambda x: measure_analytic_pmi_error(
-            gmm, ncp_op, x_test, y_test, x_type, y_type, x_mean, y_mean, x_var, y_var
+            gmm, nnPME, x_test, y_test, x_type, y_type, x_mean, y_mean, x_var, y_var
             ),
         )
 
@@ -589,7 +602,7 @@ def main(cfg: DictConfig):
     if y_type.size == 1:  # Plot
         # Computes GT metrics on the entire testing dataset
         m, fig = measure_analytic_pmi_error(
-            gmm, ncp_op, x_test, y_test, x_type, y_type, x_mean, y_mean, x_var, y_var,
+            gmm, nnPME, x_test, y_test, x_type, y_type, x_mean, y_mean, x_var, y_var,
             plot=True, samples='all',
             )
         # set title to fig:
