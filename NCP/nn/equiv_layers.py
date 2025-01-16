@@ -25,12 +25,12 @@ class EMLP(EquivariantModule):
             ):
         super(EMLP, self).__init__()
         assert hidden_layers > 0, "A MLP with 0 hidden layers is equivalent to a linear layer"
-        G = in_type.fibergroup
+        self.G = in_type.fibergroup
         self.in_type, self.out_type = in_type, out_type
 
-        hidden_irreps = hidden_irreps or G.regular_representation.irreps
+        hidden_irreps = hidden_irreps or self.G.regular_representation.irreps
         hidden_irreps = set(hidden_irreps)
-        signal_dim = sum(G.irrep(*id).size for id in hidden_irreps)
+        signal_dim = sum(self.G.irrep(*id).size for id in hidden_irreps)
         # Number of multiplicities / signals in the hidden layers
         channels = int(ceil(hidden_units // signal_dim))
 
@@ -53,6 +53,8 @@ class EMLP(EquivariantModule):
     def evaluate_output_shape(self, input_shape: Tuple[int, ...]) -> Tuple[int, ...]:
         return self.net.evaluate_output_shape(input_shape)
 
+    def extra_repr(self) -> str:
+        return f"{self.G}-equivariant MLP: in={self.in_type}, out={self.out_type}"
 
 class FourierBlock(EquivariantModule):
 

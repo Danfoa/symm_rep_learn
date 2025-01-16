@@ -5,28 +5,43 @@ seed: -1
 debug: False
 exp_name: "NCP-GMM-C2"
 exp_label: "test"
-patience: 40
-truncated_op_bias: 'Cxy'  # 'Cxy' or 'diagCxy' or 'svals'
+device: 0  # -1 for all GPUs [0, ..., gpu_id] for a specific GPU
 
+# GMM Symmetry properties
+symm_group: C2 # CN / DN / Ico / Octa   # Hypothesis symmetry group ASSUMED for the GMM dataset and NNs.
+#x_symm_subgroup_id: "trivial"                # ACTUAL/EMPIRICAL symmetry subgroup used for the GMM
+#y_symm_subgroup_id: "trivial"                # ACTUAL/EMPIRICAL symmetry subgroup used for the GMM
+x_symm_subgroup_id: null                 # ACTUAL/EMPIRICAL symmetry subgroup used for the GMM
+y_symm_subgroup_id: null                 # ACTUAL/EMPIRICAL symmetry subgroup used for the GMM
+regular_multiplicitiy: 1                 # Multiplicity of the regular representation
+
+# MODEL CONFIG
 model: NCP
-gamma: 1e-2        # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
-lr: 5e-4           # Learning rate NCP train best at low lr values < 1e-3
-batch_size: 2024   # The higher the best
-max_epochs: 1000   # Number of passes over ${gmm.n_samples} before stop training. Early stopping is used.
-
-gmm:
-  n_kernels: 2
-  n_samples: 10000
-  seed: 10  # Seed for the reproducibility of the GMM dataset
+truncated_op_bias: 'Cxy'  # 'Cxy' or 'diag' or 'svals'
+gamma: 1e-2               # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
 
 embedding:
   hidden_units: 32
   hidden_layers: 2
-  embedding_dim: 14
-  activation: GELU
+  embedding_dim: 10
+  activation: ELU
+
+# OPTIMIZATION CONFIG
+lr: 5e-4           # Learning rate NCP train best at low lr values < 1e-3
+patience: 40       # Epochs to wait for improvement before early stopping
+batch_size: 1024   # The higher the best
+max_epochs: 2000   # Number of passes over ${gmm.n_samples} before stop training. Early stopping is used.
+data_on_device: False  # Load dataset to GPU (usefull for fast training of small datasets)
+
+# EXPERIMENT CONFIG
+gmm:
+  n_kernels: 10
+  n_samples: 10000
+  seed: 10  # Seed for the reproducibility of the GMM dataset
+
 
 embedding_desc: "hu${embedding.hidden_units}_hl${embedding.hidden_layers}_ed${embedding.embedding_dim}_act${embedding.activation}"
-gmm_desc: "nk${gmm.n_kernels}_ns${gmm.n_samples}"
+gmm_desc: "G=${symm_group} Hx=${x_symm_subgroup_id} Hy=${y_symm_subgroup_id}/nk${gmm.n_kernels}_ns${gmm.n_samples}"
 model_desc: "${model}_gamma${gamma}_lr${lr}_bs${batch_size}_me${max_epochs}"
 
 hydra:
@@ -50,6 +65,7 @@ hydra:
         item_sep: " "
         exclude_keys:
           - debug
+          - device
           - seed
           - exp_name
           - exp_label
@@ -65,3 +81,6 @@ hydra:
           - lr
           - batch_size
           - max_epochs
+          - symm_group
+          - x_symm_subgroup_id
+          - y_symm_subgroup_id
