@@ -7,21 +7,19 @@ from copy import deepcopy
 import lightning
 import torch
 
-from NCP.models.ncp import NCP
 from NCP.mysc.utils import flatten_dict
 
-
-class NCPModule(lightning.LightningModule):
+class TrainingModule(lightning.LightningModule):
     def __init__(
             self,
-            model: NCP,
+            model: torch.nn.Module,
             optimizer_fn: torch.optim.Optimizer,
             optimizer_kwargs: dict,
             loss_fn: torch.nn.Module | callable,
             test_metrics: callable = None,  # Callable at the end of testing
             val_metrics: callable = None,   # Callable at the end of validation
             ):
-        super(NCPModule, self).__init__()
+        super(TrainingModule, self).__init__()
         self._test_metrics = test_metrics
         self._val_metrics = val_metrics
 

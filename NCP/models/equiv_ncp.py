@@ -92,9 +92,9 @@ class ENCP(NCP):
         hy = self.embedding_y(y)  # h(y) = [h_1(y), ..., h_r(y)]
         return fx, hy
 
-    def pointwise_mutual_dependency(self, fx: GeometricTensor, hy: GeometricTensor):
+    def pointwise_mutual_dependency(self, x: GeometricTensor, y: GeometricTensor):
 
-        assert fx.type == self.embedding_x.out_type and hy.type == self.embedding_y.out_type
+        fx, hy = self(x, y)
         # k(x, y) = 1 + Σ_i=1^r σ_i f_i(x) h_i(y)
         # Einsum can do this operation faster in GPU with some internal optimizations.
 
@@ -495,9 +495,9 @@ if __name__ == "__main__":
 
     # Train using lightning_______________________________________________
     from lightning.pytorch.loggers import CSVLogger, WandbLogger
-    from NCP.models.ncp_lightning_module import NCPModule
+    from NCP.models.ncp_lightning_module import TrainingModule
 
-    light_module = NCPModule(model, optimizer_fn=torch.optim.Adam, optimizer_kwargs=dict(lr=1e-3), loss_fn=model.loss)
+    light_module = TrainingModule(model, optimizer_fn=torch.optim.Adam, optimizer_kwargs=dict(lr=1e-3), loss_fn=model.loss)
     trainer = lightning.Trainer(max_epochs=50)
 
     torch.set_float32_matmul_precision('medium')

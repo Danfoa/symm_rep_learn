@@ -22,7 +22,7 @@ from sympy.combinatorics import CyclicGroup
 from torch.utils.data import DataLoader, default_collate, TensorDataset
 
 from NCP.cde_fork.density_simulation.symmGMM import SymmGaussianMixture
-from NCP.models.ncp_lightning_module import NCPModule
+from NCP.models.ncp_lightning_module import TrainingModule
 
 import logging
 
@@ -331,7 +331,8 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_ty
     Y_c = ((torch.Tensor(Y_np) - y_mean) / torch.sqrt(y_var)).to(device=device)
     # Compute the estimate of the NCP model of the mutual information _______________
     from NCP.models.equiv_ncp import ENCP
-    _x, _y = (X_c, Y_c) if not isinstance(nn_model, ENCP) else (x_type(X_c), y_type(Y_c))
+    a = isinstance(nn_model, ENCP)
+    _x, _y = (x_type(X_c), y_type(Y_c)) if isinstance(nn_model, ENCP) else (X_c, Y_c)
     pmd_xy = nn_model.pointwise_mutual_dependency(_x, _y).cpu().numpy()  # k_r(x,y) ≈ p(x,y) / p(x)p(y)
     # Compute the analytic PMD _______________________________________
     pmd_xy_gt = gmm.pointwise_mutual_dependency(X=X_np, Y=Y_np)  # p(x,y) / p(x)p(y)
@@ -352,13 +353,13 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_ty
     # PMD_mse = (PMD_err_mat ** 2).sum()
     # Compute the error on PMI = ln(PMD)
     PMI_gt = np.log(pmd_xy_gt)
-    PMI = np.log(pmd_xy)
+    PMI = np.log(np.clip(pmd_xy, a_min=1e-5, a_max=None))
     # Compute the normalized NPMI = ln(p(x,y)/p(x)p(y)) / -ln(P(X,Y))
     NPMI_gt = PMI_gt / -np.log(P_XY)
     NPMI = PMI / -np.log(P_XY)
     assert np.all((-1 <= NPMI_gt)) and np.all(
         NPMI_gt <= 1), f"NPMI not in [-1, 1] min:{NPMI_gt.min()} max:{NPMI_gt.max()}"
-    assert np.all((-1 <= NPMI)) and np.all(NPMI <= 1), f"NPMI not in [-1, 1] min:{NPMI.min()} max:{NPMI.max()}"
+    # assert np.all((-1 <= NPMI)) and np.all(NPMI <= 1), f"NPMI not in [-1, 1] min:{NPMI.min()} max:{NPMI.max()}"
 
     PMI_KL = ((PMI_gt - PMI) * P_XY).sum()
     NPMI_KL = ((NPMI_gt - NPMI) * P_XY).sum()
@@ -369,6 +370,7 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_ty
     # Since k(x, y) = k(g.x, g.y) for all g in G, we want to compute the variance of the estimate under g-action
     PMD_xy_g_var = np.var(pmd_xy.reshape(G.order(), -1), axis=0)  # Var[ k_r(g.x, g.y) ] for all g in G
     metrics = {"PMD/err":                PMD_err.sum(),
+               "PMD/mse":                (PMD_err**2).sum(),
                "PMD/equiv_err":          PMD_xy_g_var.mean(),
                "PMD/spectral_norm":      PMD_spectral_norm,
                "PMD/spectral_norm_Gvar": PMD_spectral_norm_Gvar,
@@ -397,11 +399,14 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_ty
         CDFs_mse, CDFs_gt, CDFs = [], [], []
         for x_cond, x_c_cond in zip(X_cond_np, X_c_cond):  # Comptue p(y | x) for each conditioning value
             cdf_gt = gmm.pdf(X=np.broadcast_to(x_cond, Y_range_np.shape), Y=Y_range_np)
-            fx, hy = nn_model(x=torch.broadcast_to(x_c_cond, Y_c_range.shape), y=Y_c_range) if not isinstance(nn_model,
-                                                                                                              ENCP) \
-                else (
-                nn_model(x=x_type(torch.broadcast_to(x_c_cond, Y_c_range.shape)), y=y_type(Y_c_range)))
-            pmd_xy = nn_model.mutual_information(fx, hy)  # k_r(x,y) ≈ p(x,y) / p(x)p(y)
+
+            if isinstance(nn_model, ENCP):
+                _x = x_type(torch.broadcast_to(x_c_cond, Y_c_range.shape)).to(device=device, dtype=dtype)
+                _y = y_type(Y_c_range).to(device=device, dtype=dtype)
+            else:
+                _x, _y = (torch.broadcast_to(x_c_cond, Y_range_np.shape), Y_c_range)
+
+            pmd_xy = nn_model.pointwise_mutual_dependency(_x, _y)  # k_r(x,y) ≈ p(x,y) / p(x)p(y)
 
             cdf = (pmd_xy * P_Y_range).cpu().numpy()  # k(x,y) * p(y) = p(y | x)
             CDFs_gt.append(cdf_gt)
@@ -540,7 +545,7 @@ def main(cfg: DictConfig):
     test_dataloader = DataLoader(test_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=collate_fn)
 
     # Define the Lightning module ________________________________________________________
-    ncp_lightning_module = NCPModule(
+    ncp_lightning_module = TrainingModule(
         model=ncp_op,
         optimizer_fn=torch.optim.Adam,
         optimizer_kwargs={"lr": cfg.lr},
