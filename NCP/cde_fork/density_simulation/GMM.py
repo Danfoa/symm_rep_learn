@@ -151,7 +151,7 @@ class GaussianMixture(BaseConditionalDensitySimulation):
         X, Y = self._handle_input_dimensionality(X, Y)
         XY = np.concatenate([X, Y], axis=1)
         assert XY.shape[1] == self.ndim, f"XY.shape[1]: {XY.shape[1]}, self.ndim: {self.ndim}"
-        a = np.atleast_2d([self.weights[i] * self.gaussians[i].pdf(XY) for i in range(self.n_kernels)])
+        a = np.atleast_2d([self.weights[i] * self.gaussians[i].pdf(XY) for i in range(self.n_kernels)]).T
         p_i = np.sum(a, axis=-1)
         return p_i
 

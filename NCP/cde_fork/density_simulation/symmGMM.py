@@ -8,7 +8,9 @@ from NCP.cde_fork.density_simulation import GaussianMixture
 from NCP.cde_fork.utils.misc import project_to_pos_semi_def
 
 import logging
+
 log = logging.getLogger(__name__)
+
 
 class SymmGaussianMixture(GaussianMixture):
     """TODO: Add docstring
@@ -39,14 +41,14 @@ class SymmGaussianMixture(GaussianMixture):
         self.G = rep_X.group
         # If a subgroup is specified, restrict the GMM to that subgroup
         if x_subgroup_id is not None:
-            x_subgroup_id = G.subgroup_trivial_id if x_subgroup_id == "trivial" else x_subgroup_id
+            x_subgroup_id = self.G.subgroup_trivial_id if x_subgroup_id == "trivial" else x_subgroup_id
             self.Hx, self.Hx2G, self.G2Hx = self.G.subgroup(x_subgroup_id)
             rep_X = rep_X.restrict(x_subgroup_id)
             log.info(f"Restricting the X component to subgroup {self.Hx} of order {self.Hx.order()}")
         else:
             self.Hx, self.Hx2G, self.G2Hx = self.G, lambda x: x, lambda x: x
         if y_subgroup_id is not None:
-            y_subgroup_id = G.subgroup_trivial_id if y_subgroup_id == "trivial" else y_subgroup_id
+            y_subgroup_id = self.G.subgroup_trivial_id if y_subgroup_id == "trivial" else y_subgroup_id
             self.Hy, self.Hy2G, self.G2Hy = self.G.subgroup(y_subgroup_id)
             rep_Y = rep_Y.restrict(y_subgroup_id)
             log.info(f"Restricting the Y component to subgroup {self.Hy} of order {self.Hy.order()}")
@@ -67,9 +69,11 @@ class SymmGaussianMixture(GaussianMixture):
             loc=np.zeros([self.ndim]), scale=self.means_std, size=[n_kernels, self.ndim]
             )  # shape(n_kernels, n_dims)
         """ Sample cov matrices and assure that cov matrix is pos definite"""
-        self.covariances_x = self.sample_covariances(dim=self.ndim_x, scale=0.1 * self.means_std, means_std=self.means_std,
+        self.covariances_x = self.sample_covariances(dim=self.ndim_x, scale=0.1 * self.means_std,
+                                                     means_std=self.means_std,
                                                      num=n_kernels)
-        self.covariances_y = self.sample_covariances(dim=self.ndim_y, scale=0.1 * self.means_std, means_std=self.means_std,
+        self.covariances_y = self.sample_covariances(dim=self.ndim_y, scale=0.1 * self.means_std,
+                                                     means_std=self.means_std,
                                                      num=n_kernels)
 
         if not self.G.continuous:
@@ -79,13 +83,13 @@ class SymmGaussianMixture(GaussianMixture):
             Cxs, Cys = [self.covariances_x], [self.covariances_y]
             for g in self.G.elements:
                 if g == self.G.identity: continue
-                if self.G2Hx(g) is not None: # Element in the Subgroup Hx
+                if self.G2Hx(g) is not None:  # Element in the Subgroup Hx
                     g_mean_x = np.einsum('ij,kj->ki', self.rep_X(self.G2Hx(g)), self.means[:, :self.ndim_x])
                     g_Cx = np.einsum(
                         'ij,kjm,mn->kin', self.rep_X(self.G2Hx(g)), self.covariances_x, self.rep_X(~self.G2Hx(g)))
                 else:
                     g_mean_x, g_Cx = self.means[:, :self.ndim_x], self.covariances_x
-                if self.G2Hy(g) is not None: # Element in the Subgroup Hy
+                if self.G2Hy(g) is not None:  # Element in the Subgroup Hy
                     g_mean_y = np.einsum('ij,kj->ki', self.rep_Y(self.G2Hy(g)), self.means[:, self.ndim_x:])
                     g_Cy = np.einsum(
                         'ij,kjm,mn->kin', self.rep_Y(self.G2Hy(g)), self.covariances_y, self.rep_Y(~self.G2Hy(g)))
@@ -199,7 +203,23 @@ class SymmGaussianMixture(GaussianMixture):
         p_x = np.sum([self.weights[i] * self.gaussians_x[i].pdf(X) for i in range(self.n_kernels)], axis=0)
         return p_x
 
-    def mutual_information(self, X, Y):
+    def pointwise_mutual_dependency(self, X, Y):
+        """ Compute the pointwise mutual dependency between X and Y
+
+        Args:
+            X: (..., ndim_x) array of samples from X
+            Y: (..., ndim_y) array of samples from Y
+
+        Returns:
+            pmd:  (..., 1) pointwise mutual dependency between x and y defined as PMD = p(x,y)/p(x)p(y).
+        """
+        X, Y = self._handle_input_dimensionality(X), self._handle_input_dimensionality(Y)
+        p_xy = self.joint_pdf(X, Y)
+        p_x = self.pdf_x(X)
+        p_y = self.pdf_y(Y)
+        return p_xy / (p_x * p_y)
+
+    def pointwise_mutual_information(self, X, Y):
         """ Compute the mutual information between X and Y
 
         Defined by MI = ln(p(x,y) / p(x)p(y))
@@ -210,11 +230,9 @@ class SymmGaussianMixture(GaussianMixture):
         Returns:
             (..., 1) Mutual information between X and Y for each sample
         """
-        X, Y = self._handle_input_dimensionality(X), self._handle_input_dimensionality(Y)
-        p_xy = self.joint_pdf(X, Y)
-        p_x = self.pdf_x(X)
-        p_y = self.pdf_y(Y)
-        return p_xy / (p_x * p_y)
+        pmd = self.pointwise_mutual_dependency(X, Y)
+        pmi = np.log(pmd)
+        return pmi
 
 
 if __name__ == "__main__":
@@ -222,7 +240,7 @@ if __name__ == "__main__":
     # x_rep = G.representations['irrep_1,2']  # ρ_Χ
     # y_rep = G.representations['irrep_1,0']
     G = escnn.group.CyclicGroup(2)
-    x_rep = G.representations['regular']  # ρ_Χ
+    x_rep = G.representations['irrep_1'] + G.representations['irrep_1']  # ρ_Χ
     y_rep = G.representations['irrep_1']
 
     x_rep.name, y_rep.name = "rep_X", "rep_Y"
@@ -234,7 +252,7 @@ if __name__ == "__main__":
         y_rep,
         means_std=4,
         random_seed=np.random.randint(0, 1000),
-        x_subgroup_id="trivial",
+        # x_subgroup_id="trivial",
         y_subgroup_id="trivial"
         )
 
@@ -301,12 +319,11 @@ if __name__ == "__main__":
         title=f"G={gmm.G}, n_kernels={gmm.n_kernels}, Hx={gmm.Hx}, Hy={gmm.Hy}",
         scene=dict(
             aspectmode='cube',
-            xaxis=dict(title='x'),
-            yaxis=dict(title='y'),
-            zaxis=dict(title='z')
+            xaxis=dict(title='x1'),
+            yaxis=dict(title='x2'),
+            zaxis=dict(title='y')
             )
         )
-
 
     fig.show()
 
@@ -346,7 +363,6 @@ if __name__ == "__main__":
                     f"The marginal distribution of Y is not invariant under the group action: {H_py}"
                 assert np.allclose(H_pxy, H_pxy[0]), \
                     f"The joint distribution of X and Y is not invariant under the group action: {H_pxy}"
-
 
     # # Plot marginal distributions on the XY plane and the ZY plane
     # import plotly.graph_objects as go

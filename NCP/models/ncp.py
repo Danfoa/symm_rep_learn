@@ -59,44 +59,49 @@ class NCP(torch.nn.Module):
 
         return fx, hy
 
-    def mutual_information(self, fx: torch.Tensor, hy: torch.Tensor):
-        """Compute the exponential of the mutual information between the random variables x and y.
-
-        The conditional expectation's kernel function k(x,y) = p(x,y) / p(x)p(y), is by definition the exponential of
-        the mutual information between two evaluations of the random variables x and y, that is: MI = ln(k(x,y)).
-
-        In the chosen basis sets of the approximated function spaces L^2(X) and L^2(Y), the approximated kernel function
-        is computed as: k_r(x,y) = 1 + Σ_i,j=1^r Cxy_ij f_i(x) h_j(y).
-
-        TODO: When the singular basis are appropriatedly identified after training we can compute the kernel function by
-        k_r(x,y) = 1 + Σ_i=1^r σ_i f_i(x) h_i(y).
+    def pointwise_mutual_dependency(self, x: torch.Tensor, y: torch.Tensor):
+        """ Return the estimated pointwise mutual dependency between the random variables x and y.
 
         Args:
-            fx: (torch.Tensor) of shape (..., r) representing the singular functions of a subspace of L^2(X).
-            hy: (torch.Tensor) of shape (..., r) representing the singular functions of a subspace of L^
+            x: (torch.Tensor) of shape (N, dx) representing the input random variable x.
+            y: (torch.Tensor) of shape (N, dy) representing the input random variable y.
         Returns:
-            (torch.Tensor) representing the expected mutual information between x and y.
+            k_r:  (torch.Tensor) of shape (N,) representing the approximated pointwise mutual dependency between x and
+             y defined as PMD = p(x,y)/p(x)p(y) ≈ k_r(x,y).
         """
+        fx, hy = self(x, y)
         fx_c, hy_c = fx - self.mean_fx, hy - self.mean_hy
 
         # Compute the kernel function
         if self.truncated_op_bias == 'Cxy':
-            kr = 1 + torch.einsum('nr,rc,nc->n', fx_c, self.Cxy, hy_c)
+            k_r = 1 + torch.einsum('nr,rc,nc->n', fx_c, self.Cxy, hy_c)
         elif self.truncated_op_bias == 'diag':
-            kr = 1 + torch.einsum('nr,r,nc->n', fx_c, torch.diag(self.Cxy), hy_c)
+            k_r = 1 + torch.einsum('nr,r,nc->n', fx_c, torch.diag(self.Cxy), hy_c)
         elif self.truncated_op_bias == 'svals':
             svals = torch.exp(-self.log_svals ** 2)
-            kr = 1 + torch.einsum('nr,r,nc->n', fx_c, svals, hy_c)
+            k_r = 1 + torch.einsum('nr,r,nc->n', fx_c, svals, hy_c)
         else:
             raise ValueError(f"Unknown truncated operator bias: {self.truncated_op_bias}.")
 
-        if not self.training:
-            # Truncate estimated mutual information to be positive:
-            kr = torch.clamp(kr, min=0)
-        # Check no NaN  or Inf values
-        assert torch.isfinite(kr).all(), "NaN or Inf values found in the kernel function."
+        return k_r
 
-        return kr
+    def pointwise_mutual_information(self, x: torch.Tensor, y: torch.Tensor):
+        """ Return the estimated pointwise mutual information between the random variables x and y.
+
+        Args:
+            x: (torch.Tensor) of shape (N, dx) representing the input random variable x.
+            y: (torch.Tensor) of shape (N, dy) representing the input random variable y.
+
+        Returns:
+            pmi: (torch.Tensor) of shape (N,) representing the approximated  pointwise mutual information between x and
+            y defined as PMI := ln(p(x,y) / p(x)p(y)) ≈ ln(k_r(x,y)).
+        """
+        k_r = self.pointwise_mutual_dependency(x, y)
+        k_r_pos = torch.clamp(k_r, min=1e-6)  # Need to clamp to avoid NaNs.
+        pmi = torch.log(k_r_pos)
+        # Check no NaN  or Inf values
+        assert torch.isfinite(pmi).all(), "NaN or Inf values found in the PMI estimation"
+        return torch.log(pmi)
 
     def loss(self, fx: torch.Tensor, hy: torch.Tensor):
         """ TODO
@@ -123,10 +128,13 @@ class NCP(torch.nn.Module):
         with torch.set_grad_enabled(
                 not is_truncated_op_diag):  # Under the assumption of orthogonal Fx and Hy bases sets
             # E_r = Cxy -> ||E - E_r||_HS - ||E||_HS = -2 ||Cxy||_F^2 + tr(Cxy Cy Cxy^T Cx)
-            truncation_err_mat = self.unbiased_truncation_error_matrix_truncated_op(fx_c, hy_c)
+            truncation_err_mat, loss_metrics_mat = self.unbiased_truncation_error_matrix_truncated_op(fx_c, hy_c)
+            metrics |= loss_metrics_mat if not loss_metrics_mat is None else {}
         with torch.set_grad_enabled(is_truncated_op_diag):  # Under the assumption truncated op is on singular basis.
             # E_r = diag(σ1,...σr) -> ||E - E_r||_HS - ||E||_HS = -2 tr(E_r Cxy) + tr(E_r Cy E_r^T Cx)
-            truncation_err_diag = self.unbiased_truncation_error_diag_truncated_op(fx_c, hy_c)
+            truncation_err_diag, loss_metrics_diag = self.unbiased_truncation_error_diag_truncated_op(fx_c, hy_c)
+            metrics |= loss_metrics_diag if not loss_metrics_diag is None else {}
+
         truncation_err = truncation_err_diag if is_truncated_op_diag else truncation_err_mat
 
         # Total loss ____________________________________________________________________________________
@@ -141,7 +149,7 @@ class NCP(torch.nn.Module):
                 }
         return loss, metrics
 
-    def unbiased_truncation_error_matrix_truncated_op(self, fx_c, hy_c):
+    def unbiased_truncation_error_matrix_truncated_op(self, fx_c, hy_c) -> [torch.Tensor, dict]:
         """ Implementation of ||E - E_r||_HS^2, while assuming E_r is a full matrix.
 
         Case 1: Orthogonal basis functions give:
@@ -155,12 +163,15 @@ class NCP(torch.nn.Module):
             of L^2(Y).
         Returns:
             (torch.Tensor) representing the unbiased truncation error.
+            (dict) Metrics to monitor during training.
         """
         Cxy_F_2 = cross_cov_norm_squared_unbiased_estimation(fx_c, hy_c)
         Pxyx = torch.einsum('ab,bc,cd,de->ae', self.Cxy, self.Cy, self.Cxy, self.Cx)
         tr_Pxyx_biased = torch.trace(Pxyx)
         truncation_err = -2 * Cxy_F_2 + tr_Pxyx_biased
-        return truncation_err
+
+        metrics = {"||Cxy||_F^2": Cxy_F_2.detach() / self.embedding_dim}
+        return truncation_err, metrics
 
     def unbiased_truncation_error_diag_truncated_op(self, fx_c, hy_c):
         """ Implementation of ||E - E_r||_HS^2, while assuming E_r is diagonal.
@@ -183,7 +194,7 @@ class NCP(torch.nn.Module):
         # tr (CxyΣ)
         tr_CxyS = torch.einsum("ik, ik, k->", fx_c, hy_c, D_r) / (fx_c.shape[0] - 1)
         # L = -2 tr(CxyΣ) + tr(CxΣCyΣ)
-        return -2 * tr_CxyS + tr_CxSCyS
+        return -2 * tr_CxyS + tr_CxSCyS, None
 
     def orthonormality_penalization(self, fx_c, hy_c, return_inner_prod=False, permutation=None):
         """ Computes orthonormality and centering regularization penalization for a batch of feature vectors.
@@ -311,5 +322,5 @@ if __name__ == "__main__":
     print(loss)
     with torch.no_grad():
         fx, hy = ncp(x, y)
-        mi = ncp.mutual_information(fx, hy)
+        mi = ncp.pointwise_mutual_dependency(fx, hy)
     print(mi)

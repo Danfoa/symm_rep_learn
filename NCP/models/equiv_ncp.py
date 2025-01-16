@@ -92,7 +92,7 @@ class ENCP(NCP):
         hy = self.embedding_y(y)  # h(y) = [h_1(y), ..., h_r(y)]
         return fx, hy
 
-    def mutual_information(self, fx: GeometricTensor, hy: GeometricTensor):
+    def pointwise_mutual_dependency(self, fx: GeometricTensor, hy: GeometricTensor):
 
         assert fx.type == self.embedding_x.out_type and hy.type == self.embedding_y.out_type
         # k(x, y) = 1 + Σ_i=1^r σ_i f_i(x) h_i(y)
@@ -120,8 +120,8 @@ class ENCP(NCP):
         else:
             raise ValueError(f"Invalid truncated operator bias: {self.truncated_op_bias}")
 
-        k = 1 + sum(k_iso)
-        return k
+        k_r = 1 + sum(k_iso)
+        return k_r
 
     def orthonormality_penalization(self,
                                     fx_c: GeometricTensor,
@@ -247,10 +247,18 @@ class ENCP(NCP):
             # tr(Pxyx_k) := tr(Dxy_k Dy_k Dxy_k.T Dx_k) * |ρk|
             tr_Pxyx_iso.append(torch.trace(Dxyx_k) * irrep_dim)
 
-        Cxy_fro_2 = sum(Cxy_iso_fro_2)  # ||Cxy||_F^2 = Σ_k ||Cxy_k||_F^2,
+        Cxy_F_2 = sum(Cxy_iso_fro_2)  # ||Cxy||_F^2 = Σ_k ||Cxy_k||_F^2,
         tr_Pxyx_biased = sum(tr_Pxyx_iso)  # tr(Pxyx) = Σ_k tr(Pxyx_k)
-        truncation_err = -2 * Cxy_fro_2 + tr_Pxyx_biased
-        return truncation_err
+        truncation_err = -2 * Cxy_F_2 + tr_Pxyx_biased
+
+        with torch.no_grad():
+            Cxy_F_2_iso = {f"||Cxy||_F^2/iso{k}": Cxy_k_fro_2 / fx_c_iso[k].shape[-1] for k, Cxy_k_fro_2 in
+                           enumerate(Cxy_iso_fro_2)}
+            trunc_err_iso = {f"||E - E_r||_HS/iso{k}": -2 * A + B for k, (A, B) in
+                             enumerate(zip(Cxy_iso_fro_2, tr_Pxyx_iso))}
+            metrics = {"||Cxy||_F^2": Cxy_F_2.detach() / self.embedding_dim} | Cxy_F_2_iso | trunc_err_iso
+
+        return truncation_err, metrics
 
     def unbiased_truncation_error_diag_truncated_op(self, fx_c: GeometricTensor, hy_c: GeometricTensor):
         """ Implementation of ||E - E_r||_HS^2, while assuming E_r is diagonal. """
@@ -269,16 +277,21 @@ class ENCP(NCP):
         for k, (fx_ck, hy_ck, Dr_k) in enumerate(zip(fx_c_iso, hy_c_iso, Dr_iso)):
             irrep_dim = self.irreps_dim[self.iso_subspace_ids[k]]
             # Tr (Cx Σ Cy Σ) = Σ_k tr(Cx_k Dr_k Cy_k Dr_k) * |ρ_k|
-            tr_CxSCyS = torch.einsum("ik, il, k, jl, jk, l->", fx_ck, fx_ck, Dr_k, hy_ck, hy_ck, Dr_k) / (fx_ck.shape[0] - 1) ** 2
+            tr_CxSCyS = torch.einsum("ik, il, k, jl, jk, l->", fx_ck, fx_ck, Dr_k, hy_ck, hy_ck, Dr_k) / (
+                        fx_ck.shape[0] - 1) ** 2
             # Tr(Cxy Σ) = Σ_k tr(Cxy_k Dr_k)
-            tr_CxyS = torch.einsum("ik, ik, k->", fx_ck, hy_ck, Dr_k)  / (fx_ck.shape[0] - 1)
+            tr_CxyS = torch.einsum("ik, ik, k->", fx_ck, hy_ck, Dr_k) / (fx_ck.shape[0] - 1)
             tr_CxSCyS_iso.append(tr_CxSCyS)
             tr_CxyS_iso.append(tr_CxyS)
 
-        tr_Cxy = sum(tr_CxyS_iso)  # tr(Cxy Σ) = Σ_k tr(Cxy_k Dr_k)
+        tr_CxyS = sum(tr_CxyS_iso)  # tr(Cxy Σ) = Σ_k tr(Cxy_k Dr_k)
         tr_CxSCyS = sum(tr_CxSCyS_iso)  # tr(Cx Σ Cy Σ) = Σ_k tr(Cx_k Dr_k Cy_k Dr_k)
+
+        with torch.no_grad():
+            metrics = {f"||E - diag(E_r)||_HS/iso{k}": -2 * A + B for k, (A, B) in
+                             enumerate(zip(tr_CxyS_iso, tr_CxSCyS_iso))}
         # L = -2 tr (Cxy Σ) + tr (Cx Σ Cy Σ)
-        return -2 * tr_Cxy + tr_CxSCyS
+        return -2 * tr_CxyS + tr_CxSCyS, metrics
 
     def update_fns_statistics(self, fx: GeometricTensor, hy: GeometricTensor):
         assert isinstance(fx, GeometricTensor) and isinstance(hy, GeometricTensor), \
@@ -448,6 +461,7 @@ if __name__ == "__main__":
     from torch.utils.data import DataLoader, TensorDataset, default_collate
 
     batch_size = 256
+
 
     # ESCNN equivariant models expect GeometricTensors.
     def geom_tensor_collate_fn(batch) -> [GeometricTensor, GeometricTensor]:
