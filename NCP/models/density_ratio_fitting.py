@@ -40,7 +40,7 @@ class DRF(torch.nn.Module):
         PMD = self.pmd(xy_pairs)
         assert PMD.shape == (n_samples ** 2, 1)
 
-        # Reshape the scores back to (n_samples, n_samples, embedding_dim)
+        # Reshape the scores back to (n_samples, n_samples)
         PMD_mat = PMD.view(n_samples, n_samples)
 
         return PMD_mat
@@ -74,8 +74,10 @@ class DRF(torch.nn.Module):
         density_ratio_err = (-2 * E_pxy) + (E_px_py) + 1    # Deflated loss
         loss = density_ratio_err + self.gamma * prob_mass_penalization
         metrics = {
-            "||E - E_r||_HS": density_ratio_err.detach(),
-            "Prob Mass Distoriton": prob_mass_penalization.detach()
+            "||k(x,y) - k_r(x,y)||": density_ratio_err.detach(),
+            "E_p(x)p(y) k_r(x,y)^2": E_px_py.detach() - 1,
+            "E_p(x,y) k_r(x,y)": E_pxy.detach() - 1,
+            "Prob Mass Distortion": prob_mass_penalization.detach()
             }
         return loss, metrics
 

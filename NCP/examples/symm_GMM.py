@@ -255,13 +255,16 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
         from NCP.mysc.utils import class_from_name
 
         activation = class_from_name('torch.nn', cfg.embedding.activation)
+        n_layers = cfg.embedding.hidden_layers
         embedding = MLP(input_shape=x_type.size + y_type.size,  # z = (x,y)
                         output_shape=1,
-                        n_hidden=cfg.embedding.hidden_layers,
-                        layer_size=cfg.embedding.hidden_units * 2,
+                        n_hidden=n_layers,
+                        # Ensure NCP model and DRF have approximately equal number of parameters.
+                        layer_size=[cfg.embedding.hidden_units * 2] * (n_layers - 1) + [cfg.embedding.embedding_dim],
                         activation=activation,
                         bias=False)
         drf = DRF(embedding=embedding, gamma=cfg.gamma)
+
         return drf
     else:
         raise ValueError(f"Model {cfg.model} not recognized")
@@ -306,7 +309,7 @@ def gmm_dataset(n_samples: int, gmm: SymmGaussianMixture, rep_X: Representation,
 def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_type, x_mean, y_mean, x_var, y_var,
                                plot=False, samples=1000):
     G = x_type.fibergroup
-    n_total_samples = samples if samples != 'all' else len(x_samples)
+    n_total_samples = samples if samples != 'all' else min(len(x_samples), 2048)
     n_samples_per_g = int(n_total_samples // G.order())
 
     device = next(nn_model.parameters()).device
@@ -351,19 +354,11 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_ty
     pmd_xy_gt = gmm.pointwise_mutual_dependency(X=X_np, Y=Y_np)  # p(x,y) / p(x)p(y)
     # Compute the _____ metric error between the two estimates
     PMD_err = ((pmd_xy_gt - pmd_xy) * np.sqrt(P_X * P_Y))
-    PMD_err_tr = ((pmd_xy_gt - 1) * np.sqrt(P_X * P_Y))
     n = n_samples_per_g ** 2  # Number of unique pairs. Without counting orbit
     G_PMD_err_mat = [PMD_err[i * n: i * n + n].reshape(X_idx.shape) for i in
                      range(G.order())]  # [PMD_mse_mat]_ij = (k_r(xi,yj) - k(xi,yj))^2 * p(xi)p(yj)
     G_PMD_spectral_norm = [np.linalg.norm(G_PMD_err_mat[i], ord=2) for i in range(G.order())]
-    G_PMD_err_mat_tr = [PMD_err_tr[i * n: i * n + n].reshape(X_idx.shape) for i in
-                        range(G.order())]  # [PMD_mse_mat]_ij = (k_r(xi,yj) - k(xi,yj))^2 * p(xi)p(yj)
-    G_PMD_spectral_norm_tr = [np.linalg.norm(G_PMD_err_mat_tr[i], ord=2) for i in range(G.order())]
     PMD_spectral_norm = np.mean(G_PMD_spectral_norm)  # Largest singular value. Spectral norm
-    PMD_spectral_norm_Gvar = np.var(G_PMD_spectral_norm)  # Largest singular value. Spectral norm
-    PMD_spectral_norm_tr = np.mean(G_PMD_spectral_norm_tr)  # Largest singular value. Spectral norm
-    # PMD_mse_trivial = (((pmd_xy_gt - 1) ** 2) * P_X * P_Y).sum()  # Error always  predicting PMD=1
-    # PMD_mse = (PMD_err_mat ** 2).sum()
     # Compute the error on PMI = ln(PMD)
     PMI_gt = np.log(pmd_xy_gt)
     PMI = np.log(np.clip(pmd_xy, a_min=1e-5, a_max=None))
@@ -374,25 +369,16 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_ty
         NPMI_gt <= 1), f"NPMI not in [-1, 1] min:{NPMI_gt.min()} max:{NPMI_gt.max()}"
     # assert np.all((-1 <= NPMI)) and np.all(NPMI <= 1), f"NPMI not in [-1, 1] min:{NPMI.min()} max:{NPMI.max()}"
 
-    PMI_KL = ((PMI_gt - PMI) * P_XY).sum()
-    NPMI_KL = ((NPMI_gt - NPMI) * P_XY).sum()
-    NPMI_KL2 = ((NPMI_gt - NPMI).mean())
-    NPMI_NMSE = ((NPMI_gt - NPMI) ** 2).sum() / NPMI.shape[-1]
-    NPMI_NMSE_tr = ((NPMI_gt - 0) ** 2).sum() / NPMI.shape[-1]
+    PMI_err = ((PMI_gt - PMI) * np.sqrt(P_XY))  # Unsure if this should be prod of joint.
+    NPMI_err = ((NPMI_gt - NPMI) * np.sqrt(P_XY))
     # assert np.all(-1 <= NPMI <= 1), f"NPMI not in [-1, 1] min:{NPMI.min()} max:{NPMI.max()}"
     # Since k(x, y) = k(g.x, g.y) for all g in G, we want to compute the variance of the estimate under g-action
     PMD_xy_g_var = np.var(pmd_xy.reshape(G.order(), -1), axis=0)  # Var[ k_r(g.x, g.y) ] for all g in G
-    metrics = {"PMD/err":                PMD_err.sum(),
-               "PMD/mse":                (PMD_err**2).sum(),
-               "PMD/equiv_err":          PMD_xy_g_var.mean(),
-               "PMD/spectral_norm":      PMD_spectral_norm,
-               "PMD/spectral_norm_Gvar": PMD_spectral_norm_Gvar,
-               "PMD/spectral_norm_tr":   PMD_spectral_norm_tr,
-               "PMI/KL":                 PMI_KL,
-               "NPMI/MSE":               NPMI_NMSE,
-               "NPMI/MSE_tr":            NPMI_NMSE_tr,
-               "NPMI/KL":                NPMI_KL,
-               "NPMI/KL2":               NPMI_KL2,
+    metrics = {"PMD/mse":           (PMD_err ** 2).sum(),
+               "PMD/equiv_err":     PMD_xy_g_var.mean(),
+               "PMD/spectral_norm": PMD_spectral_norm,
+               "PMI/NMSE":          (NPMI_err ** 2).mean(),
+               "PMI/MSE":           (PMI_err ** 2).mean(),
                }
     # Sample 4 random conditioning values of x
     range_n_samples = 100
@@ -579,14 +565,14 @@ def main(cfg: DictConfig):
         dirpath=run_path, filename="best", monitor='loss/val', save_top_k=1, save_last=True, mode='min'
         )
     # NCP seems to saturate MI mse when "||E - E_r||_HS" is minimized
-    early_call = EarlyStopping(monitor='||E - E_r||_HS/val', patience=cfg.patience, mode='min')
+    early_call = EarlyStopping(monitor='||k(x,y) - k_r(x,y)||/val', patience=cfg.patience, mode='min')
 
     trainer = lightning.Trainer(accelerator='gpu',
                                 devices=[cfg.device] if cfg.device != -1 else cfg.device,  # -1 for all available GPUs
                                 max_epochs=cfg.max_epochs, logger=logger,
                                 enable_progress_bar=True,
                                 log_every_n_steps=25,
-                                check_val_every_n_epoch=20,
+                                check_val_every_n_epoch=int(cfg.max_epochs / 200),
                                 callbacks=[ckpt_call, early_call],
                                 fast_dev_run=10 if cfg.debug else False,
                                 )
