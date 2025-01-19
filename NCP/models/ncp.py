@@ -126,10 +126,10 @@ class NCP(torch.nn.Module):
         # Operator truncation error = ||E - E_r||_HS^2 ____________________________________________________
         if not self._is_truncated_op_diag:
             # E_r = Cxy -> ||E - E_r||_HS - ||E||_HS = -2 ||Cxy||_F^2 + tr(Cxy Cy Cxy^T Cx)
-            truncation_err, loss_metrics = self.unbiased_truncation_error_matrix_truncated_op(fx_c, hy_c)
+            truncation_err, loss_metrics = self.unbiased_truncation_error_matrix_form(fx_c, hy_c)
         else:
             # E_r = diag(σ1,...σr) -> ||E - E_r||_HS - ||E||_HS = -2 tr(E_r Cxy) + tr(E_r Cy E_r^T Cx)
-            truncation_err, loss_metrics = self.unbiased_truncation_error_diag_truncated_op(fx_c, hy_c)
+            truncation_err, loss_metrics = self.unbiased_truncation_error_diag_form(fx_c, hy_c)
 
         metrics |= loss_metrics if not loss_metrics is None else {}
         # Total loss ____________________________________________________________________________________
@@ -141,7 +141,7 @@ class NCP(torch.nn.Module):
                 }
         return loss, metrics
 
-    def unbiased_truncation_error_matrix_truncated_op(self, fx_c, hy_c) -> [torch.Tensor, dict]:
+    def unbiased_truncation_error_matrix_form(self, fx_c, hy_c) -> [torch.Tensor, dict]:
         """ Implementation of ||E - E_r||_HS^2, while assuming E_r is a full matrix.
 
         Case 1: Orthogonal basis functions give:
@@ -190,7 +190,7 @@ class NCP(torch.nn.Module):
 
         return truncation_err, metrics
 
-    def unbiased_truncation_error_diag_truncated_op(self, fx_c, hy_c):
+    def unbiased_truncation_error_diag_form(self, fx_c, hy_c):
         """ Implementation of ||E - E_r||_HS^2, while assuming E_r is diagonal.
 
         TODO: Document this appropriatedly

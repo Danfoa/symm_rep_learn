@@ -467,7 +467,7 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
         activation = class_from_name('torch.nn', cfg.embedding.activation)
         n_layers = cfg.embedding.hidden_layers
         # NCP_params = 2(nh^2 * nl)   ->  DRF_params = (sqrt(2)nh)^2 * nl = 2(nh^2 * nl)
-        n_hidden_units = int(cfg.embedding.hidden_units * np.sqrt(2))
+        n_hidden_units = int(cfg.embedding.hidden_units * 2)
         embedding = MLP(input_shape=x_type.size + y_type.size,  # z = (x,y)
                         output_shape=1,
                         n_hidden=n_layers,
@@ -749,14 +749,14 @@ def main(cfg: DictConfig):
 
     # Symmetry group G. Symmetry subgroup H. H2G: H -> G. G2H: G -> H
     G = get_symmetry_group(cfg)
-    if cfg.regular_multiplicitiy > 0:
-        rep_X = directsum([G.regular_representation] * cfg.regular_multiplicitiy)  # ρ_Χ
-        rep_Y = directsum([G.regular_representation] * cfg.regular_multiplicitiy)  # ρ_Y
-    elif isinstance(G, escnn.group.CyclicGroup) and G.order() == 2 and cfg.regular_multiplicitiy == 0:
+    if cfg.regular_multiplicity > 0:
+        rep_X = directsum([G.regular_representation] * cfg.regular_multiplicity)  # ρ_Χ
+        rep_Y = directsum([G.regular_representation] * cfg.regular_multiplicity)  # ρ_Y
+    elif isinstance(G, escnn.group.CyclicGroup) and G.order() == 2 and cfg.regular_multiplicity == 0:
         rep_X = G.representations['irrep_1']  # ρ_Χ
         rep_Y = G.representations['irrep_1']  # ρ_Y
     else:
-        raise ValueError(f"G={G} Hx={cfg.x_symm_subgroup_id} Hy={cfg.y_symm_subgroup_id} {cfg.regular_multiplicitiy}")
+        raise ValueError(f"G={G} Hx={cfg.x_symm_subgroup_id} Hy={cfg.y_symm_subgroup_id} {cfg.regular_multiplicity}")
 
     # GENERATE the training data _______________________________________________________
     seed_everything(cfg.gmm.seed)  # Get same GMM for all training seeds.
@@ -812,7 +812,10 @@ def main(cfg: DictConfig):
     # Get the model ______________________________________________________________________
     nnPME = get_model(cfg, x_type, y_type, lat_type)
     print(nnPME)
-
+    # Print the number of parameters
+    n_params = sum(p.numel() for p in nnPME.parameters())
+    log.info(f"Number of parameters: {n_params}")
+    nnPME.to(device=cfg.device)
     # Define the dataloaders
     from NCP.models.equiv_ncp import ENCP
     collate_fn = geom_tensor_collate_fn if isinstance(nnPME, ENCP) else default_collate
@@ -841,7 +844,6 @@ def main(cfg: DictConfig):
     ckpt_call = ModelCheckpoint(
         dirpath=run_path, filename="best", monitor='loss/val', save_top_k=1, save_last=True, mode='min'
         )
-    # NCP seems to saturate MI mse when "||E - E_r||_HS" is minimized
     early_call = EarlyStopping(monitor='||k(x,y) - k_r(x,y)||/val', patience=cfg.patience, mode='min')
 
     trainer = lightning.Trainer(accelerator='gpu',

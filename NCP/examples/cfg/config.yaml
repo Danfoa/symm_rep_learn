@@ -13,7 +13,7 @@ symm_group: C2 # CN / DN / Ico / Octa   # Hypothesis symmetry group ASSUMED for 
 #y_symm_subgroup_id: "trivial"                # ACTUAL/EMPIRICAL symmetry subgroup used for the GMM
 x_symm_subgroup_id: null                 # ACTUAL/EMPIRICAL symmetry subgroup used for the GMM
 y_symm_subgroup_id: null                 # ACTUAL/EMPIRICAL symmetry subgroup used for the GMM
-regular_multiplicitiy: 0                 # Multiplicity of the regular representation
+regular_multiplicity: 0                 # Multiplicity of the regular representation
 
 # MODEL CONFIG
 model: NCP
@@ -22,13 +22,13 @@ gamma: 1e-2               # Weight of the NCP regularization loss term. NCP trai
 
 embedding:
   hidden_units: 32
-  hidden_layers: 2
+  hidden_layers: 3
   embedding_dim: 10
   activation: ELU
 
 # OPTIMIZATION CONFIG
 lr: 5e-4           # Learning rate NCP train best at low lr values < 1e-3
-patience: 100       # Epochs to wait for improvement before early stopping
+patience: 10       # Epochs to wait for improvement before early stopping
 batch_size: 1024   # The higher the best
 max_epochs: 2000   # Number of passes over ${gmm.n_samples} before stop training. Early stopping is used.
 data_on_device: False  # Load dataset to GPU (usefull for fast training of small datasets)
@@ -42,7 +42,7 @@ gmm:
 
 
 embedding_desc: "hu${embedding.hidden_units}_hl${embedding.hidden_layers}_ed${embedding.embedding_dim}_act${embedding.activation}"
-gmm_desc: "G=${symm_group} Hx=${x_symm_subgroup_id} Hy=${y_symm_subgroup_id}/nk${gmm.n_kernels}_ns${gmm.n_samples}_std=${gmm.means_std}-dim=${regular_multiplicitiy}"
+gmm_desc: "G=${symm_group} Hx=${x_symm_subgroup_id} Hy=${y_symm_subgroup_id}/nk${gmm.n_kernels}_ns${gmm.n_samples}_std=${gmm.means_std}-dim=${regular_multiplicity}"
 model_desc: "${model}_gamma${gamma}_lr${lr}_bs${batch_size}_me${max_epochs}"
 
 hydra:
