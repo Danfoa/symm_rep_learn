@@ -24,7 +24,10 @@ class SymmGaussianMixture(GaussianMixture):
     """
 
     def __init__(
-            self, n_kernels: int, rep_X: Representation, rep_Y: Representation, means_std=2.0,
+            self, n_kernels: int,
+            rep_X: Representation,
+            rep_Y: Representation,
+            means_std=1.0,
             x_subgroup_id=None, y_subgroup_id=None,
             random_seed=None
             ):
@@ -69,10 +72,12 @@ class SymmGaussianMixture(GaussianMixture):
             loc=np.zeros([self.ndim]), scale=self.means_std, size=[n_kernels, self.ndim]
             )  # shape(n_kernels, n_dims)
         """ Sample cov matrices and assure that cov matrix is pos definite"""
-        self.covariances_x = self.sample_covariances(dim=self.ndim_x, scale=0.1 * self.means_std,
+        self.covariances_x = self.sample_covariances(dim=self.ndim_x,
+                                                     scale=0.1 * self.means_std,
                                                      means_std=self.means_std,
                                                      num=n_kernels)
-        self.covariances_y = self.sample_covariances(dim=self.ndim_y, scale=0.1 * self.means_std,
+        self.covariances_y = self.sample_covariances(dim=self.ndim_y,
+                                                     scale=0.1 * self.means_std,
                                                      means_std=self.means_std,
                                                      num=n_kernels)
 
@@ -234,8 +239,18 @@ class SymmGaussianMixture(GaussianMixture):
         pmi = np.log(pmd)
         return pmi
 
+    def normalized_pointwise_mutual_information(self, X, Y):
+        X, Y = self._handle_input_dimensionality(X), self._handle_input_dimensionality(Y)
+        p_xy = self.joint_pdf(X, Y)
+        p_x = self.pdf_x(X)
+        p_y = self.pdf_y(Y)
+        return np.log(p_xy / (p_x * p_y)) / -np.log(p_xy)
+
 
 if __name__ == "__main__":
+    from lightning import seed_everything
+    from matplotlib import pyplot as plt
+
     # G = escnn.group.DihedralGroup(6)
     # x_rep = G.representations['irrep_1,2']  # ρ_Χ
     # y_rep = G.representations['irrep_1,0']
@@ -244,125 +259,170 @@ if __name__ == "__main__":
     y_rep = G.representations['irrep_1']
 
     x_rep.name, y_rep.name = "rep_X", "rep_Y"
+    seed_everything(np.random.randint(0, 1000))
+    mean_std = 3.0
+    n_kernels_list = [5, 10, 25, 50]
+    n_dim_list = [1, 2, 10, 20]
+    var_pmd, mean_pmd, max_pmd, min_pmd = [], [], [], []
+    for n_kernels in n_kernels_list:
+        print(f"n_kernels={n_kernels}")
+        for n_dim in n_dim_list:
+            print(f"n_dim={n_dim}")
+            gmm = SymmGaussianMixture(
+                n_kernels,
+                directsum([x_rep] * n_dim),
+                directsum([x_rep] * n_dim),
+                means_std=mean_std,
+                random_seed=np.random.randint(0, 1000),
+                )
+            X, Y = gmm.simulate(n_samples=min(1000*n_dim, 50000))
+            pmd = gmm.pointwise_mutual_dependency(X, Y)
+            var_pmd.append(np.var(pmd))
+            mean_pmd.append(np.mean(pmd))
+            max_pmd.append(np.max(pmd))
+            min_pmd.append(np.min(pmd))
 
-    n_kernels = 5
-    gmm = SymmGaussianMixture(
-        n_kernels,
-        x_rep,
-        y_rep,
-        means_std=4,
-        random_seed=np.random.randint(0, 1000),
-        # x_subgroup_id="trivial",
-        y_subgroup_id="trivial"
-        )
+    fig, axs = plt.subplots(1, len(n_dim_list), figsize=(20, 5), sharey=True)
+    fig.suptitle(f'mean std={mean_std}')
 
-    X, Y = gmm.simulate(n_samples=10 ** 4)
+    for j, n_dim in enumerate(n_dim_list):
+        mean_values = [mean_pmd[i * len(n_dim_list) + j] for i in range(len(n_kernels_list))]
+        max_values = [max_pmd[i * len(n_dim_list) + j] for i in range(len(n_kernels_list))]
+        std_values = [3 * np.sqrt(var_pmd[i * len(n_dim_list) + j]) for i in range(len(n_kernels_list))]
 
-    # Plot the distribution of the data X = [x,y] and Y = [z] in a plotly 3D scatter plot
-    import plotly.express as px
+        axs[j].plot(n_kernels_list, mean_values, label='Mean', marker='o')
+        axs[j].fill_between(n_kernels_list,
+                            np.asarray(mean_values) - std_values,
+                            np.asarray(mean_values) + std_values, alpha=0.2)
+        axs[j].plot(n_kernels_list, max_values, label='Max', marker='o')
+        axs[j].set_title(f'n_dim={n_dim * G.order()}')
+        axs[j].set_xlabel('n_kernels')
+        axs[j].set_yscale('log')
+        axs[j].legend()
 
-    # Plot the centers of the kernels
-    fig = px.scatter_3d(
-        x=gmm.means_x[:, 0],
-        y=gmm.means_x[:, 1],
-        z=gmm.means_y[:, 0],
-        labels={'x': 'x', 'y': 'y', 'z': 'z'},
-        title="3D Scatter Plot"
-        )
-    fig.update_traces(
-        marker=dict(color='red', size=4, opacity=1),  # Centers: red, solid
-        selector=dict(mode='markers')  # Apply only to markers
-        )
+    axs[0].set_ylabel('PMD Value')
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    plt.show()
 
-    wall = min(np.min(X), np.min(Y))
-    fig.add_scatter3d(
-        x=gmm.means_x[:, 0],
-        y=gmm.means_x[:, 1],
-        z=(gmm.means_y[:, 0] * 0) - np.abs(1.5 * wall),
-        mode='markers',
-        marker=dict(
-            color=np.abs(Y[:, 0]),  # Color by the absolute value of the z coordinate
-            colorscale='Viridis',
-            size=3,
-            opacity=0.8
-            )
-        )
-
-    fig.add_scatter3d(
-        x=gmm.means_x[:, 0],
-        y=(gmm.means_x[:, 1] * 0) - np.abs(1.5 * wall),
-        z=gmm.means_y[:, 0],
-        mode='markers',
-        marker=dict(
-            color=np.abs(Y[:, 0]),  # Color by the absolute value of the z coordinate
-            colorscale='Viridis',
-            size=3,
-            opacity=0.8
-            )
-        )
-
-    # Add the samples
-    fig.add_scatter3d(
-        x=X[:, 0],
-        y=X[:, 1],
-        z=Y[:, 0],
-        mode='markers',
-        marker=dict(
-            color=np.abs(Y[:, 0]),  # Color by the absolute value of the z coordinate
-            colorscale='Viridis',
-            size=3,
-            opacity=0.15
-            )
-        )
-    # Set aspect ratio to be equal
-    fig.update_layout(
-        title=f"G={gmm.G}, n_kernels={gmm.n_kernels}, Hx={gmm.Hx}, Hy={gmm.Hy}",
-        scene=dict(
-            aspectmode='cube',
-            xaxis=dict(title='x1'),
-            yaxis=dict(title='x2'),
-            zaxis=dict(title='y')
-            )
-        )
-
-    fig.show()
-
-    for n in range(10):
-        x_test, y_test = X[[n]], Y[[n]]
-        G_px, G_py = [np.squeeze(gmm.pdf_x(x_test))], [np.squeeze(gmm.pdf_y(y_test))]
-        G_pxy = [np.squeeze(gmm.joint_pdf(x_test, y_test))]
-
-        H_px, H_py = [np.squeeze(gmm.pdf_x(x_test))], [np.squeeze(gmm.pdf_y(y_test))]
-        H_pxy = [np.squeeze(gmm.joint_pdf(x_test, y_test))]
-        for g in G.elements:
-            g_x = np.einsum('ij,nj->ni', x_rep(g), x_test)
-            G_px.append(np.squeeze(gmm.pdf_x(g_x)))
-            g_y = np.einsum('ij,nj->ni', y_rep(g), y_test)
-            G_py.append(np.squeeze(gmm.pdf_y(g_y)))
-            G_pxy.append(np.squeeze(gmm.joint_pdf(g_x, g_y)))
-            # Compute using the subgroups of the GMM using the data symmetry group
-            g_Hx = gmm.G2Hx(g) if gmm.G2Hx(g) else gmm.Hx.identity
-            g_Hy = gmm.G2Hy(g) if gmm.G2Hy(g) else gmm.Hy.identity
-            g_Hx_x = np.einsum('ij,nj->ni', gmm.rep_X(g_Hx), x_test)
-            H_px.append(np.squeeze(gmm.pdf_x(g_Hx_x)))
-            g_Hy_y = np.einsum('ij,nj->ni', gmm.rep_Y(g_Hy), y_test)
-            H_py.append(np.squeeze(gmm.pdf_y(g_Hy_y)))
-            H_pxy.append(np.squeeze(gmm.joint_pdf(g_Hx_x, g_Hy_y)))
-
-            if G == gmm.Hx and G == gmm.Hy:
-                assert np.allclose(G_px, G_px[0]), \
-                    f"The marginal distribution of X is not invariant under the group action: {G_px}"
-                assert np.allclose(G_py, G_py[0]), \
-                    f"The marginal distribution of Y is not invariant under the group action: {G_py}"
-                assert np.allclose(G_pxy, G_pxy[0]), \
-                    f"The joint distribution of X and Y is not invariant under the group action: {G_pxy}"
-            else:
-                assert np.allclose(H_px, H_px[0]), \
-                    f"The marginal distribution of X is not invariant under the group action: {H_px}"
-                assert np.allclose(H_py, H_py[0]), \
-                    f"The marginal distribution of Y is not invariant under the group action: {H_py}"
-                assert np.allclose(H_pxy, H_pxy[0]), \
-                    f"The joint distribution of X and Y is not invariant under the group action: {H_pxy}"
+    #
+    # n_kernels = 5
+    # gmm = SymmGaussianMixture(
+    #     n_kernels,
+    #     x_rep,
+    #     y_rep,
+    #     means_std=4,
+    #     random_seed=np.random.randint(0, 1000),
+    #     # x_subgroup_id="trivial",
+    #     y_subgroup_id="trivial"
+    #     )
+    #
+    # X, Y = gmm.simulate(n_samples=10 ** 4)
+    #
+    # # Plot the distribution of the data X = [x,y] and Y = [z] in a plotly 3D scatter plot
+    # import plotly.express as px
+    #
+    # # Plot the centers of the kernels
+    # fig = px.scatter_3d(
+    #     x=gmm.means_x[:, 0],
+    #     y=gmm.means_x[:, 1],
+    #     z=gmm.means_y[:, 0],
+    #     labels={'x': 'x', 'y': 'y', 'z': 'z'},
+    #     title="3D Scatter Plot"
+    #     )
+    # fig.update_traces(
+    #     marker=dict(color='red', size=4, opacity=1),  # Centers: red, solid
+    #     selector=dict(mode='markers')  # Apply only to markers
+    #     )
+    #
+    # wall = min(np.min(X), np.min(Y))
+    # fig.add_scatter3d(
+    #     x=gmm.means_x[:, 0],
+    #     y=gmm.means_x[:, 1],
+    #     z=(gmm.means_y[:, 0] * 0) - np.abs(1.5 * wall),
+    #     mode='markers',
+    #     marker=dict(
+    #         color=np.abs(Y[:, 0]),  # Color by the absolute value of the z coordinate
+    #         colorscale='Viridis',
+    #         size=3,
+    #         opacity=0.8
+    #         )
+    #     )
+    #
+    # fig.add_scatter3d(
+    #     x=gmm.means_x[:, 0],
+    #     y=(gmm.means_x[:, 1] * 0) - np.abs(1.5 * wall),
+    #     z=gmm.means_y[:, 0],
+    #     mode='markers',
+    #     marker=dict(
+    #         color=np.abs(Y[:, 0]),  # Color by the absolute value of the z coordinate
+    #         colorscale='Viridis',
+    #         size=3,
+    #         opacity=0.8
+    #         )
+    #     )
+    #
+    # # Add the samples
+    # fig.add_scatter3d(
+    #     x=X[:, 0],
+    #     y=X[:, 1],
+    #     z=Y[:, 0],
+    #     mode='markers',
+    #     marker=dict(
+    #         color=np.abs(Y[:, 0]),  # Color by the absolute value of the z coordinate
+    #         colorscale='Viridis',
+    #         size=3,
+    #         opacity=0.15
+    #         )
+    #     )
+    # # Set aspect ratio to be equal
+    # fig.update_layout(
+    #     title=f"G={gmm.G}, n_kernels={gmm.n_kernels}, Hx={gmm.Hx}, Hy={gmm.Hy}",
+    #     scene=dict(
+    #         aspectmode='cube',
+    #         xaxis=dict(title='x1'),
+    #         yaxis=dict(title='x2'),
+    #         zaxis=dict(title='y')
+    #         )
+    #     )
+    #
+    # fig.show()
+    #
+    # for n in range(10):
+    #     x_test, y_test = X[[n]], Y[[n]]
+    #     G_px, G_py = [np.squeeze(gmm.pdf_x(x_test))], [np.squeeze(gmm.pdf_y(y_test))]
+    #     G_pxy = [np.squeeze(gmm.joint_pdf(x_test, y_test))]
+    #
+    #     H_px, H_py = [np.squeeze(gmm.pdf_x(x_test))], [np.squeeze(gmm.pdf_y(y_test))]
+    #     H_pxy = [np.squeeze(gmm.joint_pdf(x_test, y_test))]
+    #     for g in G.elements:
+    #         g_x = np.einsum('ij,nj->ni', x_rep(g), x_test)
+    #         G_px.append(np.squeeze(gmm.pdf_x(g_x)))
+    #         g_y = np.einsum('ij,nj->ni', y_rep(g), y_test)
+    #         G_py.append(np.squeeze(gmm.pdf_y(g_y)))
+    #         G_pxy.append(np.squeeze(gmm.joint_pdf(g_x, g_y)))
+    #         # Compute using the subgroups of the GMM using the data symmetry group
+    #         g_Hx = gmm.G2Hx(g) if gmm.G2Hx(g) else gmm.Hx.identity
+    #         g_Hy = gmm.G2Hy(g) if gmm.G2Hy(g) else gmm.Hy.identity
+    #         g_Hx_x = np.einsum('ij,nj->ni', gmm.rep_X(g_Hx), x_test)
+    #         H_px.append(np.squeeze(gmm.pdf_x(g_Hx_x)))
+    #         g_Hy_y = np.einsum('ij,nj->ni', gmm.rep_Y(g_Hy), y_test)
+    #         H_py.append(np.squeeze(gmm.pdf_y(g_Hy_y)))
+    #         H_pxy.append(np.squeeze(gmm.joint_pdf(g_Hx_x, g_Hy_y)))
+    #
+    #         if G == gmm.Hx and G == gmm.Hy:
+    #             assert np.allclose(G_px, G_px[0]), \
+    #                 f"The marginal distribution of X is not invariant under the group action: {G_px}"
+    #             assert np.allclose(G_py, G_py[0]), \
+    #                 f"The marginal distribution of Y is not invariant under the group action: {G_py}"
+    #             assert np.allclose(G_pxy, G_pxy[0]), \
+    #                 f"The joint distribution of X and Y is not invariant under the group action: {G_pxy}"
+    #         else:
+    #             assert np.allclose(H_px, H_px[0]), \
+    #                 f"The marginal distribution of X is not invariant under the group action: {H_px}"
+    #             assert np.allclose(H_py, H_py[0]), \
+    #                 f"The marginal distribution of Y is not invariant under the group action: {H_py}"
+    #             assert np.allclose(H_pxy, H_pxy[0]), \
+    #                 f"The joint distribution of X and Y is not invariant under the group action: {H_pxy}"
 
     # # Plot marginal distributions on the XY plane and the ZY plane
     # import plotly.graph_objects as go
