@@ -434,7 +434,7 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
         y_embedding = EMLP(in_type=y_type, **kwargs)
         eNCPop = ENCP(embedding_x=χ_embedding,
                       embedding_y=y_embedding,
-                      gamma=cfg.gamma,
+                      gamma_orthogonality=cfg.gamma,
                       truncated_op_bias=cfg.truncated_op_bias,
                       )
 
@@ -455,7 +455,7 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
         ncp = NCP(embedding_x=fx,
                   embedding_y=fy,
                   embedding_dim=embedding_dim,
-                  gamma=cfg.gamma,
+                  gamma_orthogonality=cfg.gamma,
                   truncated_op_bias=cfg.truncated_op_bias,
                   )
         return ncp
