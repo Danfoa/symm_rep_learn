@@ -1,0 +1,79 @@
+# TODO: REFACTOR CONFIG FILES
+
+defaults:
+  - override hydra/launcher: joblib  # Parallel runs
+
+seed: -1
+debug: False
+exp_name: "Indep-Gauss"
+exp_label: "test"
+device: 0
+
+# MODEL CONFIG
+model: NCP
+truncated_op_bias: 'full_rank'  # 'Cxy' or 'diag' or 'svals'
+gamma: 1e-2               # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
+iter_whitening: True
+
+embedding:
+  hidden_units: 32
+  hidden_layers: 2
+  embedding_dim: 10
+  activation: ELU
+
+# OPTIMIZATION CONFIG
+lr: 5e-4           # Learning rate NCP train best at low lr values < 1e-3
+patience: 40       # Epochs to wait for improvement before early stopping
+batch_size: 1024   # The higher the best
+max_epochs: 2000   # Number of passes over ${gmm.n_samples} before stop training. Early stopping is used.
+data_on_device: False  # Load dataset to GPU (usefull for fast training of small datasets)
+
+# EXPERIMENT CONFIG
+indep_gauss:
+  n_samples: 10000
+  dim_x: 20
+  dim_y: 20
+
+embedding_desc: "hu${embedding.hidden_units}_hl${embedding.hidden_layers}_ed${embedding.embedding_dim}_act${embedding.activation}"
+indep_gauss_desc: "n_samples=${indep_gauss.n_samples} dim_x=${indep_gauss.dim_x} dim_y=${indep_gauss.dim_y}"
+model_desc: "${model}_gamma${gamma}_lr${lr}_bs${batch_size}_me${max_epochs}"
+
+hydra:
+  run:
+    dir: "../experiments/${exp_name}/${exp_label}/${indep_gauss_desc}/${model_desc}--${embedding_desc}/${hydra.job.override_dirname} seed=${seed}"
+
+  sweep:
+    dir: ./experiments/${exp_name}/${exp_label}/${indep_gauss_desc}/
+    subdir: ${model_desc}--${embedding_desc}/${hydra.job.override_dirname} seed=${seed}
+
+  job:
+    name: ${exp_name}
+    num: ${seed}
+    env_set:
+      HYDRA_FULL_ERROR: '1'
+      WANDB_START_METHOD: 'thread'
+    config:
+      override_dirname:
+        kv_sep: "="
+        item_sep: " "
+        exclude_keys:
+          - debug
+          - device
+          - seed
+          - exp_name
+          - exp_label
+          - max_epochs
+          - embedding.hidden_units
+          - embedding.hidden_layers
+          - embedding.embedding_dim
+          - embedding.activation
+          - gmm.n_kernels
+          - gmm.n_samples
+          - model
+          - gamma
+          - lr
+          - batch_size
+          - max_epochs
+          - symm_group
+          - x_symm_subgroup_id
+          - y_symm_subgroup_id
