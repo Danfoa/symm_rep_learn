@@ -18,7 +18,7 @@ regular_multiplicity: 0                 # Multiplicity of the regular representa
 # MODEL CONFIG
 model: NCP
 truncated_op_bias: 'full_rank'  # 'Cxy' or 'diag' or 'svals'
-gamma: 1e-2               # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
+gamma: 1e-1               # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
 
 embedding:
   hidden_units: 32
@@ -38,7 +38,7 @@ gmm:
   n_kernels: 2
   n_samples: 10000
   means_std: 3.0    # Standard deviation used to choose the centers of the Gaussians from a normal N dimensional dist.
-  seed: 52
+  seed: 0
   # Seed for the reproducibility of the GMM dataset
 
 

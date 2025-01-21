@@ -11,19 +11,23 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 
-exp_label="C2"
+exp_label="C2plots"
 
 exec_file="NCP/examples/symm_GMM.py"
 hydra_kwargs="--multirun hydra.launcher.n_jobs=3"
-opt_params="batch_size=2048 lr=5e-4 max_epochs=7000"
-exp_params="exp_label=${exp_label} gmm.n_samples=20000 seed=0,1 truncated_op_bias=full_rank "
-gamma_ncp="gamma=0.1"
-python ${exec_file} ${hydra_kwargs} ${exp_params} device=0 model=NCP  regular_multiplicity=0    ${gamma_ncp} ${opt_params} &
-python ${exec_file} ${hydra_kwargs} ${exp_params} device=1 model=NCP  regular_multiplicity=2    ${gamma_ncp} ${opt_params} &
-python ${exec_file} ${hydra_kwargs} ${exp_params} device=2 model=ENCP regular_multiplicity=0    ${gamma_ncp} ${opt_params} &
-python ${exec_file} ${hydra_kwargs} ${exp_params} device=3 model=ENCP regular_multiplicity=2    ${gamma_ncp} ${opt_params} &
-#python ${exec_file} ${hydra_kwargs} ${exp_params} device=4 model=ENCP regular_multiplicity=    ${gamma_ncp} ${opt_params} &
-python ${exec_file} --multirun hydra.launcher.n_jobs=1 ${exp_params} device=5 model=DRF regular_multiplicity=0  ${gamma_ncp} ${opt_params} &
-python ${exec_file} --multirun hydra.launcher.n_jobs=1 ${exp_params} device=6 model=DRF regular_multiplicity=2  ${gamma_ncp} ${opt_params} &
-#python ${exec_file} --multirun hydra.launcher.n_jobs=1 ${exp_params} device=7 model=DRF regular_multiplicity=10  ${gamma_ncp} ${opt_params} &
+hydra_kwargsDRF="--multirun hydra.launcher.n_jobs=1"
+opt_params="batch_size=1024 lr=5e-4 max_epochs=7000 patience=20"
+gmm_params="gmm.n_kernels=5,10,50 regular_multiplicity=0 gmm.seed=0 gmm.means_std=3.0"
+model_params="gamma=0.1 embedding.hidden_units=32 embedding.hidden_layers=3 embedding.embedding_dim=32"
+exp_params="exp_label=${exp_label} ${gmm_params} ${opt_params} ${model_params} seed=0"
+
+python ${exec_file} ${hydra_kwargs}    ${exp_params} device=0 model=NCP  gmm.n_samples=5000,10000    &
+python ${exec_file} ${hydra_kwargs}    ${exp_params} device=1 model=NCP  gmm.n_samples=20000         &
+python ${exec_file} ${hydra_kwargs}    ${exp_params} device=2 model=ENCP gmm.n_samples=5000,10000    &
+python ${exec_file} ${hydra_kwargs}    ${exp_params} device=3 model=ENCP gmm.n_samples=20000         &
+python ${exec_file} ${hydra_kwargs}    ${exp_params} device=4 model=DRF  gmm.n_samples=5000,10000    &
+python ${exec_file} ${hydra_kwargs}    ${exp_params} device=5 model=DRF  gmm.n_samples=20000         &
+python ${exec_file} ${hydra_kwargsDRF} ${exp_params} device=6 model=IDRF gmm.n_samples=5000,10000    &
+python ${exec_file} ${hydra_kwargsDRF} ${exp_params} device=7 model=IDRF gmm.n_samples=20000         &
+
 wait
