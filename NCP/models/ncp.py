@@ -19,13 +19,13 @@ class NCP(torch.nn.Module):
                  embedding_x: torch.nn.Module,
                  embedding_y: torch.nn.Module,
                  embedding_dim: int,
-                 gamma_orthogonality=0.001,  # Will be multiplied by the embedding_dim
+                 gamma=0.001,  # Will be multiplied by the embedding_dim
                  gamma_centering=None,  # Penalizes probability mass distortion
-                 truncated_op_bias: str = 'Cxy',  # 'Cxy', 'diag', 'svals'
+                 truncated_op_bias: str = 'full_rank',  # 'Cxy', 'diag', 'svals'
                  ):
         super(NCP, self).__init__()
-        self.gamma = gamma_orthogonality
-        self.gamma_centering = gamma_centering if gamma_centering is not None else gamma_orthogonality
+        self.gamma = gamma
+        self.gamma_centering = gamma_centering if gamma_centering is not None else gamma
         self.embedding_dim = embedding_dim
         self.embedding_x = embedding_x
         self.embedding_y = embedding_y
@@ -100,7 +100,7 @@ class NCP(torch.nn.Module):
         pmi = torch.log(k_r_pos)
         # Check no NaN  or Inf values
         assert torch.isfinite(pmi).all(), "NaN or Inf values found in the PMI estimation"
-        return torch.log(pmi)
+        return pmi
 
     def loss(self, fx: torch.Tensor, hy: torch.Tensor):
         """ TODO
@@ -126,10 +126,10 @@ class NCP(torch.nn.Module):
         # Operator truncation error = ||E - E_r||_HS^2 ____________________________________________________
         if not self._is_truncated_op_diag:
             # E_r = Cxy -> ||E - E_r||_HS - ||E||_HS = -2 ||Cxy||_F^2 + tr(Cxy Cy Cxy^T Cx)
-            truncation_err, loss_metrics = self.unbiased_truncation_error_matrix_truncated_op(fx_c, hy_c)
+            truncation_err, loss_metrics = self.unbiased_truncation_error_matrix_form(fx_c, hy_c)
         else:
             # E_r = diag(σ1,...σr) -> ||E - E_r||_HS - ||E||_HS = -2 tr(E_r Cxy) + tr(E_r Cy E_r^T Cx)
-            truncation_err, loss_metrics = self.unbiased_truncation_error_diag_truncated_op(fx_c, hy_c)
+            truncation_err, loss_metrics = self.unbiased_truncation_error_diag_form(fx_c, hy_c)
 
         metrics |= loss_metrics if not loss_metrics is None else {}
         # Total loss ____________________________________________________________________________________
@@ -141,7 +141,7 @@ class NCP(torch.nn.Module):
                 }
         return loss, metrics
 
-    def unbiased_truncation_error_matrix_truncated_op(self, fx_c, hy_c) -> [torch.Tensor, dict]:
+    def unbiased_truncation_error_matrix_form(self, fx_c, hy_c) -> [torch.Tensor, dict]:
         """ Implementation of ||E - E_r||_HS^2, while assuming E_r is a full matrix.
 
         Case 1: Orthogonal basis functions give:
@@ -190,7 +190,7 @@ class NCP(torch.nn.Module):
 
         return truncation_err, metrics
 
-    def unbiased_truncation_error_diag_truncated_op(self, fx_c, hy_c):
+    def unbiased_truncation_error_diag_form(self, fx_c, hy_c):
         """ Implementation of ||E - E_r||_HS^2, while assuming E_r is diagonal.
 
         TODO: Document this appropriatedly
@@ -321,17 +321,19 @@ class NCP(torch.nn.Module):
         embedding_dim = self.embedding_dim
 
         self._is_truncated_op_diag = False
+        # Diagonal Biases
         if truncated_op_bias == "svals":
             self.log_svals = torch.nn.Parameter(
                 torch.normal(mean=0., std=2. / embedding_dim, size=(embedding_dim,)), requires_grad=True
                 )
             self._is_truncated_op_diag = True
-        elif truncated_op_bias == "full_rank":
-            D_r = torch.eye(embedding_dim) + 1e-4 * torch.randn(embedding_dim, embedding_dim)
-            self.Dr_params = torch.nn.Parameter(D_r, requires_grad=True)
         elif truncated_op_bias == "diag":
             self._is_truncated_op_diag = True
             pass  # No parameters to define
+        # Full rank biases
+        elif truncated_op_bias == "full_rank":
+            D_r = torch.eye(embedding_dim) + 1e-4 * torch.randn(embedding_dim, embedding_dim)
+            self.Dr_params = torch.nn.Parameter(D_r, requires_grad=True)
         elif truncated_op_bias == "Cxy":
             pass  # No parameters to define
         else:
@@ -366,6 +368,5 @@ if __name__ == "__main__":
     loss, metrics = ncp.loss(fx, hy)
     print(loss)
     with torch.no_grad():
-        fx, hy = ncp(x, y)
-        mi = ncp.pointwise_mutual_dependency(fx, hy)
-    print(mi)
+        pmd = ncp.pointwise_mutual_dependency(x, y)
+    print(pmd)

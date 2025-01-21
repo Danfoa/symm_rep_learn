@@ -6,6 +6,7 @@ import escnn
 import hydra
 import lightning
 import numpy as np
+import pandas as pd
 import seaborn as sns
 import torch
 from escnn.group import directsum, Group, Representation
@@ -26,6 +27,8 @@ from NCP.cde_fork.density_simulation.symmGMM import SymmGaussianMixture
 from NCP.models.ncp_lightning_module import TrainingModule
 
 import logging
+
+from NCP.nn.equiv_layers import IMLP
 
 log = logging.getLogger(__name__)
 
@@ -313,8 +316,9 @@ def plot_analytic_npmi_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representat
     grid.fig.tight_layout()
     return grid
 
+
 def plot_analytic_pmd_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representation, rep_Y: Representation, x_samples,
-                          y_samples):
+                         y_samples):
     grid = sns.JointGrid(marginal_ticks=True, space=0.05)
     # Define grid for the plot
     x_samples = x_samples.squeeze()
@@ -365,9 +369,9 @@ def plot_analytic_pmd_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representati
 
     # Do plot of conditional probability density on the test conditions x and gx
     n_samples_cpd = len(y_range)
-    mi_x_vals =  gmm.pointwise_mutual_dependency(X=np.repeat(x_t, n_samples_cpd), Y=y_range)
+    mi_x_vals = gmm.pointwise_mutual_dependency(X=np.repeat(x_t, n_samples_cpd), Y=y_range)
     mi_gx_vals = gmm.pointwise_mutual_dependency(X=np.repeat(gx_t, n_samples_cpd), Y=y_range)
-    mi_y_vals =  gmm.pointwise_mutual_dependency(X=x_range, Y=np.repeat(y_t, len(x_range)))
+    mi_y_vals = gmm.pointwise_mutual_dependency(X=x_range, Y=np.repeat(y_t, len(x_range)))
     mi_gy_vals = gmm.pointwise_mutual_dependency(X=x_range, Y=np.repeat(gy_t, len(x_range)))
 
     # Plot filled distributions with lines
@@ -434,7 +438,7 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
         y_embedding = EMLP(in_type=y_type, **kwargs)
         eNCPop = ENCP(embedding_x=χ_embedding,
                       embedding_y=y_embedding,
-                      gamma_orthogonality=cfg.gamma,
+                      gamma=cfg.gamma,
                       truncated_op_bias=cfg.truncated_op_bias,
                       )
 
@@ -455,7 +459,7 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
         ncp = NCP(embedding_x=fx,
                   embedding_y=fy,
                   embedding_dim=embedding_dim,
-                  gamma_orthogonality=cfg.gamma,
+                  gamma=cfg.gamma,
                   truncated_op_bias=cfg.truncated_op_bias,
                   )
         return ncp
@@ -466,8 +470,7 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
 
         activation = class_from_name('torch.nn', cfg.embedding.activation)
         n_layers = cfg.embedding.hidden_layers
-        # NCP_params = 2(nh^2 * nl)   ->  DRF_params = (sqrt(2)nh)^2 * nl = 2(nh^2 * nl)
-        n_hidden_units = int(cfg.embedding.hidden_units * np.sqrt(2))
+        n_hidden_units = int(cfg.embedding.hidden_units * 2)
         embedding = MLP(input_shape=x_type.size + y_type.size,  # z = (x,y)
                         output_shape=1,
                         n_hidden=n_layers,
@@ -478,6 +481,20 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
         drf = DRF(embedding=embedding, gamma=cfg.gamma)
 
         return drf
+    elif cfg.model.lower() == "idrf":  # Density Ratio Fitting
+        from NCP.models.inv_density_ratio_fitting import InvDRF
+        from NCP.mysc.utils import class_from_name
+
+        xy_reps = x_type.representations + y_type.representations
+        in_type = FieldType(x_type.gspace, xy_reps)
+        imlp = IMLP(in_type=in_type,
+                    out_dim=1, # Scalar PMD value
+                    hidden_layers=cfg.embedding.hidden_layers,
+                    activation=cfg.embedding.activation,
+                    hidden_units=cfg.embedding.hidden_units,
+                    bias=False)
+        idrf = InvDRF(embedding=imlp, gamma=cfg.gamma)
+        return idrf
     else:
         raise ValueError(f"Model {cfg.model} not recognized")
 
@@ -538,7 +555,7 @@ def plot_npmi_error_distribution(NPMI_gt, NPMI):
                               bw_adjust=0.6,  # Adjust bandwidth
                               # cut=0,  # Reduce cut to avoid distortions at the edges
                               clip=[(-limit, limit), (-limit, limit)],  # Clipping range for the KDE
-                              cbar=True,
+                              # cbar=True,
                               )
     # Plot scatter plot of the data with very mild alpha
     # grid.plot_joint(sns.scatterplot, alpha=0.1)
@@ -622,23 +639,22 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_ty
     # Compute the error on PMI = ln(PMD)
     PMI_gt = np.log(pmd_xy_gt)
     PMI = np.log(np.clip(pmd_xy, a_min=1e-5, a_max=None))
+    MI = np.sum(P_XY * PMI)
+    MI_gt = np.sum(P_XY * PMI_gt)
     # Compute the normalized NPMI = ln(p(x,y)/p(x)p(y)) / -ln(P(X,Y))
     NPMI_gt = PMI_gt / -np.log(P_XY)
     NPMI = PMI / -np.log(P_XY)
+    NPMI_err = (NPMI_gt - NPMI) * np.sqrt(P_X * P_Y)
     assert np.all((-1 <= NPMI_gt)) and np.all(
         NPMI_gt <= 1), f"NPMI not in [-1, 1] min:{NPMI_gt.min()} max:{NPMI_gt.max()}"
-    # assert np.all((-1 <= NPMI)) and np.all(NPMI <= 1), f"NPMI not in [-1, 1] min:{NPMI.min()} max:{NPMI.max()}"
-
-    PMI_err = ((PMI_gt - PMI) * np.sqrt(P_X * P_Y))  # Unsure if this should be prod of joint.
-    NPMI_err = ((NPMI_gt - NPMI) * np.sqrt(P_X * P_Y))
-    # assert np.all(-1 <= NPMI <= 1), f"NPMI not in [-1, 1] min:{NPMI.min()} max:{NPMI.max()}"
     # Since k(x, y) = k(g.x, g.y) for all g in G, we want to compute the variance of the estimate under g-action
     PMD_xy_g_var = np.var(pmd_xy.reshape(G.order(), -1), axis=0)  # Var[ k_r(g.x, g.y) ] for all g in G
     metrics = {"PMD/mse":           (PMD_err ** 2).sum(),
                "PMD/equiv_err":     PMD_xy_g_var.mean(),
                "PMD/spectral_norm": PMD_spectral_norm,
-               "PMI/NMSE":          (NPMI_err ** 2).mean(),
-               "PMI/MSE":           (PMI_err ** 2).mean(),
+               "NPMI/mse":          (NPMI_err ** 2).sum(),
+               "MI/gt":             MI_gt,
+               "MI/err":            MI_gt - MI,
                }
     # Sample 4 random conditioning values of x
     range_n_samples = 100
@@ -756,14 +772,14 @@ def main(cfg: DictConfig):
 
     # Symmetry group G. Symmetry subgroup H. H2G: H -> G. G2H: G -> H
     G = get_symmetry_group(cfg)
-    if cfg.regular_multiplicitiy > 0:
-        rep_X = directsum([G.regular_representation] * cfg.regular_multiplicitiy)  # ρ_Χ
-        rep_Y = directsum([G.regular_representation] * cfg.regular_multiplicitiy)  # ρ_Y
-    elif isinstance(G, escnn.group.CyclicGroup) and G.order() == 2 and cfg.regular_multiplicitiy == 0:
+    if cfg.regular_multiplicity > 0:
+        rep_X = directsum([G.regular_representation] * cfg.regular_multiplicity)  # ρ_Χ
+        rep_Y = directsum([G.regular_representation] * cfg.regular_multiplicity)  # ρ_Y
+    elif isinstance(G, escnn.group.CyclicGroup) and G.order() == 2 and cfg.regular_multiplicity == 0:
         rep_X = G.representations['irrep_1']  # ρ_Χ
         rep_Y = G.representations['irrep_1']  # ρ_Y
     else:
-        raise ValueError(f"G={G} Hx={cfg.x_symm_subgroup_id} Hy={cfg.y_symm_subgroup_id} {cfg.regular_multiplicitiy}")
+        raise ValueError(f"G={G} Hx={cfg.x_symm_subgroup_id} Hy={cfg.y_symm_subgroup_id} {cfg.regular_multiplicity}")
 
     # GENERATE the training data _______________________________________________________
     seed_everything(cfg.gmm.seed)  # Get same GMM for all training seeds.
@@ -772,7 +788,8 @@ def main(cfg: DictConfig):
         rep_X=rep_X,
         rep_Y=rep_Y,
         means_std=cfg.gmm.means_std,
-        random_seed=cfg.gmm.seed,  # Reproducibility
+        sampling_seed=cfg.seed,  # Each seed gets different training samples.
+        gmm_seed=cfg.gmm.seed,  # Same GMM model for all seeds.
         x_subgroup_id=cfg.x_symm_subgroup_id,
         y_subgroup_id=cfg.y_symm_subgroup_id,
         )
@@ -812,14 +829,19 @@ def main(cfg: DictConfig):
             grid = plot_analytic_prod_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
             grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"prod_pdf-std{cfg.gmm.means_std}.png")
             grid = plot_analytic_npmi_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"normalized_mutual_information-std{cfg.gmm.means_std}.png")
+            grid.fig.savefig(
+                pathlib.Path(run_path).parent.parent / f"normalized_mutual_information-std{cfg.gmm.means_std}.png")
             grid = plot_analytic_pmd_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"pointwise_mutual_dependency-std{cfg.gmm.means_std}.png")
+            grid.fig.savefig(
+                pathlib.Path(run_path).parent.parent / f"pointwise_mutual_dependency-std{cfg.gmm.means_std}.png")
 
     # Get the model ______________________________________________________________________
     nnPME = get_model(cfg, x_type, y_type, lat_type)
     print(nnPME)
-
+    # Print the number of parameters
+    n_params = sum(p.numel() for p in nnPME.parameters())
+    log.info(f"Number of parameters: {n_params}")
+    nnPME.to(device=cfg.device)
     # Define the dataloaders
     from NCP.models.equiv_ncp import ENCP
     collate_fn = geom_tensor_collate_fn if isinstance(nnPME, ENCP) else default_collate
@@ -848,7 +870,6 @@ def main(cfg: DictConfig):
     ckpt_call = ModelCheckpoint(
         dirpath=run_path, filename="best", monitor='loss/val', save_top_k=1, save_last=True, mode='min'
         )
-    # NCP seems to saturate MI mse when "||E - E_r||_HS" is minimized
     early_call = EarlyStopping(monitor='||k(x,y) - k_r(x,y)||/val', patience=cfg.patience, mode='min')
 
     trainer = lightning.Trainer(accelerator='gpu',
@@ -872,7 +893,12 @@ def main(cfg: DictConfig):
 
     ncp_lightning_module.to(device="cpu")
     # Loads the best model.
-    trainer.test(ncp_lightning_module, dataloaders=test_dataloader)
+    test_logs = trainer.test(ncp_lightning_module, dataloaders=test_dataloader)
+    test_metrics = test_logs[0]  # dict: metric_name -> value
+    # Save the testing matrics in a csv file using pandas.
+    test_metrics_path = pathlib.Path(run_path) / "test_metrics.csv"
+    pd.DataFrame(test_metrics, index=[0]).to_csv(test_metrics_path, index=False)
+
     # Flush the logger.
     logger.finalize(trainer.state)
 
@@ -897,7 +923,4 @@ def main(cfg: DictConfig):
 
 
 if __name__ == '__main__':
-    try:
-        main()
-    except Exception as e:
-        log.error("An error occurred", exc_info=True)
+    main()
