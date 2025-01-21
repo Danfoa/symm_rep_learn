@@ -20,7 +20,7 @@ class SymmGaussianMixture(GaussianMixture):
       ndim_x: dimensionality of X / number of random variables in X
       ndim_y: dimensionality of Y / number of random variables in Y
       means_std: std. dev. when sampling the kernel means
-      random_seed: seed for the random_number generator
+      sampling_seed: seed for the random_number generator
     """
 
     def __init__(
@@ -29,12 +29,13 @@ class SymmGaussianMixture(GaussianMixture):
             rep_Y: Representation,
             means_std=1.0,
             x_subgroup_id=None, y_subgroup_id=None,
-            random_seed=None
+            sampling_seed=10,
+            gmm_seed=100,
             ):
 
-        self.random_state = np.random.RandomState(seed=random_seed)  # random state for sampling data
-        self.random_state_params = np.random.RandomState(seed=20)  # fixed random state for sampling GMM params
-        self.random_seed = random_seed
+        self.random_state = np.random.RandomState(seed=sampling_seed)  # random state for sampling data
+        self.random_state_params = np.random.RandomState(seed=gmm_seed)    # fixed random state for sampling GMM params
+        self.random_seed = sampling_seed
 
         self.has_pdf = True
         self.has_cdf = True
@@ -251,12 +252,12 @@ if __name__ == "__main__":
     from lightning import seed_everything
     from matplotlib import pyplot as plt
 
-    # G = escnn.group.DihedralGroup(6)
-    # x_rep = G.representations['irrep_1,2']  # ρ_Χ
-    # y_rep = G.representations['irrep_1,0']
-    G = escnn.group.CyclicGroup(2)
-    x_rep = G.representations['irrep_1'] + G.representations['irrep_1']  # ρ_Χ
-    y_rep = G.representations['irrep_1']
+    G = escnn.group.DihedralGroup(6)
+    x_rep = G.representations['irrep_1,2']  # ρ_Χ
+    y_rep = G.representations['irrep_1,0']
+    # G = escnn.group.CyclicGroup(2)
+    # x_rep = G.representations['irrep_1'] + G.representations['irrep_1']  # ρ_Χ
+    # y_rep = G.representations['irrep_1']
 
     x_rep.name, y_rep.name = "rep_X", "rep_Y"
     seed_everything(np.random.randint(0, 1000))
@@ -264,6 +265,7 @@ if __name__ == "__main__":
     n_kernels_list = [5, 10, 25, 50]
     n_dim_list = [1, 2, 10, 20]
     var_pmd, mean_pmd, max_pmd, min_pmd = [], [], [], []
+    mi = []
     for n_kernels in n_kernels_list:
         print(f"n_kernels={n_kernels}")
         for n_dim in n_dim_list:
@@ -273,10 +275,13 @@ if __name__ == "__main__":
                 directsum([x_rep] * n_dim),
                 directsum([x_rep] * n_dim),
                 means_std=mean_std,
-                random_seed=np.random.randint(0, 1000),
+                sampling_seed=np.random.randint(0, 1000),
                 )
             X, Y = gmm.simulate(n_samples=min(1000*n_dim, 50000))
             pmd = gmm.pointwise_mutual_dependency(X, Y)
+            pxy = gmm.joint_pdf(X, Y)
+            mi_run = (np.log(pmd) * pxy).sum()
+            mi.append(mi_run)
             var_pmd.append(np.var(pmd))
             mean_pmd.append(np.mean(pmd))
             max_pmd.append(np.max(pmd))
@@ -284,21 +289,32 @@ if __name__ == "__main__":
 
     fig, axs = plt.subplots(1, len(n_dim_list), figsize=(20, 5), sharey=True)
     fig.suptitle(f'mean std={mean_std}')
+    # Determine the common limits for the MI axes
+    mi_min = min(mi)
+    mi_max = max(mi)
 
     for j, n_dim in enumerate(n_dim_list):
         mean_values = [mean_pmd[i * len(n_dim_list) + j] for i in range(len(n_kernels_list))]
         max_values = [max_pmd[i * len(n_dim_list) + j] for i in range(len(n_kernels_list))]
         std_values = [3 * np.sqrt(var_pmd[i * len(n_dim_list) + j]) for i in range(len(n_kernels_list))]
+        mi_values = [mi[i * len(n_dim_list) + j] for i in range(len(n_kernels_list))]
 
-        axs[j].plot(n_kernels_list, mean_values, label='Mean', marker='o')
-        axs[j].fill_between(n_kernels_list,
-                            np.asarray(mean_values) - std_values,
-                            np.asarray(mean_values) + std_values, alpha=0.2)
-        axs[j].plot(n_kernels_list, max_values, label='Max', marker='o')
-        axs[j].set_title(f'n_dim={n_dim * G.order()}')
-        axs[j].set_xlabel('n_kernels')
-        axs[j].set_yscale('log')
-        axs[j].legend()
+        ax = axs[j]
+        ax.plot(n_kernels_list, mean_values, label='Mean PMD', marker='o')
+        ax.fill_between(n_kernels_list,
+                        np.asarray(mean_values) - std_values,
+                        np.asarray(mean_values) + std_values, alpha=0.2)
+        ax.plot(n_kernels_list, max_values, label='Max PMD', marker='o')
+        ax.set_title(f'n_dim={n_dim * G.order()}')
+        ax.set_xlabel('n_kernels')
+        ax.set_yscale('log')
+        ax.legend(loc='upper left')
+
+        ax2 = ax.twinx()
+        ax2.plot(n_kernels_list, mi_values, label='Mutual Information', color='red', marker='x')
+        ax2.set_ylabel('Mutual Information')
+        ax2.set_ylim([mi_min, mi_max])  # Set the same limits for all MI axes
+        ax2.legend(loc='upper right')
 
     axs[0].set_ylabel('PMD Value')
     plt.tight_layout(rect=[0, 0, 1, 0.96])

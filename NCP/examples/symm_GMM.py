@@ -107,20 +107,27 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
     else:
         raise ValueError(f"Model {cfg.model} not recognized")
 
-def gmm_dataset(n_samples: int, gmm: SymmGaussianMixture, rep_X: Representation, rep_Y: Representation, device='cpu'):
+def gmm_dataset(cfg: DictConfig, gmm: SymmGaussianMixture, rep_X: Representation, rep_Y: Representation, device='cpu'):
     from NCP.mysc.symm_algebra import symmetric_moments
 
-    x_samples, y_samples = gmm.simulate(n_samples=n_samples)
+    total_samples = cfg.gmm.n_total_samples
+    x_samples, y_samples = gmm.simulate(n_samples=total_samples)
     x_mean, x_var = symmetric_moments(x_samples, rep_X)
     y_mean, y_var = symmetric_moments(y_samples, rep_Y)
     # Train, val, test splitting
-    train_ratio, val_ratio, test_ratio = 0.7, 0.15, 0.15
+    assert 0.0 < cfg.train_samples_ratio <= 0.7, f'Invalid train_samples_ratio: {cfg.train_samples_ratio}'
+    train_ratio, val_ratio, test_ratio = cfg.train_samples_ratio, 0.15, 0.15
+
+    log.info(f"Train: {train_ratio} Val: {val_ratio} Test: {test_ratio}")
+    log.info(f"Train samples: {train_ratio * total_samples} Val samples: {val_ratio * total_samples} "
+             f"Test samples: {test_ratio * total_samples}")
     n_samples = len(x_samples)
     n_train, n_val, n_test = np.asarray(np.array([train_ratio, val_ratio, test_ratio]) * n_samples, dtype=int)
+    # Take the train samples from the front of the array
     train_samples = x_samples[:n_train], y_samples[:n_train]
-    val_samples = x_samples[n_train:n_train + n_val], y_samples[n_train:n_train + n_val]
-    # To compare sample efficiency, we use a large testing set of n_samples
-    test_samples = gmm.simulate(n_samples=n_samples)
+    # Take the Val and test sampeles from the back of the array
+    val_samples = x_samples[-(n_val + n_test):-n_test], y_samples[-(n_val + n_test):-n_test]
+    test_samples = x_samples[-n_test:], y_samples[-n_test:]
 
     X_c = (x_samples - x_mean.numpy()) / np.sqrt(x_var.numpy())
     Y_c = (y_samples - y_mean.numpy()) / np.sqrt(y_var.numpy())
@@ -144,11 +151,17 @@ def gmm_dataset(n_samples: int, gmm: SymmGaussianMixture, rep_X: Representation,
 @torch.no_grad()
 def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_type, x_mean, y_mean, x_var, y_var,
                                plot=False, samples=1000, save_data_path=None):
+    prev_device = next(nn_model.parameters()).device
     G = x_type.fibergroup
-    n_total_samples = samples if samples != 'all' else min(len(x_samples), 2048)
+    if samples == 'all':
+        n_total_samples = len(x_samples)
+        device = 'cpu'
+    else:
+        n_total_samples = samples if samples != 'all' else len(x_samples)
+        device = prev_device
+
     n_samples_per_g = int(n_total_samples // G.order())
 
-    device = next(nn_model.parameters()).device
     dtype = next(nn_model.parameters()).dtype
 
     chosen_samples_idx = np.random.choice(len(x_samples), n_samples_per_g, replace=False)
@@ -185,11 +198,11 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_ty
     # Compute the estimate of the NCP model of the mutual information _______________
     from NCP.models.equiv_ncp import ENCP
     _x, _y = (x_type(X_c), y_type(Y_c)) if isinstance(nn_model, ENCP) else (X_c, Y_c)
-    pmd_xy = nn_model.pointwise_mutual_dependency(_x, _y).cpu().numpy()  # k_r(x,y) ≈ p(x,y) / p(x)p(y)
+    pmd_xy_pred = nn_model.pointwise_mutual_dependency(_x, _y).cpu().numpy()  # k_r(x,y) ≈ p(x,y) / p(x)p(y)
     # Compute the analytic PMD _______________________________________
     pmd_xy_gt = gmm.pointwise_mutual_dependency(X=X_np, Y=Y_np)  # p(x,y) / p(x)p(y)
     # Compute the _____ metric error between the two estimates
-    PMD_err = ((pmd_xy_gt - pmd_xy) * np.sqrt(P_X * P_Y))
+    PMD_err = ((pmd_xy_gt - pmd_xy_pred) * np.sqrt(P_X * P_Y))
     n = n_samples_per_g ** 2  # Number of unique pairs. Without counting orbit
     G_PMD_err_mat = [PMD_err[i * n: i * n + n].reshape(X_idx.shape) for i in
                      range(G.order())]  # [PMD_mse_mat]_ij = (k_r(xi,yj) - k(xi,yj))^2 * p(xi)p(yj)
@@ -197,7 +210,7 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_ty
     PMD_spectral_norm = np.mean(G_PMD_spectral_norm)  # Largest singular value. Spectral norm
     # Compute the error on PMI = ln(PMD)
     PMI_gt = np.log(pmd_xy_gt)
-    PMI = np.log(np.clip(pmd_xy, a_min=1e-5, a_max=None))
+    PMI = np.log(np.clip(pmd_xy_pred, a_min=1e-5, a_max=None))
     MI = np.sum(P_XY * PMI)
     MI_gt = np.sum(P_XY * PMI_gt)
     # Compute the normalized NPMI = ln(p(x,y)/p(x)p(y)) / -ln(P(X,Y))
@@ -207,7 +220,7 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_ty
     assert np.all((-1 <= NPMI_gt)) and np.all(
         NPMI_gt <= 1), f"NPMI not in [-1, 1] min:{NPMI_gt.min()} max:{NPMI_gt.max()}"
     # Since k(x, y) = k(g.x, g.y) for all g in G, we want to compute the variance of the estimate under g-action
-    PMD_xy_g_var = np.var(pmd_xy.reshape(G.order(), -1), axis=0)  # Var[ k_r(g.x, g.y) ] for all g in G
+    PMD_xy_g_var = np.var(pmd_xy_pred.reshape(G.order(), -1), axis=0)  # Var[ k_r(g.x, g.y) ] for all g in G
     metrics = {"PMD/mse":           (PMD_err ** 2).sum(),
                "PMD/equiv_err":     PMD_xy_g_var.mean(),
                "PMD/spectral_norm": PMD_spectral_norm,
@@ -282,25 +295,41 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_ty
                                              line=dict(color='rgba(0,0,0,0)'), showlegend=False), row=i + 1, col=1)
 
             fig_cde.update_layout(template="plotly_white")
+
+    # Return to original device.
+    nn_model.to(device=prev_device)
+
     if plot:
         npmi_gt = np.reshape(NPMI_gt[:n_samples_per_g ** 2], (n_samples_per_g, n_samples_per_g))
         npmi = np.reshape(NPMI[:n_samples_per_g ** 2], (n_samples_per_g, n_samples_per_g))
+
+        pmd_gt = np.reshape(pmd_xy_gt[:n_samples_per_g ** 2], (n_samples_per_g, n_samples_per_g))
+        pmd_pred = np.reshape(pmd_xy_pred[:n_samples_per_g ** 2], (n_samples_per_g, n_samples_per_g))
         # Take the n_total_samples from the joint sampling, in the digagonal of the matrix of pairwise pairings.
         npmi_gt_joint = np.diag(npmi_gt)
         npmi_joint = np.diag(npmi)
+        pmd_gt_joint = np.diag(pmd_gt)
+        pmd_pred_joint = np.diag(pmd_pred)
         # Sample n_samples_per_g from the off diagonal of the matrix of pairwise pairings.
         npmi_gt_prod = npmi_gt[np.triu_indices(n_samples_per_g, k=1)]
         npmi_prod = npmi[np.triu_indices(n_samples_per_g, k=1)]
         prod_idx = np.random.choice(len(npmi_gt_prod), n_samples_per_g, replace=False)
         npmi_gt_prod = npmi_gt_prod[prod_idx]  # Sample some points from the joint
         npmi_prod = npmi_prod[prod_idx]
+        pmd_gt_prod = pmd_gt[np.triu_indices(n_samples_per_g, k=1)][prod_idx]
+        pmd_pred_prod = pmd_pred[np.triu_indices(n_samples_per_g, k=1)][prod_idx]
+
         npmi_gt = np.concatenate([npmi_gt_joint, npmi_gt_prod])
         npmi = np.concatenate([npmi_joint, npmi_prod])
+        pmd_gt = np.concatenate([pmd_gt_joint, pmd_gt_prod])
+        pmd_pred = np.concatenate([pmd_pred_joint, pmd_pred_prod])
+
         npmi_err = npmi_gt - npmi
+
         if save_data_path is not None:
             save_path = pathlib.Path(save_data_path)
             log.info(f"Saving NPMI data to {save_path.absolute()}")
-            np.savez(save_path / "npmi_data.npz", npmi_gt=npmi_gt, npmi=npmi)
+            np.savez(save_path / "npmi_data.npz", npmi_gt=npmi_gt, npmi=npmi, pmd_gt=pmd_gt, pmd_pred=pmd_pred)
         fig_pmd = plot_npmi_error_distribution(npmi_gt, npmi_err)
         return metrics, fig_pmd, fig_cde
 
@@ -358,7 +387,7 @@ def main(cfg: DictConfig):
         )
     seed_everything(seed)  # Random/Selected seed for weight initialization and training.
     (train_samples, val_samples, test_samples), (x_mean, y_mean), (x_var, y_var), datasets = gmm_dataset(
-        cfg.gmm.n_samples, gmm, rep_X, rep_Y, device=cfg.device if cfg.data_on_device else 'cpu'
+        cfg, gmm, rep_X, rep_Y, device=cfg.device if cfg.data_on_device else 'cpu'
         )
 
     # x_train, y_train = train_samples
@@ -430,14 +459,21 @@ def main(cfg: DictConfig):
     log.info(f"Run path: {run_path}")
     run_cfg = OmegaConf.to_container(cfg, resolve=True)
     logger = WandbLogger(save_dir=run_path, project=cfg.exp_name, log_model=False, config=run_cfg)
+    scaled_saved_freq = int(5 * cfg.gmm.n_total_samples // cfg.batch_size)
     ckpt_call = ModelCheckpoint(
-        dirpath=run_path, filename="best", monitor='loss/val', save_top_k=1, save_last=True, mode='min'
+        dirpath=run_path, filename="best", monitor='loss/val', save_top_k=1, save_last=True, mode='min',
+        every_n_epochs=scaled_saved_freq,
         )
-    early_call = EarlyStopping(monitor='||k(x,y) - k_r(x,y)||/val', patience=cfg.patience, mode='min')
+
+    # Fix for all runs independent on the train_ratio chosen. This way we compare on effective number of "epochs"
+    max_steps = int(cfg.gmm.n_total_samples * cfg.max_epochs // cfg.batch_size)
+    scaled_patience = int(cfg.patience * cfg.gmm.n_total_samples // cfg.batch_size)
+    early_call = EarlyStopping(monitor='||k(x,y) - k_r(x,y)||/val', patience=scaled_patience, mode='min')
 
     trainer = lightning.Trainer(accelerator='gpu',
                                 devices=[cfg.device] if cfg.device != -1 else cfg.device,  # -1 for all available GPUs
-                                max_epochs=cfg.max_epochs, logger=logger,
+                                max_steps=max_steps,
+                                logger=logger,
                                 enable_progress_bar=True,
                                 log_every_n_steps=25,
                                 check_val_every_n_epoch=50,

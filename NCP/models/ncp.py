@@ -19,7 +19,7 @@ class NCP(torch.nn.Module):
                  embedding_x: torch.nn.Module,
                  embedding_y: torch.nn.Module,
                  embedding_dim: int,
-                 gamma=0.001,  # Will be multiplied by the embedding_dim
+                 gamma=0.1,  # Will be multiplied by the embedding_dim
                  gamma_centering=None,  # Penalizes probability mass distortion
                  truncated_op_bias: str = 'full_rank',  # 'Cxy', 'diag', 'svals'
                  ):

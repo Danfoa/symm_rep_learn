@@ -28,23 +28,24 @@ embedding:
 
 # OPTIMIZATION CONFIG
 lr: 5e-4           # Learning rate NCP train best at low lr values < 1e-3
-patience: 20       # Epochs to wait for improvement before early stopping
+patience: 5       # Epochs to wait for improvement before early stopping
 batch_size: 1024   # The higher the best
-max_epochs: 2000   # Number of passes over ${gmm.n_samples} before stop training. Early stopping is used.
+max_epochs: 500   # Number of passes over ${gmm.n_samples} before stop training. Early stopping is used.
 data_on_device: False  # Load dataset to GPU (usefull for fast training of small datasets)
+train_samples_ratio: 0.7    # Between 0.7 and 0.1 of n_total_samples samples
 
 # EXPERIMENT CONFIG
 gmm:
   n_kernels: 5
-  n_samples: 10000
+  n_total_samples: 20000
   means_std: 3.0    # Standard deviation used to choose the centers of the Gaussians from a normal N dimensional dist.
   seed: 0
   # Seed for the reproducibility of the GMM dataset
 
 
 embedding_desc: "hu${embedding.hidden_units}_hl${embedding.hidden_layers}_ed${embedding.embedding_dim}_act${embedding.activation}"
-gmm_desc: "G=${symm_group} Hx=${x_symm_subgroup_id} Hy=${y_symm_subgroup_id}/nk${gmm.n_kernels}_ns${gmm.n_samples}_std=${gmm.means_std}-dim=${regular_multiplicity}-gmm_seed=${gmm.seed}"
-model_desc: "${model}_gamma${gamma}_lr${lr}_bs${batch_size}_me${max_epochs}"
+gmm_desc: "G=${symm_group} Hx=${x_symm_subgroup_id} Hy=${y_symm_subgroup_id} train_ratio=${train_samples_ratio}/nk${gmm.n_kernels}_ns${gmm.n_total_samples}_std=${gmm.means_std}-dim=${regular_multiplicity}-gmm_seed=${gmm.seed}"
+model_desc: "${model}_gamma${gamma}_lr${lr}_bs${batch_size}"
 
 hydra:
   run:
@@ -77,7 +78,6 @@ hydra:
           - embedding.embedding_dim
           - embedding.activation
           - gmm.n_kernels
-          - gmm.n_samples
           - model
           - gamma
           - lr
