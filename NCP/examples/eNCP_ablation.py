@@ -105,9 +105,7 @@ def equiv_regression_dataset(n_samples, dim, mi):
     # TODO: Split rations could be params
     train_ratio, val_ratio, test_ratio = 0.7, 0.15, 0.15
     n_samples = X.shape[0]
-    n_train, n_val, n_test = np.asarray(
-        np.array([train_ratio, val_ratio, test_ratio]) * n_samples, dtype=int
-    )
+    n_train, n_val, n_test = np.asarray(np.array([train_ratio, val_ratio, test_ratio]) * n_samples, dtype=int)
     train_samples = X[:n_train], Y[:n_train]
     val_samples = X[n_train : n_train + n_val], Y[n_train : n_train + n_val]
     test_samples = X[n_train + n_val :], Y[n_train + n_val :]
@@ -147,9 +145,7 @@ def equiv_regression_dataset(n_samples, dim, mi):
 
 @hydra.main(config_path="cfg", config_name="eNCP_ablation", version_base="1.3")
 def main(cfg: DictConfig):
-    seed = (
-        cfg.experiment.seed if cfg.experiment.seed >= 0 else np.random.randint(0, 1000)
-    )
+    seed = cfg.experiment.seed if cfg.experiment.seed >= 0 else np.random.randint(0, 1000)
 
     # Sample from data model____________________________________________________________
     seed_everything(seed)
@@ -161,15 +157,9 @@ def main(cfg: DictConfig):
     train_ds, val_ds, test_ds = datasets
 
     collate_fn = default_collate
-    train_dataloader = DataLoader(
-        train_ds, batch_size=cfg.optim.batch_size, shuffle=True, collate_fn=collate_fn
-    )
-    val_dataloader = DataLoader(
-        val_ds, batch_size=cfg.optim.batch_size, shuffle=False, collate_fn=collate_fn
-    )
-    test_dataloader = DataLoader(
-        test_ds, batch_size=cfg.optim.batch_size, shuffle=False, collate_fn=collate_fn
-    )
+    train_dataloader = DataLoader(train_ds, batch_size=cfg.optim.batch_size, shuffle=True, collate_fn=collate_fn)
+    val_dataloader = DataLoader(val_ds, batch_size=cfg.optim.batch_size, shuffle=False, collate_fn=collate_fn)
+    test_dataloader = DataLoader(test_ds, batch_size=cfg.optim.batch_size, shuffle=False, collate_fn=collate_fn)
 
     # Get the model_____________________________________________________________________
     model = get_model2(cfg)
@@ -182,7 +172,7 @@ def main(cfg: DictConfig):
         optimizer_kwargs={"lr": cfg.optim.lr},
         loss_fn=model.loss,
         val_metrics=lambda _: estimate_mi_corr_gauss(
-            model=model, n_samples=128, dim=cfg.experiment.dim_x, mi=cfg.experiment.mi
+            model=model, n_samples=1024, dim=cfg.experiment.dim_x, mi=cfg.experiment.mi
         ),
     )
 
@@ -190,9 +180,7 @@ def main(cfg: DictConfig):
     run_path = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
     log.info(f"Run path: {run_path}")
     run_cfg = OmegaConf.to_container(cfg, resolve=True)
-    logger = WandbLogger(
-        save_dir=run_path, project=cfg.proj_name, log_model=False, config=run_cfg
-    )
+    logger = WandbLogger(save_dir=run_path, project=cfg.proj_name, log_model=False, config=run_cfg)
     ckpt_call = ModelCheckpoint(
         dirpath=run_path,
         filename="best",
@@ -203,15 +191,11 @@ def main(cfg: DictConfig):
     )
 
     # NCP seems to saturate MI mse when "||E - E_r||_HS" is minimized
-    early_call = EarlyStopping(
-        monitor="||k(x,y) - k_r(x,y)||/val", patience=cfg.optim.patience, mode="min"
-    )
+    early_call = EarlyStopping(monitor="||k(x,y) - k_r(x,y)||/val", patience=cfg.optim.patience, mode="min")
 
     trainer = L.Trainer(
         accelerator="gpu",
-        devices=[cfg.env.device]
-        if cfg.env.device != -1
-        else cfg.env.device,  # -1 for all available GPUs
+        devices=[cfg.env.device] if cfg.env.device != -1 else cfg.env.device,  # -1 for all available GPUs
         max_epochs=cfg.optim.max_epochs,
         logger=logger,
         enable_progress_bar=True,
