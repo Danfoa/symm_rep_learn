@@ -35,7 +35,7 @@ data_on_device: False  # Load dataset to GPU (usefull for fast training of small
 
 # EXPERIMENT CONFIG
 gmm:
-  n_kernels: 2
+  n_kernels: 5
   n_samples: 10000
   means_std: 3.0    # Standard deviation used to choose the centers of the Gaussians from a normal N dimensional dist.
   seed: 0

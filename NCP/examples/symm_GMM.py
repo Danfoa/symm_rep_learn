@@ -7,23 +7,22 @@ import hydra
 import lightning
 import numpy as np
 import pandas as pd
-import seaborn as sns
 import torch
-from escnn.group import directsum, Group, Representation
+from escnn.group import directsum, Representation
 from escnn.nn import FieldType, GeometricTensor
 from hydra.core.hydra_config import HydraConfig
 from lightning import seed_everything
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
-from matplotlib import pyplot as plt
 from plotly.subplots import make_subplots
 import plotly.io as pio
 
 from omegaconf import DictConfig, OmegaConf
-from sympy.combinatorics import CyclicGroup
 from torch.utils.data import DataLoader, default_collate, TensorDataset
 
 from NCP.cde_fork.density_simulation.symmGMM import SymmGaussianMixture
+from NCP.examples.symmGMM.plot_utils import (plot_analytic_joint_2D, plot_analytic_npmi_2D, plot_analytic_pmd_2D,
+                                             plot_analytic_prod_2D, plot_npmi_error_distribution)
 from NCP.models.ncp_lightning_module import TrainingModule
 
 import logging
@@ -31,396 +30,6 @@ import logging
 from NCP.nn.equiv_layers import IMLP
 
 log = logging.getLogger(__name__)
-
-
-def plot_analytic_joint_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representation, rep_Y: Representation, x_samples,
-                           y_samples):
-    grid = sns.JointGrid(marginal_ticks=True, space=0.05)
-    x_samples = x_samples.squeeze()
-    y_samples = y_samples.squeeze()
-    x_max, y_max = np.max(np.abs(x_samples)), np.max(np.abs(y_samples))
-    x_range = np.linspace(-x_max, x_max, 200)
-    y_range = np.linspace(-y_max, y_max, 200)
-    X_grid, Y_grid = np.meshgrid(x_range, y_range)
-    # Flatten the grid to evaluate joint_pdf
-    X_flat = X_grid.flatten()
-    Y_flat = Y_grid.flatten()
-    X_input = np.column_stack([X_flat])
-    Y_input = np.column_stack([Y_flat])
-    # p(x,y) -- Joint PDF
-    # Compute the joint PDF for each point on the grid
-    Z_flat = gmm.joint_pdf(X=X_input, Y=Y_input)
-    Z = Z_flat.reshape(X_grid.shape)
-    joint_contour = grid.ax_joint.contourf(X_grid, Y_grid, Z, cmap="Blues", levels=15)
-
-    # Select a random sample to test the conditional expectation
-    x_t, y_t = x_samples[0], y_samples[0]
-    g = G.elements[-1]
-    gx_t, gy_t = (rep_X(g) @ [x_t]).squeeze(), (rep_Y(g) @ [y_t]).squeeze()
-    grid.ax_joint.axvline(x_t, color='r', alpha=0.7)
-    grid.ax_joint.axhline(y_t, color='r', alpha=0.7)
-    grid.ax_joint.axvline(gx_t, color='g', alpha=0.7)
-    grid.ax_joint.axhline(gy_t, color='g', alpha=0.7)
-    # Draw red point on the selected sample
-    grid.ax_joint.plot(x_t, y_t, 'ro', markersize=5, alpha=0.7)
-    grid.ax_joint.plot(gx_t, gy_t, 'go', markersize=5, alpha=0.7)
-    # Set limits
-    grid.ax_joint.set_xlim([-x_max, x_max])
-    grid.ax_joint.set_ylim([-y_max, y_max])
-    # Customizing labels
-    grid.ax_joint.set_xlabel(r"$\mathcal{X}$")
-    grid.ax_joint.set_ylabel(r"$\mathcal{Y}$")
-    grid.ax_marg_x.set_xlabel(r"$p(\textnormal{x})$")
-    grid.ax_marg_y.set_ylabel(r"$p(\textnormal{y})$")
-
-    # Do plot of conditional probability density on the test conditions x and gx
-    n_samples_cpd = len(y_range)
-    cpd_y_vals = gmm.pdf(X=np.repeat(x_t, n_samples_cpd), Y=y_range)
-    cpd_gy_vals = gmm.pdf(X=np.repeat(gx_t, n_samples_cpd), Y=y_range)
-    # Plot filled distributions with lines
-    style = {
-        "cpd_x":  {
-            "color":  "red",
-            "fill":   "pink",
-            "legend": r"$p(y | x)$",
-            },
-        "cpd_gx": {
-            "color":  "green",
-            "fill":   "lightgreen",
-            "legend": r"$p(y | g \;\triangleright_{\mathcal{X}}\; x)$",
-            },
-        "pdf":    {
-            "color":  "blue",
-            "fill":   "lightblue",
-            "legend": r"$p(y)$",
-            }
-        }
-
-    for key, cpd_vals in zip(["cpd_x", "cpd_gx"], [cpd_y_vals, cpd_gy_vals]):
-        grid.ax_marg_y.plot(cpd_vals, y_range, color=style[key]["color"], linestyle="-", alpha=0.9, linewidth=0.6,
-                            label=style[key]["legend"])
-
-    # Plot marginal x
-    pdf_x = gmm.pdf_x(X=x_range)
-    grid.ax_marg_x.fill_between(x_range, 0, pdf_x, color=style["pdf"]["fill"], alpha=0.4)
-    grid.ax_marg_x.plot(x_range, pdf_x, color=style["pdf"]["color"], linestyle="-", alpha=1.0, linewidth=0.6,
-                        label=style["pdf"]["legend"])
-    grid.ax_marg_x.set_ylim([0, None])
-    # Plot marginal y
-    pdf_y = gmm.pdf_y(Y=y_range)
-    grid.ax_marg_y.fill_betweenx(y_range, 0, pdf_y, color=style["pdf"]["fill"], alpha=0.4)
-    grid.ax_marg_y.plot(pdf_y, y_range, color=style["pdf"]["color"], linestyle="-", alpha=1.0, linewidth=0.6,
-                        label=style["pdf"]["legend"])
-    grid.ax_marg_y.set_xlim([0, None])
-
-    # Add legend
-    grid.ax_marg_y.legend(loc="upper left", fontsize=8)
-    grid.fig.suptitle(r"Analytic $p(x,y)$, and $p(y | x)$")
-    grid.fig.tight_layout()
-    return grid
-
-
-def plot_analytic_prod_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representation, rep_Y: Representation, x_samples,
-                          y_samples):
-    grid = sns.JointGrid(marginal_ticks=True, space=0.05)
-    x_samples = x_samples.squeeze()
-    y_samples = y_samples.squeeze()
-    x_max, y_max = np.max(np.abs(x_samples)), np.max(np.abs(y_samples))
-    x_range = np.linspace(-x_max, x_max, 200)
-    y_range = np.linspace(-y_max, y_max, 200)
-    X_grid, Y_grid = np.meshgrid(x_range, y_range)
-    # Flatten the grid to evaluate joint_pdf
-    X_flat = X_grid.flatten()
-    Y_flat = Y_grid.flatten()
-    X_input = np.column_stack([X_flat])
-    Y_input = np.column_stack([Y_flat])
-    # p(x,y) -- Joint PDF
-    # Compute the joint PDF for each point on the grid
-    Z_flat = gmm.pdf_x(X=X_input) * gmm.pdf_y(Y=Y_input)
-    Z = Z_flat.reshape(X_grid.shape)
-    joint_contour = grid.ax_joint.contourf(X_grid, Y_grid, Z, cmap="Blues", levels=15)
-
-    # Select a random sample to test the conditional expectation
-    x_t, y_t = x_samples[0], y_samples[0]
-    g = G.elements[-1]
-    gx_t, gy_t = (rep_X(g) @ [x_t]).squeeze(), (rep_Y(g) @ [y_t]).squeeze()
-    grid.ax_joint.axvline(x_t, color='r', alpha=0.7)
-    grid.ax_joint.axhline(y_t, color='r', alpha=0.7)
-    grid.ax_joint.axvline(gx_t, color='g', alpha=0.7)
-    grid.ax_joint.axhline(gy_t, color='g', alpha=0.7)
-    # Draw red point on the selected sample
-    grid.ax_joint.plot(x_t, y_t, 'ro', markersize=5, alpha=0.7)
-    grid.ax_joint.plot(gx_t, gy_t, 'go', markersize=5, alpha=0.7)
-    # Set limits
-    grid.ax_joint.set_xlim([-x_max, x_max])
-    grid.ax_joint.set_ylim([-y_max, y_max])
-    # Customizing labels
-    grid.ax_joint.set_xlabel(r"$\mathcal{X}$")
-    grid.ax_joint.set_ylabel(r"$\mathcal{Y}$")
-    grid.ax_marg_x.set_xlabel(r"$p(\textnormal{x})$")
-    grid.ax_marg_y.set_ylabel(r"$p(\textnormal{y})$")
-
-    # Do plot of conditional probability density on the test conditions x and gx
-    n_samples_cpd = len(y_range)
-    cpd_y_vals = gmm.pdf(X=np.repeat(x_t, n_samples_cpd), Y=y_range)
-    cpd_gy_vals = gmm.pdf(X=np.repeat(gx_t, n_samples_cpd), Y=y_range)
-    # Plot filled distributions with lines
-    style = {
-        "cpd_x":  {
-            "color":  "red",
-            "fill":   "pink",
-            "legend": r"$p(y | x)$",
-            },
-        "cpd_gx": {
-            "color":  "green",
-            "fill":   "lightgreen",
-            "legend": r"$p(y | g \;\triangleright_{\mathcal{X}}\; x)$",
-            },
-        "pdf":    {
-            "color":  "blue",
-            "fill":   "lightblue",
-            "legend": r"$p(y)$",
-            }
-        }
-
-    # for key, cpd_vals in zip(["cpd_x", "cpd_gx"], [cpd_y_vals, cpd_gy_vals]):
-    #     grid.ax_marg_y.plot(cpd_vals, y_range, color=style[key]["color"], linestyle="-", alpha=0.9, linewidth=0.6,
-    #                         label=style[key]["legend"])
-
-    # Plot marginal x
-    pdf_x = gmm.pdf_x(X=x_range)
-    grid.ax_marg_x.fill_between(x_range, 0, pdf_x, color=style["pdf"]["fill"], alpha=0.4)
-    grid.ax_marg_x.plot(x_range, pdf_x, color=style["pdf"]["color"], linestyle="-", alpha=1.0, linewidth=0.6,
-                        label=style["pdf"]["legend"])
-    grid.ax_marg_x.set_ylim([0, None])
-    # Plot marginal y
-    pdf_y = gmm.pdf_y(Y=y_range)
-    grid.ax_marg_y.fill_betweenx(y_range, 0, pdf_y, color=style["pdf"]["fill"], alpha=0.4)
-    grid.ax_marg_y.plot(pdf_y, y_range, color=style["pdf"]["color"], linestyle="-", alpha=1.0, linewidth=0.6,
-                        label=style["pdf"]["legend"])
-    grid.ax_marg_y.set_xlim([0, None])
-
-    # Add legend
-    grid.ax_marg_y.legend(loc="upper left", fontsize=8)
-    grid.fig.suptitle(r"Analytic $p(x)p(y)$, and $p(y | x)$")
-    grid.fig.tight_layout()
-    return grid
-
-
-def plot_analytic_npmi_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representation, rep_Y: Representation, x_samples,
-                          y_samples):
-    grid = sns.JointGrid(marginal_ticks=True, space=0.05)
-    # Define grid for the plot
-    x_samples = x_samples.squeeze()
-    y_samples = y_samples.squeeze()
-    x_max, y_max = np.max(np.abs(x_samples)), np.max(np.abs(y_samples))
-    x_range = np.linspace(-x_max, x_max, 200)
-    y_range = np.linspace(-y_max, y_max, 200)
-    X_grid, Y_grid = np.meshgrid(x_range, y_range)
-    # Flatten the grid to evaluate joint_pdf
-    X_flat = X_grid.flatten()
-    Y_flat = Y_grid.flatten()
-    X_input = np.column_stack([X_flat])
-    Y_input = np.column_stack([Y_flat])
-    # Compute the mutual information
-    Pxy = gmm.joint_pdf(X=X_input, Y=Y_input)
-    npmi_flat = gmm.normalized_pointwise_mutual_information(X=X_input, Y=Y_input)
-    pmi = npmi_flat * -np.log(Pxy)
-    MI = np.sum(Pxy * pmi)
-    Z = npmi_flat.reshape(X_grid.shape)
-    contour = grid.ax_joint.contourf(
-        X_grid,
-        Y_grid,
-        Z,
-        cmap=sns.color_palette("magma", as_cmap=True),
-        levels=35,
-        # vmin=-1,
-        # vmax=1
-        )
-    cbar = plt.colorbar(contour, ax=grid.ax_joint, orientation='vertical')
-
-    # Select a random sample to test the conditional expectation
-    x_t, y_t = x_samples[0], y_samples[0]
-    g = G.elements[-1]
-    gx_t, gy_t = (rep_X(g) @ [x_t]).squeeze(), (rep_Y(g) @ [y_t]).squeeze()
-    grid.ax_joint.axvline(x_t, color='r', alpha=0.7)
-    grid.ax_joint.axhline(y_t, color='r', alpha=0.7)
-    grid.ax_joint.axvline(gx_t, color='g', alpha=0.7)
-    grid.ax_joint.axhline(gy_t, color='g', alpha=0.7)
-    # Draw red point on the selected sample
-    grid.ax_joint.plot(x_t, y_t, 'ro', markersize=5, alpha=0.5)
-    grid.ax_joint.plot(gx_t, gy_t, 'go', markersize=5, alpha=0.5)
-    # Set limits
-    grid.ax_joint.set_xlim([-x_max, x_max])
-    grid.ax_joint.set_ylim([-y_max, y_max])
-    # Customizing labels
-    grid.ax_joint.set_xlabel(r"$\mathcal{X}$")
-    grid.ax_joint.set_ylabel(r"$\mathcal{Y}$")
-    grid.ax_marg_x.set_xlabel(r"$p(\textnormal{x})$")
-    grid.ax_marg_y.set_ylabel(r"$p(\textnormal{y})$")
-
-    # Do plot of conditional probability density on the test conditions x and gx
-    n_samples_cpd = len(y_range)
-    mi_x_vals = gmm.normalized_pointwise_mutual_information(X=np.repeat(x_t, n_samples_cpd), Y=y_range)
-    mi_gx_vals = gmm.normalized_pointwise_mutual_information(X=np.repeat(gx_t, n_samples_cpd), Y=y_range)
-    mi_y_vals = gmm.normalized_pointwise_mutual_information(X=x_range, Y=np.repeat(y_t, len(x_range)))
-    mi_gy_vals = gmm.normalized_pointwise_mutual_information(X=x_range, Y=np.repeat(gy_t, len(x_range)))
-
-    # Plot filled distributions with lines
-    style = {
-        "mi_x":  {
-            "color":  "red",
-            "fill":   "pink",
-            "legend": r"$NPMI(y,x)$",
-            },
-        "mi_gx": {
-            "color":  "green",
-            "fill":   "lightgreen",
-            "legend": r"$NPMI(y, g \;\triangleright_{\mathcal{X}}\; x)$",
-            },
-        "mi_y":  {
-            "color":  "red",
-            "fill":   "pink",
-            "legend": r"$NPMI(y,x)$",
-            },
-        "mi_gy": {
-            "color":  "green",
-            "fill":   "lightgreen",
-            "legend": r"$NPMI(g \;\triangleright_{\mathcal{Y}}\; y, x)$",
-            },
-        "pdf":   {
-            "color":  "blue",
-            "fill":   "lightblue",
-            "legend": r"$p(y)$",
-            }
-        }
-
-    for key, mi_vals in zip(["mi_x", "mi_gx"], [mi_x_vals, mi_gx_vals]):
-        grid.ax_marg_y.plot(mi_vals, y_range, color=style[key]["color"], linestyle="-", alpha=0.9, linewidth=1,
-                            label=style[key]["legend"])
-
-    for key, mi_vals in zip(["mi_y", "mi_gy"], [mi_y_vals, mi_gy_vals]):
-        grid.ax_marg_x.plot(x_range, mi_vals, color=style[key]["color"], linestyle="-", alpha=0.9, linewidth=1,
-                            label=style[key]["legend"])
-
-    # Add legend
-    grid.ax_marg_y.legend(loc="upper left", fontsize=8)
-    grid.ax_marg_x.legend(loc="upper left", fontsize=8)
-    grid.ax_marg_y.axvline(0, color='gray', alpha=0.5)
-    grid.ax_marg_x.axhline(0, color='gray', alpha=0.5)
-    # grid.ax_marg_y.axvline(-1, color='gray', alpha=0.5)
-    # grid.ax_marg_x.axhline(-1, color='gray', alpha=0.5)
-    # grid.ax_marg_y.axvline(1, color='gray', alpha=0.5)
-    # grid.ax_marg_x.axhline(1, color='gray', alpha=0.5)
-    grid.fig.suptitle(r"Analytic Normalized MI $ln\left(\frac{p(x,y)}{p(y)p(x)}\right)$" + f" - MI={MI:.3f}")
-    grid.fig.tight_layout()
-    return grid
-
-
-def plot_analytic_pmd_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representation, rep_Y: Representation, x_samples,
-                         y_samples):
-    grid = sns.JointGrid(marginal_ticks=True, space=0.05)
-    # Define grid for the plot
-    x_samples = x_samples.squeeze()
-    y_samples = y_samples.squeeze()
-    x_max, y_max = np.max(np.abs(x_samples)), np.max(np.abs(y_samples))
-    x_range = np.linspace(-x_max, x_max, 200)
-    y_range = np.linspace(-y_max, y_max, 200)
-    X_grid, Y_grid = np.meshgrid(x_range, y_range)
-    # Flatten the grid to evaluate joint_pdf
-    X_flat = X_grid.flatten()
-    Y_flat = Y_grid.flatten()
-    X_input = np.column_stack([X_flat])
-    Y_input = np.column_stack([Y_flat])
-    # Compute the mutual information
-    Pxy = gmm.joint_pdf(X=X_input, Y=Y_input)
-    pmd = gmm.pointwise_mutual_dependency(X=X_input, Y=Y_input)
-    Z = pmd.reshape(X_grid.shape)
-    contour = grid.ax_joint.contourf(
-        X_grid,
-        Y_grid,
-        Z,
-        cmap=sns.color_palette("magma", as_cmap=True),
-        levels=35,
-        # vmin=-1,
-        # vmax=1
-        )
-    cbar = plt.colorbar(contour, ax=grid.ax_joint, orientation='vertical')
-
-    # Select a random sample to test the conditional expectation
-    x_t, y_t = x_samples[0], y_samples[0]
-    g = G.elements[-1]
-    gx_t, gy_t = (rep_X(g) @ [x_t]).squeeze(), (rep_Y(g) @ [y_t]).squeeze()
-    grid.ax_joint.axvline(x_t, color='r', alpha=0.7)
-    grid.ax_joint.axhline(y_t, color='r', alpha=0.7)
-    grid.ax_joint.axvline(gx_t, color='g', alpha=0.7)
-    grid.ax_joint.axhline(gy_t, color='g', alpha=0.7)
-    # Draw red point on the selected sample
-    grid.ax_joint.plot(x_t, y_t, 'ro', markersize=5, alpha=0.5)
-    grid.ax_joint.plot(gx_t, gy_t, 'go', markersize=5, alpha=0.5)
-    # Set limits
-    grid.ax_joint.set_xlim([-x_max, x_max])
-    grid.ax_joint.set_ylim([-y_max, y_max])
-    # Customizing labels
-    grid.ax_joint.set_xlabel(r"$\mathcal{X}$")
-    grid.ax_joint.set_ylabel(r"$\mathcal{Y}$")
-    grid.ax_marg_x.set_xlabel(r"$p(\textnormal{x})$")
-    grid.ax_marg_y.set_ylabel(r"$p(\textnormal{y})$")
-
-    # Do plot of conditional probability density on the test conditions x and gx
-    n_samples_cpd = len(y_range)
-    mi_x_vals = gmm.pointwise_mutual_dependency(X=np.repeat(x_t, n_samples_cpd), Y=y_range)
-    mi_gx_vals = gmm.pointwise_mutual_dependency(X=np.repeat(gx_t, n_samples_cpd), Y=y_range)
-    mi_y_vals = gmm.pointwise_mutual_dependency(X=x_range, Y=np.repeat(y_t, len(x_range)))
-    mi_gy_vals = gmm.pointwise_mutual_dependency(X=x_range, Y=np.repeat(gy_t, len(x_range)))
-
-    # Plot filled distributions with lines
-    style = {
-        "mi_x":  {
-            "color":  "red",
-            "fill":   "pink",
-            "legend": r"$PMD(y,x)$",
-            },
-        "mi_gx": {
-            "color":  "green",
-            "fill":   "lightgreen",
-            "legend": r"$PMD(y, g \;\triangleright_{\mathcal{X}}\; x)$",
-            },
-        "mi_y":  {
-            "color":  "red",
-            "fill":   "pink",
-            "legend": r"$PMD(y,x)$",
-            },
-        "mi_gy": {
-            "color":  "green",
-            "fill":   "lightgreen",
-            "legend": r"$PMD(g \;\triangleright_{\mathcal{Y}}\; y, x)$",
-            },
-        "pdf":   {
-            "color":  "blue",
-            "fill":   "lightblue",
-            "legend": r"$p(y)$",
-            }
-        }
-
-    for key, mi_vals in zip(["mi_x", "mi_gx"], [mi_x_vals, mi_gx_vals]):
-        grid.ax_marg_y.plot(mi_vals, y_range, color=style[key]["color"], linestyle="-", alpha=0.9, linewidth=1,
-                            label=style[key]["legend"])
-
-    for key, mi_vals in zip(["mi_y", "mi_gy"], [mi_y_vals, mi_gy_vals]):
-        grid.ax_marg_x.plot(x_range, mi_vals, color=style[key]["color"], linestyle="-", alpha=0.9, linewidth=1,
-                            label=style[key]["legend"])
-
-    # Add legend
-    grid.ax_marg_y.legend(loc="upper left", fontsize=8)
-    grid.ax_marg_x.legend(loc="upper left", fontsize=8)
-    # grid.ax_marg_y.axvline(0, color='gray', alpha=0.5)
-    # grid.ax_marg_x.axhline(0, color='gray', alpha=0.5)
-    grid.ax_marg_y.axvline(1, color='gray', alpha=0.5)
-    grid.ax_marg_x.axhline(1, color='gray', alpha=0.5)
-    grid.fig.suptitle(r"Analytic Normalized PMD $\frac{p(x,y)}{p(y)p(x)}$")
-    grid.fig.tight_layout()
-    return grid
 
 
 def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
@@ -498,21 +107,20 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
     else:
         raise ValueError(f"Model {cfg.model} not recognized")
 
-
 def gmm_dataset(n_samples: int, gmm: SymmGaussianMixture, rep_X: Representation, rep_Y: Representation, device='cpu'):
     from NCP.mysc.symm_algebra import symmetric_moments
 
     x_samples, y_samples = gmm.simulate(n_samples=n_samples)
     x_mean, x_var = symmetric_moments(x_samples, rep_X)
     y_mean, y_var = symmetric_moments(y_samples, rep_Y)
-
     # Train, val, test splitting
     train_ratio, val_ratio, test_ratio = 0.7, 0.15, 0.15
     n_samples = len(x_samples)
     n_train, n_val, n_test = np.asarray(np.array([train_ratio, val_ratio, test_ratio]) * n_samples, dtype=int)
     train_samples = x_samples[:n_train], y_samples[:n_train]
     val_samples = x_samples[n_train:n_train + n_val], y_samples[n_train:n_train + n_val]
-    test_samples = x_samples[n_train + n_val:], y_samples[n_train + n_val:]
+    # To compare sample efficiency, we use a large testing set of n_samples
+    test_samples = gmm.simulate(n_samples=n_samples)
 
     X_c = (x_samples - x_mean.numpy()) / np.sqrt(x_var.numpy())
     Y_c = (y_samples - y_mean.numpy()) / np.sqrt(y_var.numpy())
@@ -533,58 +141,9 @@ def gmm_dataset(n_samples: int, gmm: SymmGaussianMixture, rep_X: Representation,
     return (train_samples, val_samples, test_samples), (x_mean, y_mean), (x_var, y_var), (
         train_dataset, val_dataset, test_dataset)
 
-
-def plot_npmi_error_distribution(NPMI_gt, NPMI):
-    from matplotlib.colors import Normalize
-    # Create a JointGrid for the 2D KDE plot with marginals
-    # Set PLT backed to AGG
-    plt.switch_backend('agg')
-    grid = sns.JointGrid(x=NPMI,
-                         y=NPMI_gt,
-                         marginal_ticks=True,
-                         space=0.05,  # Space between the joint and marginal axes
-                         # height=8,  # Size of the figure in Inches
-                         # ratio=50  # Ratio of joint to marginal axes
-                         )
-    min_val, max_val = np.min(NPMI_gt), np.max(NPMI_gt)
-    limit = max(abs(min_val), abs(max_val)) * 1.1
-    contour = grid.plot_joint(sns.kdeplot,
-                              fill=True,
-                              cmap=sns.cubehelix_palette(as_cmap=True),
-                              levels=15,
-                              bw_adjust=0.6,  # Adjust bandwidth
-                              # cut=0,  # Reduce cut to avoid distortions at the edges
-                              clip=[(-limit, limit), (-limit, limit)],  # Clipping range for the KDE
-                              # cbar=True,
-                              )
-    # Plot scatter plot of the data with very mild alpha
-    # grid.plot_joint(sns.scatterplot, alpha=0.1)
-
-    grid.ax_joint.set_xlim([-limit, limit])
-    grid.ax_joint.set_ylim([-limit, limit])
-    # Plot a straight line with slope 1 crossing y at 0
-    # Set axis limits and labels
-    grid.ax_joint.set_xlabel('NPMI')
-    grid.ax_joint.set_ylabel('NPMI_gt')
-    grid.ax_joint.set_aspect('equal', adjustable='box')  # Ensure aspect ratio is the same for both axes
-    grid.ax_joint.grid(True, which='both', linestyle='-', linewidth=0.5, alpha=0.3)
-    grid.fig.suptitle('2D Distribution of NPMI Error', y=1.02)
-    grid.ax_joint.plot([-limit, limit], [-limit, limit], color='darkred', linestyle='-', linewidth=2)
-    grid.plot_marginals(sns.kdeplot,
-                        fill=True,
-                        color='firebrick',
-                        alpha=0.6,
-                        bw_adjust=0.4,  # Adjust bandwidth
-                        )
-    # Set the limits for the marginal axes to match the joint axes
-    grid.ax_marg_x.set_xlim(grid.ax_joint.get_xlim())
-    grid.ax_marg_y.set_ylim(grid.ax_joint.get_ylim())
-    return grid.fig
-
-
 @torch.no_grad()
 def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_type, x_mean, y_mean, x_var, y_var,
-                               plot=False, samples=1000):
+                               plot=False, samples=1000, save_data_path=None):
     G = x_type.fibergroup
     n_total_samples = samples if samples != 'all' else min(len(x_samples), 2048)
     n_samples_per_g = int(n_total_samples // G.order())
@@ -695,7 +254,7 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_ty
             # Plot the 4 CDFs each pair in a separate subplot
             import plotly.graph_objects as go
             fig_cde = make_subplots(rows=4, cols=1, shared_xaxes=True,
-                                    subplot_titles=[r"$p(y/x_{i})$" for i in range(4)])
+                                    subplot_titles=[rf"$p(y \mid x_{k})$" for k in range(4)])
             colors = {
                 "p(y)":              "blue",
                 r"$\hat{p}(y | x)$": "red",
@@ -737,8 +296,12 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_ty
         npmi_prod = npmi_prod[prod_idx]
         npmi_gt = np.concatenate([npmi_gt_joint, npmi_gt_prod])
         npmi = np.concatenate([npmi_joint, npmi_prod])
-
-        fig_pmd = plot_npmi_error_distribution(npmi_gt, npmi)
+        npmi_err = npmi_gt - npmi
+        if save_data_path is not None:
+            save_path = pathlib.Path(save_data_path)
+            log.info(f"Saving NPMI data to {save_path.absolute()}")
+            np.savez(save_path / "npmi_data.npz", npmi_gt=npmi_gt, npmi=npmi)
+        fig_pmd = plot_npmi_error_distribution(npmi_gt, npmi_err)
         return metrics, fig_pmd, fig_cde
 
     return metrics
@@ -761,17 +324,7 @@ def get_symmetry_group(cfg: DictConfig):
         raise ValueError(f"Group {group_label} not recognized")
 
     log.info(f"Symmetry Group G: {G} of order {G.order()}")
-    return G
 
-
-@hydra.main(config_path='cfg', config_name='config', version_base='1.3')
-def main(cfg: DictConfig):
-    seed = cfg.seed if cfg.seed >= 0 else np.random.randint(0, 1000)
-    # Ensure HydraConfig is initialized
-    run_id = HydraConfig.get().job.override_dirname if HydraConfig.initialized() else ""
-
-    # Symmetry group G. Symmetry subgroup H. H2G: H -> G. G2H: G -> H
-    G = get_symmetry_group(cfg)
     if cfg.regular_multiplicity > 0:
         rep_X = directsum([G.regular_representation] * cfg.regular_multiplicity)  # ρ_Χ
         rep_Y = directsum([G.regular_representation] * cfg.regular_multiplicity)  # ρ_Y
@@ -780,6 +333,16 @@ def main(cfg: DictConfig):
         rep_Y = G.representations['irrep_1']  # ρ_Y
     else:
         raise ValueError(f"G={G} Hx={cfg.x_symm_subgroup_id} Hy={cfg.y_symm_subgroup_id} {cfg.regular_multiplicity}")
+
+    return G, rep_X, rep_Y
+
+
+@hydra.main(config_path='cfg', config_name='config', version_base='1.3')
+def main(cfg: DictConfig):
+    seed = cfg.seed if cfg.seed >= 0 else np.random.randint(0, 1000)
+
+    # Symmetry group G. Symmetry subgroup H. H2G: H -> G. G2H: G -> H
+    G, rep_X, rep_Y = get_symmetry_group(cfg)
 
     # GENERATE the training data _______________________________________________________
     seed_everything(cfg.gmm.seed)  # Get same GMM for all training seeds.
@@ -905,7 +468,7 @@ def main(cfg: DictConfig):
     log.info(f"Logging test metrics ... ")
     m, fig_pmd, fig_cde = measure_analytic_pmi_error(
         gmm, nnPME, x_test, y_test, x_type, y_type, x_mean, y_mean, x_var, y_var,
-        plot=True, samples='all',
+        plot=True, samples='all', save_data_path=run_path,
         )
     run_desc = f"{pathlib.Path(run_path).parent.name}/{pathlib.Path(run_path).name}"
     if fig_cde is not None:  # Plot
