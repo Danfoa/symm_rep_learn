@@ -223,11 +223,11 @@ class ENCP(NCP):
             hy_c_iso, reps_Hy_iso = self._orth_proj_isotypic_subspaces(z=hy_c), hy_c.type.representations
 
             Cxy_iso_fro_2, tr_Pxyx_iso = [], []
-            for k, (fx_ck, rep_x_k, hy_ck, rep_y_k) in enumerate(zip(fx_c_iso, reps_Fx_iso, hy_c_iso, reps_Hy_iso)):
+            for k, (fx_ci, rep_x_k, hy_ci, rep_y_k) in enumerate(zip(fx_c_iso, reps_Fx_iso, hy_c_iso, reps_Hy_iso)):
                 irrep_dim = self.irreps_dim[self.iso_subspace_ids[k]]
                 # Flatten the realizations along irreducible subspaces, while preserving sampling from the joint dist.
-                zx = isotypic_signal2irreducible_subspaces(fx_ck, rep_x_k)  # (n_samples * |ρ_k|, r_k / |ρ_k|)
-                zy = isotypic_signal2irreducible_subspaces(hy_ck, rep_y_k)  # (n_samples * |ρ_k|, r_k / |ρ_k|)
+                zx = isotypic_signal2irreducible_subspaces(fx_ci, rep_x_k)  # (n_samples * |ρ_k|, r_k / |ρ_k|)
+                zy = isotypic_signal2irreducible_subspaces(hy_ci, rep_y_k)  # (n_samples * |ρ_k|, r_k / |ρ_k|)
                 Dxy_k_fro_2 = cross_cov_norm_squared_unbiased_estimation(x=zx, y=zy)
                 #  ||Cxy_k||_F^2 := |ρk| ||Dxy_k||_F^2
                 Cxy_k_fro_2 = irrep_dim * Dxy_k_fro_2
@@ -252,24 +252,40 @@ class ENCP(NCP):
                     metrics[f"E_p(x)p(y) k_r(x,y)^2/iso{k}"] = tr_Pxyx_k
                     metrics[f"||k(x,y) - k_r(x,y)||/iso{k}"] = -2 * Cxy_k_fro_2 + tr_Pxyx_k
         elif self.truncated_op_bias == "full_rank":
+            # k_r(x,y) = 1 + f(x)^T Dr h(y) = 1 + Σ_κ f_κ(x)^T Dr_κ h_κ(y)
             n_samples = fx_c.shape[0]
             Dr = self.truncated_operator  # Dr = Dr.T
-            # k_r(x,y) = 1 + f(x)^T Dr h(y)
-            # truncated_err = -2 * E_p(x,y)[k_r(x,y)] + E_p(x)p(y)[k_r(x,y)^2]
-            pmd_mat = 1 + torch.einsum('nx,xy,my->nm', fx_c.tensor, Dr, hy_c.tensor)  # (n_samples, n_samples)
-            # E_p(x,y)[k_r(x,y)] = diag(pmd_mat).mean()
-            E_pxy_kr = torch.diag(pmd_mat).mean()
-            pmd_squared = pmd_mat ** 2
-            # E_p(x)p(y)[k_r(x,y)^2]  # Note we remove the samples from the joint in the diagonal
-            E_px_py_kr = (pmd_squared.sum() - pmd_squared.diag().sum()) / (n_samples * (n_samples - 1))
-            truncation_err = (-2 * E_pxy_kr) + (E_px_py_kr) + 1
+            # Project embedding into the isotypic subspaces
+            fx_c_iso = self._orth_proj_isotypic_subspaces(z=fx_c)
+            hy_c_iso = self._orth_proj_isotypic_subspaces(z=hy_c)
+            Dr_iso = [Dr[s:e, s:e] for s, e in zip(fx_c.type.fields_start, fx_c.type.fields_end)]
 
+            # Sequential is slower but enable us to log the metrics we want.
+            # pmd_mat = 1
+            E_pxy_kr_iso, E_px_py_kr_iso = [], []
+            truncation_err_iso = []
+            for fx_ci, hy_ci, Dr_i in zip(fx_c_iso, hy_c_iso, Dr_iso):
+                k_r_i = torch.einsum('nx,xy,my->nm', fx_ci, Dr_i, hy_ci)  # (n_samples, n_samples)
+                # pmd_mat = pmd_mat + k_r_i
+                E_pxy_kr_i = torch.diag(k_r_i).mean()
+                E_pxy_kr_iso.append(E_pxy_kr_i)
+                k_r_i2 = k_r_i ** 2
+                E_px_py_kr_i = (k_r_i2.sum() - k_r_i2.diag().sum()) / (n_samples * (n_samples - 1))
+                E_px_py_kr_iso.append(E_px_py_kr_i)
+                truncation_err_iso.append(-2 * E_pxy_kr_i + E_px_py_kr_i)
+            # truncated_err = -2 * E_p(x,y)[k_r(x,y)] + E_p(x)p(y)[k_r(x,y)^2]
+            E_pxy_kr = sum(E_pxy_kr_iso)
+            # E_p(x)p(y)[k_r(x,y)^2]  # Note we remove the samples from the joint in the diagonal
+            E_px_py_kr = sum(E_px_py_kr_iso)
+            truncation_err = (-2 * E_pxy_kr) + (E_px_py_kr)
             with torch.no_grad():
-                prob_mass_distortion = (1 - pmd_mat.mean()) ** 2  # Always 0 for batch due to centering.
-                metrics |= {"E_p(x)p(y) k_r(x,y)^2": E_px_py_kr.detach() - 1,
-                            "E_p(x,y) k_r(x,y)":     E_pxy_kr.detach() - 1,
-                            "Prob Mass Distortion":  prob_mass_distortion,
+                metrics |= {"E_p(x)p(y) k_r(x,y)^2": E_px_py_kr.detach(),
+                            "E_p(x,y) k_r(x,y)":     E_pxy_kr.detach(),
                             }
+                for k in range(self.n_iso_subspaces):
+                    metrics[f"||k(x,y) - k_r(x,y)||/iso{k}"] = truncation_err_iso[k]
+                    metrics[f"E_p(x,y) k_r(x,y)/iso{k}"] = E_pxy_kr_iso[k]
+                    metrics[f"E_p(x)p(y) k_r(x,y)^2/iso{k}"] = E_px_py_kr_iso[k]
         else:
             raise ValueError(f"Invalid truncated operator bias: {self.truncated_op_bias}")
 
@@ -370,7 +386,8 @@ class ENCP(NCP):
         elif self.truncated_op_bias == "full_rank":
             # D_r is diagonal and is stable (that is has eivalues <= 1)
             D_r, _ = self._Dr.expand_parameters()  # Expand the equiv lin layer into its matrix form
-            Dr_symm = D_r @ D_r.T  # Ensure its symmetric.
+            a = D_r.detach().cpu().numpy()
+            Dr_symm = (D_r @ D_r.T ) / 2 # Ensure its symmetric.
             eigval_max = torch.linalg.eigvalsh(Dr_symm)[-1]
             Dr = Dr_symm / eigval_max
             return Dr

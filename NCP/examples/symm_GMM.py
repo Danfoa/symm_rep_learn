@@ -6,6 +6,7 @@ import escnn
 import hydra
 import lightning
 import numpy as np
+import pandas as pd
 import seaborn as sns
 import torch
 from escnn.group import directsum, Group, Representation
@@ -434,7 +435,7 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
         y_embedding = EMLP(in_type=y_type, **kwargs)
         eNCPop = ENCP(embedding_x=χ_embedding,
                       embedding_y=y_embedding,
-                      gamma_orthogonality=cfg.gamma,
+                      gamma=cfg.gamma,
                       truncated_op_bias=cfg.truncated_op_bias,
                       )
 
@@ -455,7 +456,7 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
         ncp = NCP(embedding_x=fx,
                   embedding_y=fy,
                   embedding_dim=embedding_dim,
-                  gamma_orthogonality=cfg.gamma,
+                  gamma=cfg.gamma,
                   truncated_op_bias=cfg.truncated_op_bias,
                   )
         return ncp
@@ -466,7 +467,6 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
 
         activation = class_from_name('torch.nn', cfg.embedding.activation)
         n_layers = cfg.embedding.hidden_layers
-        # NCP_params = 2(nh^2 * nl)   ->  DRF_params = (sqrt(2)nh)^2 * nl = 2(nh^2 * nl)
         n_hidden_units = int(cfg.embedding.hidden_units * 2)
         embedding = MLP(input_shape=x_type.size + y_type.size,  # z = (x,y)
                         output_shape=1,
@@ -538,7 +538,7 @@ def plot_npmi_error_distribution(NPMI_gt, NPMI):
                               bw_adjust=0.6,  # Adjust bandwidth
                               # cut=0,  # Reduce cut to avoid distortions at the edges
                               clip=[(-limit, limit), (-limit, limit)],  # Clipping range for the KDE
-                              cbar=True,
+                              # cbar=True,
                               )
     # Plot scatter plot of the data with very mild alpha
     # grid.plot_joint(sns.scatterplot, alpha=0.1)
@@ -622,9 +622,12 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_ty
     # Compute the error on PMI = ln(PMD)
     PMI_gt = np.log(pmd_xy_gt)
     PMI = np.log(np.clip(pmd_xy, a_min=1e-5, a_max=None))
+    MI = np.sum(P_XY * PMI)
+    MI_gt = np.sum(P_XY * PMI_gt)
     # Compute the normalized NPMI = ln(p(x,y)/p(x)p(y)) / -ln(P(X,Y))
     NPMI_gt = PMI_gt / -np.log(P_XY)
     NPMI = PMI / -np.log(P_XY)
+    NPMI_err = (NPMI_gt - NPMI) * np.sqrt(P_X * P_Y)
     assert np.all((-1 <= NPMI_gt)) and np.all(
         NPMI_gt <= 1), f"NPMI not in [-1, 1] min:{NPMI_gt.min()} max:{NPMI_gt.max()}"
     # Since k(x, y) = k(g.x, g.y) for all g in G, we want to compute the variance of the estimate under g-action
@@ -632,6 +635,9 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_ty
     metrics = {"PMD/mse":           (PMD_err ** 2).sum(),
                "PMD/equiv_err":     PMD_xy_g_var.mean(),
                "PMD/spectral_norm": PMD_spectral_norm,
+               "NPMI/mse":          (NPMI_err ** 2).sum(),
+               "MI/gt":             MI_gt,
+               "MI/err":            MI_gt - MI,
                }
     # Sample 4 random conditioning values of x
     range_n_samples = 100
@@ -765,7 +771,8 @@ def main(cfg: DictConfig):
         rep_X=rep_X,
         rep_Y=rep_Y,
         means_std=cfg.gmm.means_std,
-        random_seed=cfg.gmm.seed,  # Reproducibility
+        sampling_seed=cfg.seed,  # Each seed gets different training samples.
+        gmm_seed=cfg.gmm.seed,   # Same GMM model for all seeds.
         x_subgroup_id=cfg.x_symm_subgroup_id,
         y_subgroup_id=cfg.y_symm_subgroup_id,
         )
@@ -867,7 +874,12 @@ def main(cfg: DictConfig):
 
     ncp_lightning_module.to(device="cpu")
     # Loads the best model.
-    trainer.test(ncp_lightning_module, dataloaders=test_dataloader)
+    test_logs = trainer.test(ncp_lightning_module, dataloaders=test_dataloader)
+    test_metrics = test_logs[0] # dict: metric_name -> value
+    # Save the testing matrics in a csv file using pandas.
+    test_metrics_path = pathlib.Path(run_path) / "test_metrics.csv"
+    pd.DataFrame(test_metrics, index=[0]).to_csv(test_metrics_path, index=False)
+
     # Flush the logger.
     logger.finalize(trainer.state)
 
@@ -892,7 +904,4 @@ def main(cfg: DictConfig):
 
 
 if __name__ == '__main__':
-    try:
-        main()
-    except Exception as e:
-        log.error("An error occurred", exc_info=True)
+    main()
