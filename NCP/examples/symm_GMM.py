@@ -28,6 +28,8 @@ from NCP.models.ncp_lightning_module import TrainingModule
 
 import logging
 
+from NCP.nn.equiv_layers import IMLP
+
 log = logging.getLogger(__name__)
 
 
@@ -314,8 +316,9 @@ def plot_analytic_npmi_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representat
     grid.fig.tight_layout()
     return grid
 
+
 def plot_analytic_pmd_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representation, rep_Y: Representation, x_samples,
-                          y_samples):
+                         y_samples):
     grid = sns.JointGrid(marginal_ticks=True, space=0.05)
     # Define grid for the plot
     x_samples = x_samples.squeeze()
@@ -366,9 +369,9 @@ def plot_analytic_pmd_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representati
 
     # Do plot of conditional probability density on the test conditions x and gx
     n_samples_cpd = len(y_range)
-    mi_x_vals =  gmm.pointwise_mutual_dependency(X=np.repeat(x_t, n_samples_cpd), Y=y_range)
+    mi_x_vals = gmm.pointwise_mutual_dependency(X=np.repeat(x_t, n_samples_cpd), Y=y_range)
     mi_gx_vals = gmm.pointwise_mutual_dependency(X=np.repeat(gx_t, n_samples_cpd), Y=y_range)
-    mi_y_vals =  gmm.pointwise_mutual_dependency(X=x_range, Y=np.repeat(y_t, len(x_range)))
+    mi_y_vals = gmm.pointwise_mutual_dependency(X=x_range, Y=np.repeat(y_t, len(x_range)))
     mi_gy_vals = gmm.pointwise_mutual_dependency(X=x_range, Y=np.repeat(gy_t, len(x_range)))
 
     # Plot filled distributions with lines
@@ -478,6 +481,20 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
         drf = DRF(embedding=embedding, gamma=cfg.gamma)
 
         return drf
+    elif cfg.model.lower() == "idrf":  # Density Ratio Fitting
+        from NCP.models.inv_density_ratio_fitting import InvDRF
+        from NCP.mysc.utils import class_from_name
+
+        xy_reps = x_type.representations + y_type.representations
+        in_type = FieldType(x_type.gspace, xy_reps)
+        imlp = IMLP(in_type=in_type,
+                    out_dim=1, # Scalar PMD value
+                    hidden_layers=cfg.embedding.hidden_layers,
+                    activation=cfg.embedding.activation,
+                    hidden_units=cfg.embedding.hidden_units,
+                    bias=False)
+        idrf = InvDRF(embedding=imlp, gamma=cfg.gamma)
+        return idrf
     else:
         raise ValueError(f"Model {cfg.model} not recognized")
 
@@ -772,7 +789,7 @@ def main(cfg: DictConfig):
         rep_Y=rep_Y,
         means_std=cfg.gmm.means_std,
         sampling_seed=cfg.seed,  # Each seed gets different training samples.
-        gmm_seed=cfg.gmm.seed,   # Same GMM model for all seeds.
+        gmm_seed=cfg.gmm.seed,  # Same GMM model for all seeds.
         x_subgroup_id=cfg.x_symm_subgroup_id,
         y_subgroup_id=cfg.y_symm_subgroup_id,
         )
@@ -812,9 +829,11 @@ def main(cfg: DictConfig):
             grid = plot_analytic_prod_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
             grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"prod_pdf-std{cfg.gmm.means_std}.png")
             grid = plot_analytic_npmi_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"normalized_mutual_information-std{cfg.gmm.means_std}.png")
+            grid.fig.savefig(
+                pathlib.Path(run_path).parent.parent / f"normalized_mutual_information-std{cfg.gmm.means_std}.png")
             grid = plot_analytic_pmd_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"pointwise_mutual_dependency-std{cfg.gmm.means_std}.png")
+            grid.fig.savefig(
+                pathlib.Path(run_path).parent.parent / f"pointwise_mutual_dependency-std{cfg.gmm.means_std}.png")
 
     # Get the model ______________________________________________________________________
     nnPME = get_model(cfg, x_type, y_type, lat_type)
@@ -875,7 +894,7 @@ def main(cfg: DictConfig):
     ncp_lightning_module.to(device="cpu")
     # Loads the best model.
     test_logs = trainer.test(ncp_lightning_module, dataloaders=test_dataloader)
-    test_metrics = test_logs[0] # dict: metric_name -> value
+    test_metrics = test_logs[0]  # dict: metric_name -> value
     # Save the testing matrics in a csv file using pandas.
     test_metrics_path = pathlib.Path(run_path) / "test_metrics.csv"
     pd.DataFrame(test_metrics, index=[0]).to_csv(test_metrics_path, index=False)
