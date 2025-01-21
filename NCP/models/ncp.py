@@ -100,7 +100,7 @@ class NCP(torch.nn.Module):
         pmi = torch.log(k_r_pos)
         # Check no NaN  or Inf values
         assert torch.isfinite(pmi).all(), "NaN or Inf values found in the PMI estimation"
-        return torch.log(pmi)
+        return pmi
 
     def loss(self, fx: torch.Tensor, hy: torch.Tensor):
         """ TODO
