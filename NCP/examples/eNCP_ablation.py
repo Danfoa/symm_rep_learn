@@ -71,12 +71,35 @@ def get_model2(cfg: DictConfig) -> torch.nn.Module:
         raise ValueError(f"Model {cfg.model} not recognized")
 
 
-def equiv_regression_dataset(n_samples, dim, noise_var, alpha):
-    """Y = f(X) + eps, where f is g-equivariant and eps is white noise."""
-    # TODO: The scale of X could be changed without breaking symmetries
+def estimate_mi_corr_gauss(model, n_samples, dim, mi):
+    """Esimate mutual information by sampling from correlated gaussian model."""
+    rho = mi_to_rho(dim, mi)
     X = stats.norm.rvs(loc=0, scale=1, size=(n_samples, dim))
-    eps = stats.norm.rvs(loc=0, scale=noise_var, size=(n_samples, dim))
-    Y = alpha * X + eps
+    eps = stats.norm.rvs(loc=0, scale=1, size=(n_samples, dim))
+    Y = rho * X + math.sqrt(1 - rho**2) * eps
+
+    X = torch.atleast_2d(torch.from_numpy(X).float()).to("cuda")
+    Y = torch.atleast_2d(torch.from_numpy(Y).float()).to("cuda")
+
+    with torch.no_grad():
+        return {"MI_pred": model.pointwise_mutual_information(X, Y).mean()}
+
+
+import math
+
+
+def mi_to_rho(dim, mi):
+    """Computes the correlation rho between X and Y from their mutual information."""
+    # TODO: Should we try to build a tensor here to use torch.sqrt, etc.?
+    return math.sqrt(1 - math.exp(-2.0 / dim * mi))
+
+
+def equiv_regression_dataset(n_samples, dim, mi):
+    """Y = rho * X + sqrt(1-rho**2)*eps, where eps is std gaussian."""
+    rho = mi_to_rho(dim, mi)
+    X = stats.norm.rvs(loc=0, scale=1, size=(n_samples, dim))
+    eps = stats.norm.rvs(loc=0, scale=1, size=(n_samples, dim))
+    Y = rho * X + math.sqrt(1 - rho**2) * eps
 
     # Split data into train, validation, and test subsets
     # TODO: Split rations could be params
@@ -133,8 +156,7 @@ def main(cfg: DictConfig):
     (train_samples, val_samples, test_samples), datasets = equiv_regression_dataset(
         n_samples=cfg.experiment.n_samples,
         dim=cfg.experiment.dim_x,
-        noise_var=cfg.experiment.noise_variance,
-        alpha=cfg.experiment.alpha,
+        mi=cfg.experiment.mi,
     )
     train_ds, val_ds, test_ds = datasets
 
@@ -159,9 +181,9 @@ def main(cfg: DictConfig):
         optimizer_fn=Adam,
         optimizer_kwargs={"lr": cfg.optim.lr},
         loss_fn=model.loss,
-        # val_metrics=lambda x: estimated_mse_loss_indep_gaussian(
-        #     nnPME, dim_x=cfg.indep_gauss.dim_x, dim_y=cfg.indep_gauss.dim_y
-        # ),
+        val_metrics=lambda _: estimate_mi_corr_gauss(
+            model=model, n_samples=128, dim=cfg.experiment.dim_x, mi=cfg.experiment.mi
+        ),
     )
 
     # Define the logger and callbacks
@@ -180,7 +202,6 @@ def main(cfg: DictConfig):
         mode="min",
     )
 
-    # TODO: What is this metric?
     # NCP seems to saturate MI mse when "||E - E_r||_HS" is minimized
     early_call = EarlyStopping(
         monitor="||k(x,y) - k_r(x,y)||/val", patience=cfg.optim.patience, mode="min"
