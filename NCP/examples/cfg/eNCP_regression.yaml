@@ -1,0 +1,58 @@
+# TODO: REFACTOR CONFIG FILES
+
+proj_name: "eNCP"
+exp_name: "regression"
+
+# COMPUTE ENVIRONMENT
+env:
+  device: 5                 # gpu number to use
+
+# MODEL CONFIG
+model: NCP                  # 'NCP' or 'eNCP' or 'DRF'
+architecture:
+  hidden_layers: 2
+  hidden_units: 32
+  embedding_dim: 10
+  activation: ELU           # Any torch activation
+  iter_whitening: false     # BatchNorm that also decorrelates the features. See Algorithm 1 of https://arxiv.org/abs/1904.03441
+  last_layer: 'full_rank'   # 'Cxy' or 'diag' or 'svals' or 'full_rank'
+
+# OPTIMIZATION CONFIG
+optim:
+  regularization: 1e-5      # Weight of the NCP regularization loss term. NCP trains best at low values < 0.01
+  lr: 5e-4                  # Learning rate NCP train best at low lr values < 1e-3
+  batch_size: 1024          # The higher the best
+  max_epochs: 2000          # Number of passes over dataset before stop training. Early stopping is used.
+  patience: 10              # Epochs to wait for improvement before early stopping
+
+# EXPERIMENT CONFIG
+experiment:                 # CoM momentum estimation (regression). See Section VI of https://arxiv.org/abs/2302.10433.
+  debug: False
+  seed: -1
+  path_ds: NCP/examples/com_momentum/dataset/proprioceptive/a1/n_samples_100000.pkl # Path to dataset relative project root.
+
+defaults:
+- override hydra/launcher: joblib  # Parallel runs
+
+embedding_desc: "hu${architecture.hidden_units}_hl${architecture.hidden_layers}_ed${architecture.embedding_dim}_act${architecture.activation}"
+experiment_desc: ""
+model_desc: "${model}_gamma${optim.regularization}_lr${optim.lr}_bs${optim.batch_size}_me${optim.max_epochs}"
+
+hydra:
+  run:
+    dir: "../experiments/${proj_name}/${exp_name}/${experiment_desc}/${model_desc}--${embedding_desc}/${hydra.job.override_dirname} seed=${experiment.seed}"
+
+  sweep:
+    dir: ./experiments/${proj_name}/${exp_name}/${experiment_desc}/
+    subdir: ${model_desc}--${embedding_desc}/${hydra.job.override_dirname} seed=${experiment.seed}
+
+  job:
+    name: ${proj_name}
+    num: ${experiment.seed}
+    env_set:
+      HYDRA_FULL_ERROR: '1'
+      WANDB_START_METHOD: 'thread'
+    config:
+      override_dirname:
+        kv_sep: "="
+        item_sep: " "
