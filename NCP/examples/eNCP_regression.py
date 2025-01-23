@@ -734,7 +734,7 @@ def get_model2(cfg: DictConfig) -> torch.nn.Module:
         raise ValueError(f"Model {cfg.model} not recognized")
 
 
-def com_momentum_dataset(path_ds):
+def com_momentum_dataset(path_ds, gpu_num):
     """Loads dataset for 'Center of Mass Momentum Regression' experiment from https://arxiv.org/pdf/2302.10433."""
     # TODO: Y is currently 6 dimension, without 'KinE'.
     dr = DynamicsRecording.load_from_file(Path(path_ds))
@@ -770,12 +770,12 @@ def com_momentum_dataset(path_ds):
     )
 
     # Moving data to gpu
-    X_train = torch.atleast_2d(torch.from_numpy(x_train).float())
-    Y_train = torch.atleast_2d(torch.from_numpy(y_train).float())
-    X_val = torch.atleast_2d(torch.from_numpy(x_val).float())
-    Y_val = torch.atleast_2d(torch.from_numpy(y_val).float())
-    X_test = torch.atleast_2d(torch.from_numpy(x_test).float())
-    Y_test = torch.atleast_2d(torch.from_numpy(y_test).float())
+    X_train = torch.atleast_2d(torch.from_numpy(x_train).float()).to(f"cuda:{gpu_num}")
+    Y_train = torch.atleast_2d(torch.from_numpy(y_train).float()).to(f"cuda:{gpu_num}")
+    X_val = torch.atleast_2d(torch.from_numpy(x_val).float()).to(f"cuda:{gpu_num}")
+    Y_val = torch.atleast_2d(torch.from_numpy(y_val).float()).to(f"cuda:{gpu_num}")
+    X_test = torch.atleast_2d(torch.from_numpy(x_test).float()).to(f"cuda:{gpu_num}")
+    Y_test = torch.atleast_2d(torch.from_numpy(y_test).float()).to(f"cuda:{gpu_num}")
 
     # Define data samples
     train_samples = X_train, Y_train
@@ -801,17 +801,15 @@ def run_com_regression(model, x_test, y_test, y_train):
         hy_train = model.embedding_y(y_train)  # shape: (n_train, embedding_dim)
 
         n_train = y_train.shape[0]
-        # hyy_mean = None  # shape = (6, embedding_dim). Check formula 12 from https://arxiv.org/pdf/2407.01171
         y_mean = y_train.mean(axis=0)  # shape: (6,)
 
-        # shape: (n_test, 6)
+        # shape: (n_test, 6). Check formula 12 from https://arxiv.org/pdf/2407.01171
         Dr = model.truncated_operator
         weird_ass_term = (1 / n_train) * torch.einsum("ij,ki,lj,lm->km", Dr, fx_test, hy_train, y_train)
         y_test_pred = y_mean + weird_ass_term  # TODO: experiment with linear regression instead of einsums
 
         # This loss is normalized by the dimension
         # I.e., L = 1/6 * ||Y_i - \hat{Y}_i||_2^2, where Y_i, \hat{Y}_i are in R^6
-        # To get unormalized loss, use reduction='sum' and divide by n_test.
         reg_mse = torch.nn.functional.mse_loss(y_test, y_test_pred, reduction="mean")
 
         return {"reg_mse": reg_mse}
@@ -824,7 +822,7 @@ def main(cfg: DictConfig):
 
     # Load dataset______________________________________________________________________
     (train_samples, val_samples, test_samples), (train_ds, val_ds, test_ds) = com_momentum_dataset(
-        path_ds=cfg.experiment.path_ds
+        path_ds=cfg.experiment.path_ds, gpu_num=cfg.env.device
     )
 
     x_train, y_train = train_samples
@@ -846,9 +844,8 @@ def main(cfg: DictConfig):
         optimizer_fn=Adam,
         optimizer_kwargs={"lr": cfg.optim.lr},
         loss_fn=model.loss,
-        test_metrics=lambda _: run_com_regression(
-            model=model, x_test=x_test.to("cuda"), y_test=y_test.to("cuda"), y_train=y_train.to("cuda")
-        ),
+        val_metrics=lambda _: run_com_regression(model=model, x_test=x_val, y_test=y_val, y_train=y_train),
+        test_metrics=lambda _: run_com_regression(model=model, x_test=x_test, y_test=y_test, y_train=y_train),
     )
 
     # Define the logger and callbacks
@@ -877,7 +874,7 @@ def main(cfg: DictConfig):
         log_every_n_steps=25,
         check_val_every_n_epoch=20,
         callbacks=[ckpt_call, early_call],
-        fast_dev_run=10 if cfg.experiment.debug else False,
+        fast_dev_run=25 if cfg.experiment.debug else False,
     )
 
     torch.set_float32_matmul_precision("medium")

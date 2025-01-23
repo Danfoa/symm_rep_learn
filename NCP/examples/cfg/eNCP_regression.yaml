@@ -10,18 +10,18 @@ env:
 # MODEL CONFIG
 model: NCP                  # 'NCP' or 'eNCP' or 'DRF'
 architecture:
-  hidden_layers: 2
-  hidden_units: 32
-  embedding_dim: 10
+  hidden_layers: 4
+  hidden_units: 128
+  embedding_dim: 32
   activation: ELU           # Any torch activation
   iter_whitening: false     # BatchNorm that also decorrelates the features. See Algorithm 1 of https://arxiv.org/abs/1904.03441
   last_layer: 'full_rank'   # 'Cxy' or 'diag' or 'svals' or 'full_rank'
 
 # OPTIMIZATION CONFIG
 optim:
-  regularization: 1e-5      # Weight of the NCP regularization loss term. NCP trains best at low values < 0.01
+  regularization: 1e-3      # Weight of the NCP regularization loss term. NCP trains best at low values < 0.01
   lr: 5e-4                  # Learning rate NCP train best at low lr values < 1e-3
-  batch_size: 1024          # The higher the best
+  batch_size: 2048          # The higher the best
   max_epochs: 2000          # Number of passes over dataset before stop training. Early stopping is used.
   patience: 10              # Epochs to wait for improvement before early stopping
 
