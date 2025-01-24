@@ -18,7 +18,7 @@ regular_multiplicity: 0                 # Multiplicity of the regular representa
 # MODEL CONFIG
 model: NCP
 truncated_op_bias: 'full_rank'  # 'Cxy' or 'diag' or 'svals'
-gamma: 1e-1               # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
+gamma: 0.5               # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
 
 embedding:
   hidden_units: 32
@@ -38,13 +38,13 @@ train_samples_ratio: 0.7    # Between 0.7 and 0.1 of n_total_samples samples
 gmm:
   n_kernels: 5
   n_total_samples: 20000
-  means_std: 3.0    # Standard deviation used to choose the centers of the Gaussians from a normal N dimensional dist.
+  means_max_norm: 3.0    # Standard deviation used to choose the centers of the Gaussians from a normal N dimensional dist.
   seed: 0
   # Seed for the reproducibility of the GMM dataset
 
 
 embedding_desc: "hu${embedding.hidden_units}_hl${embedding.hidden_layers}_ed${embedding.embedding_dim}_act${embedding.activation}"
-gmm_desc: "G=${symm_group} Hx=${x_symm_subgroup_id} Hy=${y_symm_subgroup_id} train_ratio=${train_samples_ratio}/nk${gmm.n_kernels}_ns${gmm.n_total_samples}_std=${gmm.means_std}-dim=${regular_multiplicity}-gmm_seed=${gmm.seed}"
+gmm_desc: "G=${symm_group} Hx=${x_symm_subgroup_id} Hy=${y_symm_subgroup_id} train_ratio=${train_samples_ratio}/nk${gmm.n_kernels}_ns${gmm.n_total_samples}_dim=${regular_multiplicity}-gmm_seed=${gmm.seed}"
 model_desc: "${model}_gamma${gamma}_lr${lr}_bs${batch_size}"
 
 hydra:

@@ -42,10 +42,10 @@ class GaussianMixture(BaseConditionalDensitySimulation):
         self.ndim = ndim_x + ndim_y
         self.ndim_x = ndim_x
         self.ndim_y = ndim_y
-        self.means_std = means_std
+        self.means_max_norm = means_std
         self.weights = self._sample_weights(n_kernels)  # shape(n_kernels,), sums to one
         self.means = self.random_state_params.normal(
-            loc=np.zeros([self.ndim]), scale=self.means_std, size=[n_kernels, self.ndim]
+            loc=np.zeros([self.ndim]), scale=self.means_max_norm, size=[n_kernels, self.ndim]
         )  # shape(n_kernels, n_dims)
 
         """ Sample cov matrices and assure that cov matrix is pos definite"""
@@ -151,8 +151,9 @@ class GaussianMixture(BaseConditionalDensitySimulation):
         X, Y = self._handle_input_dimensionality(X, Y)
         XY = np.concatenate([X, Y], axis=1)
         assert XY.shape[1] == self.ndim, f"XY.shape[1]: {XY.shape[1]}, self.ndim: {self.ndim}"
-        a = np.atleast_2d([self.weights[i] * self.gaussians[i].pdf(XY) for i in range(self.n_kernels)]).T
-        p_i = np.sum(a, axis=-1)
+        a = [self.weights[i] * self.gaussians[i].pdf(XY) for i in range(self.n_kernels)]
+        p_i = np.atleast_1d(np.sum(a, axis=0))
+        assert len(p_i) == XY.shape[0], f"len(p_i): {len(p_i)}, XY.shape[0]: {XY.shape[0]}"
         return p_i
 
     def simulate_conditional(self, X):

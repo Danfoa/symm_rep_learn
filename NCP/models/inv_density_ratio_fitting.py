@@ -3,9 +3,10 @@ import escnn
 import torch.nn
 from escnn.group import Representation
 from escnn.nn import EquivariantModule, FieldType, GeometricTensor
-from torchvision.transforms.v2 import Lambda
 
 from NCP.models.density_ratio_fitting import DRF
+from NCP.nn.layers import Lambda
+
 
 # Density Ratio Fitting.
 class InvDRF(DRF):

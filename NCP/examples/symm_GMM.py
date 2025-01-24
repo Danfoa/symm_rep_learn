@@ -22,7 +22,7 @@ from torch.utils.data import DataLoader, default_collate, TensorDataset
 
 from NCP.cde_fork.density_simulation.symmGMM import SymmGaussianMixture
 from NCP.examples.symmGMM.plot_utils import (plot_analytic_joint_2D, plot_analytic_npmi_2D, plot_analytic_pmd_2D,
-                                             plot_analytic_prod_2D, plot_npmi_error_distribution)
+                                             plot_analytic_prod_2D, plot_pmd_error_distribution)
 from NCP.models.ncp_lightning_module import TrainingModule
 
 import logging
@@ -97,7 +97,7 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
         xy_reps = x_type.representations + y_type.representations
         in_type = FieldType(x_type.gspace, xy_reps)
         imlp = IMLP(in_type=in_type,
-                    out_dim=1, # Scalar PMD value
+                    out_dim=1,  # Scalar PMD value
                     hidden_layers=cfg.embedding.hidden_layers,
                     activation=cfg.embedding.activation,
                     hidden_units=cfg.embedding.hidden_units,
@@ -107,11 +107,14 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
     else:
         raise ValueError(f"Model {cfg.model} not recognized")
 
+
 def gmm_dataset(cfg: DictConfig, gmm: SymmGaussianMixture, rep_X: Representation, rep_Y: Representation, device='cpu'):
     from NCP.mysc.symm_algebra import symmetric_moments
 
     total_samples = cfg.gmm.n_total_samples
     x_samples, y_samples = gmm.simulate(n_samples=total_samples)
+    MI = gmm.MI(x_samples, y_samples),
+    log.info(f"\n\n MI estimation: {MI}  with {total_samples} samples\n\n")
     x_mean, x_var = symmetric_moments(x_samples, rep_X)
     y_mean, y_var = symmetric_moments(y_samples, rep_Y)
     # Train, val, test splitting
@@ -148,10 +151,16 @@ def gmm_dataset(cfg: DictConfig, gmm: SymmGaussianMixture, rep_X: Representation
     return (train_samples, val_samples, test_samples), (x_mean, y_mean), (x_var, y_var), (
         train_dataset, val_dataset, test_dataset)
 
+
 @torch.no_grad()
-def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_type, x_mean, y_mean, x_var, y_var,
-                               plot=False, samples=1000, save_data_path=None):
+def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples,
+                               x_type, y_type, x_mean, y_mean, x_var, y_var,
+                               plot=False, samples=1000, save_data_path=None, debug=False):
+    from NCP.models.equiv_ncp import ENCP
+
     prev_device = next(nn_model.parameters()).device
+    dtype = next(nn_model.parameters()).dtype
+
     G = x_type.fibergroup
     if samples == 'all':
         n_total_samples = len(x_samples)
@@ -161,78 +170,126 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_ty
         device = prev_device
 
     n_samples_per_g = int(n_total_samples // G.order())
-
-    dtype = next(nn_model.parameters()).dtype
-
     chosen_samples_idx = np.random.choice(len(x_samples), n_samples_per_g, replace=False)
-
-    prod_idx = np.arange(n_samples_per_g)
-    # Get all pairs of samples
-    X_idx, Y_idx = np.meshgrid(prod_idx, prod_idx)
-    X_idx_flat = X_idx.flatten()
-    Y_idx_flat = Y_idx.flatten()
-    X_np = np.atleast_2d(x_samples[chosen_samples_idx][X_idx_flat])
-    Y_np = np.atleast_2d(y_samples[chosen_samples_idx][Y_idx_flat])
-    # Compute the marginal probabilities.
-    P_X = gmm.pdf_x(x_samples)
-    P_Y = gmm.pdf_y(y_samples)
-    P_X = P_X[X_idx_flat]
-    P_Y = P_Y[Y_idx_flat]
-    # Compute the joint probability
-    P_XY = gmm.joint_pdf(X_np, Y_np)  # Compute the group orbit of the data, to compute the equivariance error
-    G_X_np, G_Y_np = [X_np], [Y_np]
+    X = x_samples[chosen_samples_idx]  # Random sample from p(x,y)  #
+    Y = y_samples[chosen_samples_idx]  # Random sample from p(x,y)
+    p_X, p_Y = gmm.pdf_x(X), gmm.pdf_y(Y)
     # Perform data augmentation using the group actions
-    for g in G.elements[1:]:  # first element is the identity
-        G_X_np.append(np.einsum("ij,...j->...i", x_type.representation(g), X_np))
-        G_Y_np.append(np.einsum("ij,...j->...i", y_type.representation(g), Y_np))
-    X_np = np.vstack(G_X_np)
-    Y_np = np.vstack(G_Y_np)
-    # Duplicate probabilities
-    P_X = np.tile(P_X, G.order())
-    P_Y = np.tile(P_Y, G.order())
-    P_XY = np.tile(P_XY, G.order())
+    # G_X, G_Y = {G.identity: X}, {G.identity: Y}
+    # for g in G.elements[1:]:  # first element is the identity
+    #     G_X[g] = np.einsum("ij,...j->...i", x_type.representation(g), X)
+    #     G_Y[g] = np.einsum("ij,...j->...i", y_type.representation(g), Y)
 
+    # Compute the NxN indices of all pairs of x and y samples
+    prod_idx = np.arange(n_samples_per_g)
+    X_idx, Y_idx = np.meshgrid(prod_idx, prod_idx)
+    X_idx_flat, Y_idx_flat = X_idx.flatten(), Y_idx.flatten()
+    # Get N^**2 samples from the product and joint distributions (of the original data)
+    X_pairs = np.atleast_2d(X[X_idx_flat])
+    Y_pairs = np.atleast_2d(Y[Y_idx_flat])
+    # Compute the marginal and joint probabilities.
+    P_joint_XY_pairs = gmm.joint_pdf(X_pairs, Y_pairs)
+    P_joint_XY_pairs_mat = P_joint_XY_pairs.reshape(X_idx.shape)  # P_joint_XY_pairs_mat_ij = p(x_i, y_j)
+    # Diagonal P_XY_pairs_mat is the p(x,y) of samples from the joint.
+    if debug:
+        assert np.allclose(np.diag(P_joint_XY_pairs_mat), gmm.joint_pdf(X, Y), rtol=1e-5,
+                           atol=1e-5), "Error in joint PDF computation"
+        x_0, y_1 = X[[0], :], Y[[1], :]
+        p_x0y1 = gmm.joint_pdf(x_0, y_1)
+        assert np.allclose(P_joint_XY_pairs_mat[1, 0], gmm.joint_pdf(x_0, y_1), rtol=1e-5, atol=1e-5), \
+            f"{P_joint_XY_pairs_mat[1, 0]} != {gmm.joint_pdf(x_0, y_1)}"
+
+    # ==============================================================================================================
+    # Compute the NN estimate of the PMD for the entire group orbit in a single pass ______
+
+    # Sample elements of the group to compute the PMD invariance error. Identity + 5 random elements
+    G_elements = [G.identity] + np.random.choice(G.elements[1:], min(G.order() - 1, 5), replace=False).tolist()
+    G_X, G_Y = [], []
+    for g in G_elements:
+        if hasattr(gmm, "G2H"):
+            g_X = X_pairs if g == G.identity else np.einsum("ij,...j->...i", gmm.rep_X(gmm.G2H(g)), X_pairs)
+            g_Y = Y_pairs if g == G.identity else np.einsum("ij,...j->...i", gmm.rep_Y(gmm.G2H(g)), Y_pairs)
+        else:
+            g_X = X_pairs if g == G.identity else np.einsum("ij,...j->...i", gmm.rep_X(g), X_pairs)
+            g_Y = Y_pairs if g == G.identity else np.einsum("ij,...j->...i", gmm.rep_Y(g), Y_pairs)
+
+        G_X.append(g_X)
+        G_Y.append(g_Y)
+    G_X = np.concatenate(G_X, axis=0)
+    G_Y = np.concatenate(G_Y, axis=0)
     # Normalize the data for the NN estimation of the point-wise mutual dependency
-    X_c = ((torch.Tensor(X_np) - x_mean) / torch.sqrt(x_var)).to(device=device)
-    Y_c = ((torch.Tensor(Y_np) - y_mean) / torch.sqrt(y_var)).to(device=device)
-    # Compute the estimate of the NCP model of the mutual information _______________
-    from NCP.models.equiv_ncp import ENCP
+    X_c = ((torch.Tensor(G_X) - x_mean) / torch.sqrt(x_var)).to(device=device)
+    Y_c = ((torch.Tensor(G_Y) - y_mean) / torch.sqrt(y_var)).to(device=device)
     _x, _y = (x_type(X_c), y_type(Y_c)) if isinstance(nn_model, ENCP) else (X_c, Y_c)
     pmd_xy_pred = nn_model.pointwise_mutual_dependency(_x, _y).cpu().numpy()  # k_r(x,y) ≈ p(x,y) / p(x)p(y)
-    # Compute the analytic PMD _______________________________________
-    pmd_xy_gt = gmm.pointwise_mutual_dependency(X=X_np, Y=Y_np)  # p(x,y) / p(x)p(y)
-    # Compute the _____ metric error between the two estimates
-    PMD_err = ((pmd_xy_gt - pmd_xy_pred) * np.sqrt(P_X * P_Y))
-    n = n_samples_per_g ** 2  # Number of unique pairs. Without counting orbit
-    G_PMD_err_mat = [PMD_err[i * n: i * n + n].reshape(X_idx.shape) for i in
-                     range(G.order())]  # [PMD_mse_mat]_ij = (k_r(xi,yj) - k(xi,yj))^2 * p(xi)p(yj)
-    G_PMD_spectral_norm = [np.linalg.norm(G_PMD_err_mat[i], ord=2) for i in range(G.order())]
-    PMD_spectral_norm = np.mean(G_PMD_spectral_norm)  # Largest singular value. Spectral norm
-    # Compute the error on PMI = ln(PMD)
-    PMI_gt = np.log(pmd_xy_gt)
-    PMI = np.log(np.clip(pmd_xy_pred, a_min=1e-5, a_max=None))
-    MI = np.sum(P_XY * PMI)
-    MI_gt = np.sum(P_XY * PMI_gt)
-    # Compute the normalized NPMI = ln(p(x,y)/p(x)p(y)) / -ln(P(X,Y))
-    NPMI_gt = PMI_gt / -np.log(P_XY)
-    NPMI = PMI / -np.log(P_XY)
-    NPMI_err = (NPMI_gt - NPMI) * np.sqrt(P_X * P_Y)
-    assert np.all((-1 <= NPMI_gt)) and np.all(
-        NPMI_gt <= 1), f"NPMI not in [-1, 1] min:{NPMI_gt.min()} max:{NPMI_gt.max()}"
+    G_pmd_xy_pred_mat = {}  # g : k_r(g.x, g.y)  for all pairs of x and y  (N x N)
+    for i, g in enumerate(G_elements):
+        start, end = i * n_samples_per_g ** 2, (i + 1) * n_samples_per_g ** 2
+        G_pmd_xy_pred_mat[g] = pmd_xy_pred[start: end].reshape(X_idx.shape)
+
+    # ==============================================================================================================
+    # Compute the analytic PMD k(x,y) = p(x,y) / p(x)p(y)
+    pmd_xy_gt_mat = np.einsum("ij,i,j->ij", P_joint_XY_pairs_mat, 1 / p_Y, 1 / p_X)  # p(x,y) / p(x)p(y)
+    G_pmd_xy_err_mat = {g: pmd_xy_gt_mat - G_pmd_xy_pred_mat[g] for g in G_elements}
+
+    if debug:
+        # Check we compute appropriately the PMD
+        pmd_xy_gt2 = gmm.pointwise_mutual_dependency(X=X_pairs, Y=Y_pairs)  # p(x,y) / p(x)p(y)
+        assert np.allclose(pmd_xy_gt2.reshape(X_idx.shape), pmd_xy_gt_mat, rtol=1e-5, atol=1e-5)
+        # Check reshaping is not breaking ordering
+        pmd_xy_err = pmd_xy_gt2 - G_pmd_xy_pred_mat[G.identity].flatten()
+        pmd_xy_err_mat2 = pmd_xy_err.reshape(X_idx.shape)
+        assert np.allclose(G_pmd_xy_err_mat[G.identity], pmd_xy_err_mat2, rtol=1e-5, atol=1e-5), \
+            f"Max error: {np.max(G_pmd_xy_err_mat[G.identity] - pmd_xy_err_mat2)}"
+
+    # ==============================================================================================================
+    #  Approximate the operator norm from the Gram matrix of errors.
+    #  | E - Er |_op = sup_||f||_2 [ (E - Er) f ] ≈ max_sval( k_mat - k_pred_mat )
+    G_pmd_xy_err_tensor = np.stack([G_pmd_xy_err_mat[g] for g in G_elements], axis=0)  # (|G|, N, N)
+    # PMD_mse = E_p(x)p(y) (k(x,y) - k_r(x,y))^2 = (Σ_ij (k(x_i, y_j) - k_r(x_i, y_j))^2 * p(x)p(y))/ Σ_ij p(x_i)p(y_j)
+    G_pmd_err_mat = np.einsum('gij,i,j->gij', G_pmd_xy_err_tensor, np.sqrt(p_Y / p_Y.sum()), np.sqrt(p_X / p_Y.sum()))
+    pmd_mse = (G_pmd_err_mat ** 2).sum()
+    Op_norms = np.linalg.norm(G_pmd_xy_err_tensor, ord=2, axis=(1, 2))
+    Op_norm = np.max(Op_norms)  # Largest singular value. Spectral norm
     # Since k(x, y) = k(g.x, g.y) for all g in G, we want to compute the variance of the estimate under g-action
-    PMD_xy_g_var = np.var(pmd_xy_pred.reshape(G.order(), -1), axis=0)  # Var[ k_r(g.x, g.y) ] for all g in G
-    metrics = {"PMD/mse":           (PMD_err ** 2).sum(),
-               "PMD/equiv_err":     PMD_xy_g_var.mean(),
-               "PMD/spectral_norm": PMD_spectral_norm,
-               "NPMI/mse":          (NPMI_err ** 2).sum(),
-               "MI/gt":             MI_gt,
-               "MI/err":            MI_gt - MI,
+    pmd_G_var = np.var([G_pmd_xy_pred_mat[g] for g in G_elements], axis=0).mean()
+
+    # Compute the error on PMI = ln(PMD)
+    pmi_gt_mat = np.log(pmd_xy_gt_mat)
+    npmi_gt_mat = pmi_gt_mat / (-np.log(P_joint_XY_pairs_mat))
+    if debug:
+        pmi_gt2 = gmm.pointwise_mutual_information(X=X_pairs, Y=Y_pairs)
+        npmi_gt2 = gmm.normalized_pointwise_mutual_information(X=X_pairs, Y=Y_pairs)
+        assert np.allclose(pmi_gt2.reshape(X_idx.shape), pmi_gt_mat, rtol=1e-5, atol=1e-5)
+        assert np.allclose(npmi_gt2.reshape(X_idx.shape), npmi_gt_mat, rtol=1e-5, atol=1e-5)
+
+    G_pmi = {g: np.log(np.clip(G_pmd_xy_pred_mat[g], a_min=1e-5, a_max=None)) for g in G_elements}
+    G_pmi_err_tensor = np.stack([pmi_gt_mat - G_pmi[g] for g in G_elements], axis=0)
+    pmi_mse = np.einsum('gij,i,j->', G_pmi_err_tensor ** 2, p_Y / p_Y.sum(), p_X / p_Y.sum())
+    G_npmi = {g: G_pmi[g] / (-1 * np.log(P_joint_XY_pairs_mat)) for g in G_elements}
+    G_npmi_err_tensor = np.stack([npmi_gt_mat - G_npmi[g] for g in G_elements], axis=0)
+    npmi_mse = np.einsum('gij,i,j->', G_npmi_err_tensor ** 2, p_Y / p_Y.sum(), p_X / p_Y.sum())
+
+    # Compute estimate of the Mutual information from the samples.
+    _P_xy_norm = P_joint_XY_pairs_mat / P_joint_XY_pairs_mat.sum()
+    G_MI = [(_P_xy_norm * G_pmd_xy_pred_mat[g]).sum() for g in G_elements]
+    MI = np.mean(G_MI)
+    MI_gt = np.sum(_P_xy_norm * pmi_gt_mat)
+    if debug:
+        assert pmi_gt_mat.max() > MI, f"Expectation cannot be larger than the maximum value of the PMI"
+    metrics = {"PMD/mse":            pmd_mse,
+               "PMD/invariance_err": pmd_G_var,
+               "PMD/spectral_norm":  Op_norm,
+               "PMI/NPMI/mse":       npmi_mse,  # Numerically unstable.
+               "PMI/mse":            pmi_mse,
+               "MI/gt":              MI_gt,
+               "MI/err":             MI_gt - MI,
                }
     # Sample 4 random conditioning values of x
     range_n_samples = 100
     n_cond_points = 4
-    cond_idx = np.random.choice(len(X_np), n_cond_points, replace=False)
-    X_cond_np = X_np[cond_idx]
+    cond_idx = np.random.choice(len(X_pairs), n_cond_points, replace=False)
+    X_cond_np = X_pairs[cond_idx]
     X_c_cond = X_c[cond_idx]
 
     # X_range_np = np.linspace(x_max, x_max, range_n_samples)
@@ -300,37 +357,31 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_ty
     nn_model.to(device=prev_device)
 
     if plot:
-        npmi_gt = np.reshape(NPMI_gt[:n_samples_per_g ** 2], (n_samples_per_g, n_samples_per_g))
-        npmi = np.reshape(NPMI[:n_samples_per_g ** 2], (n_samples_per_g, n_samples_per_g))
 
-        pmd_gt = np.reshape(pmd_xy_gt[:n_samples_per_g ** 2], (n_samples_per_g, n_samples_per_g))
-        pmd_pred = np.reshape(pmd_xy_pred[:n_samples_per_g ** 2], (n_samples_per_g, n_samples_per_g))
         # Take the n_total_samples from the joint sampling, in the digagonal of the matrix of pairwise pairings.
-        npmi_gt_joint = np.diag(npmi_gt)
-        npmi_joint = np.diag(npmi)
-        pmd_gt_joint = np.diag(pmd_gt)
-        pmd_pred_joint = np.diag(pmd_pred)
-        # Sample n_samples_per_g from the off diagonal of the matrix of pairwise pairings.
-        npmi_gt_prod = npmi_gt[np.triu_indices(n_samples_per_g, k=1)]
-        npmi_prod = npmi[np.triu_indices(n_samples_per_g, k=1)]
-        prod_idx = np.random.choice(len(npmi_gt_prod), n_samples_per_g, replace=False)
-        npmi_gt_prod = npmi_gt_prod[prod_idx]  # Sample some points from the joint
-        npmi_prod = npmi_prod[prod_idx]
-        pmd_gt_prod = pmd_gt[np.triu_indices(n_samples_per_g, k=1)][prod_idx]
-        pmd_pred_prod = pmd_pred[np.triu_indices(n_samples_per_g, k=1)][prod_idx]
+        G_pmd_gt, G_pmd_pred = [], []
+        for g in G_elements:
+            pmd_gt_joint = np.diag(pmd_xy_gt_mat)
+            pmd_pred_joint = np.diag(G_pmd_xy_pred_mat[G.identity])
+            prod_idx = np.random.choice(len(pmd_gt_joint), n_samples_per_g, replace=False)
 
-        npmi_gt = np.concatenate([npmi_gt_joint, npmi_gt_prod])
-        npmi = np.concatenate([npmi_joint, npmi_prod])
-        pmd_gt = np.concatenate([pmd_gt_joint, pmd_gt_prod])
-        pmd_pred = np.concatenate([pmd_pred_joint, pmd_pred_prod])
+            pmd_gt_prod = pmd_xy_gt_mat[np.triu_indices(n_samples_per_g, k=1)][prod_idx]
+            pmd_pred_prod = G_pmd_xy_pred_mat[G.identity][np.triu_indices(n_samples_per_g, k=1)][prod_idx]
 
-        npmi_err = npmi_gt - npmi
+            pmd_gt = np.concatenate([pmd_gt_joint, pmd_gt_prod])
+            pmd_pred = np.concatenate([pmd_pred_joint, pmd_pred_prod])
+
+            G_pmd_gt.append(pmd_gt)
+            G_pmd_pred.append(pmd_pred)
+
+        G_pmd_gt = np.concatenate(G_pmd_gt)
+        G_pmd_pred = np.concatenate(G_pmd_pred)
 
         if save_data_path is not None:
             save_path = pathlib.Path(save_data_path)
             log.info(f"Saving NPMI data to {save_path.absolute()}")
-            np.savez(save_path / "npmi_data.npz", npmi_gt=npmi_gt, npmi=npmi, pmd_gt=pmd_gt, pmd_pred=pmd_pred)
-        fig_pmd = plot_npmi_error_distribution(npmi_gt, npmi_err)
+            np.savez(save_path / "npmi_data.npz", pmd_gt=G_pmd_gt, pmd_pred=G_pmd_pred)
+        fig_pmd = plot_pmd_error_distribution(pmd_gt, pmd_pred)
         return metrics, fig_pmd, fig_cde
 
     return metrics
@@ -338,30 +389,52 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples, x_type, y_ty
 
 def get_symmetry_group(cfg: DictConfig):
     group_label = cfg.symm_group
+    rep_X, rep_Y = None, None
+
     # group_label = "C{N}" -> CyclicGroup(N)
     if group_label[0] == "C" and group_label[1:].isdigit():
         N = int(group_label[1:])
         G = escnn.group.CyclicGroup(N)
+        if cfg.regular_multiplicity > 0:
+            rep_X = directsum([G.regular_representation] * cfg.regular_multiplicity)  # ρ_Χ
+            rep_Y = directsum([G.regular_representation] * cfg.regular_multiplicity)  # ρ_Y
     elif group_label[0] == "D" and group_label[1:].isdigit():
         N = int(group_label[1:])
         G = escnn.group.DihedralGroup(N)
+        if cfg.regular_multiplicity > 0:
+            rep_X = directsum([G.regular_representation] * cfg.regular_multiplicity)  # ρ_Χ
+            rep_Y = directsum([G.regular_representation] * cfg.regular_multiplicity)  # ρ_Y
     elif group_label.lower() == "ico":
-        G = escnn.group.Icosahedral()
+        G = escnn.group.ico_group()
+        if cfg.regular_multiplicity == 0:
+            rep_X = G.standard_representation
+            rep_Y = G.standard_representation
+        else:
+            rep_X = directsum([G.standard_representation] * cfg.regular_multiplicity)
+            rep_Y = directsum([G.standard_representation] * cfg.regular_multiplicity)
     elif group_label.lower() == "octa":
-        G = escnn.group.Octahedral()
+        G, _, _ = escnn.group.O3().subgroup((False, "octa"))
+        if cfg.regular_multiplicity == 0:
+            rep_X = G.standard_representation
+            rep_Y = G.standard_representation
+        else:
+            rep_X = directsum([G.standard_representation] * cfg.regular_multiplicity)
+            rep_Y = directsum([G.standard_representation] * cfg.regular_multiplicity)
     else:
         raise ValueError(f"Group {group_label} not recognized")
 
     log.info(f"Symmetry Group G: {G} of order {G.order()}")
 
-    if cfg.regular_multiplicity > 0:
-        rep_X = directsum([G.regular_representation] * cfg.regular_multiplicity)  # ρ_Χ
-        rep_Y = directsum([G.regular_representation] * cfg.regular_multiplicity)  # ρ_Y
-    elif isinstance(G, escnn.group.CyclicGroup) and G.order() == 2 and cfg.regular_multiplicity == 0:
-        rep_X = G.representations['irrep_1']  # ρ_Χ
-        rep_Y = G.representations['irrep_1']  # ρ_Y
-    else:
-        raise ValueError(f"G={G} Hx={cfg.x_symm_subgroup_id} Hy={cfg.y_symm_subgroup_id} {cfg.regular_multiplicity}")
+    if rep_Y is None or rep_X is None:
+        if cfg.regular_multiplicity > 0:
+            rep_X = directsum([G.regular_representation] * cfg.regular_multiplicity)  # ρ_Χ
+            rep_Y = directsum([G.regular_representation] * cfg.regular_multiplicity)  # ρ_Y
+        elif isinstance(G, escnn.group.CyclicGroup) and G.order() == 2 and cfg.regular_multiplicity == 0:
+            rep_X = G.representations['irrep_1']  # ρ_Χ
+            rep_Y = G.representations['irrep_1']  # ρ_Y
+        elif rep_Y is None or rep_X is None:
+            raise ValueError(
+                f"G={G} Hx={cfg.x_symm_subgroup_id} Hy={cfg.y_symm_subgroup_id} {cfg.regular_multiplicity}")
 
     return G, rep_X, rep_Y
 
@@ -379,8 +452,8 @@ def main(cfg: DictConfig):
         n_kernels=cfg.gmm.n_kernels,
         rep_X=rep_X,
         rep_Y=rep_Y,
-        means_std=cfg.gmm.means_std,
-        sampling_seed=cfg.seed,  # Each seed gets different training samples.
+        mean_max_norm=cfg.gmm.means_max_norm,
+        sampling_seed=seed,  # Each seed gets different training samples.
         gmm_seed=cfg.gmm.seed,  # Same GMM model for all seeds.
         x_subgroup_id=cfg.x_symm_subgroup_id,
         y_subgroup_id=cfg.y_symm_subgroup_id,
@@ -411,21 +484,21 @@ def main(cfg: DictConfig):
 
     # Plot the GT joint PDF and MI _______________________________________________________
     run_path = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
-    gmm_plot_path = pathlib.Path(run_path).parent.parent / f"joint_pdf-std{cfg.gmm.means_std}.png"
+    gmm_plot_path = pathlib.Path(run_path).parent.parent / f"joint_pdf.png"
 
     if not gmm_plot_path.exists():
         if x_type.size == 1 and y_type.size == 1:
             x_samples, y_samples = gmm.simulate(n_samples=5000)
             grid = plot_analytic_joint_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"joint_pdf-std{cfg.gmm.means_std}.png")
+            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"joint_pdf.png")
             grid = plot_analytic_prod_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"prod_pdf-std{cfg.gmm.means_std}.png")
+            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"prod_pdf.png")
             grid = plot_analytic_npmi_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
             grid.fig.savefig(
-                pathlib.Path(run_path).parent.parent / f"normalized_mutual_information-std{cfg.gmm.means_std}.png")
+                pathlib.Path(run_path).parent.parent / f"normalized_mutual_information.png")
             grid = plot_analytic_pmd_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
             grid.fig.savefig(
-                pathlib.Path(run_path).parent.parent / f"pointwise_mutual_dependency-std{cfg.gmm.means_std}.png")
+                pathlib.Path(run_path).parent.parent / f"pointwise_mutual_dependency.png")
 
     # Get the model ______________________________________________________________________
     nnPME = get_model(cfg, x_type, y_type, lat_type)
@@ -448,7 +521,7 @@ def main(cfg: DictConfig):
         optimizer_kwargs={"lr": cfg.lr},
         loss_fn=nnPME.loss,
         val_metrics=lambda x: measure_analytic_pmi_error(
-            gmm, nnPME, x_val, y_val, x_type, y_type, x_mean, y_mean, x_var, y_var
+            gmm, nnPME, x_val, y_val, x_type, y_type, x_mean, y_mean, x_var, y_var, debug=cfg.debug
             ),
         test_metrics=lambda x: measure_analytic_pmi_error(
             gmm, nnPME, x_test, y_test, x_type, y_type, x_mean, y_mean, x_var, y_var
@@ -460,8 +533,9 @@ def main(cfg: DictConfig):
     run_cfg = OmegaConf.to_container(cfg, resolve=True)
     logger = WandbLogger(save_dir=run_path, project=cfg.exp_name, log_model=False, config=run_cfg)
     scaled_saved_freq = int(5 * cfg.gmm.n_total_samples // cfg.batch_size)
+    BEST_CKPT_NAME, LAST_CKPT_NAME = "best", ModelCheckpoint.CHECKPOINT_NAME_LAST
     ckpt_call = ModelCheckpoint(
-        dirpath=run_path, filename="best", monitor='loss/val', save_top_k=1, save_last=True, mode='min',
+        dirpath=run_path, filename=BEST_CKPT_NAME, monitor='loss/val', save_top_k=1, save_last=True, mode='min',
         every_n_epochs=scaled_saved_freq,
         )
 
@@ -482,17 +556,20 @@ def main(cfg: DictConfig):
                                 )
 
     torch.set_float32_matmul_precision('medium')
-    last_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / ckpt_call.CHECKPOINT_NAME_LAST).with_suffix(
-        ckpt_call.FILE_EXTENSION)
+    last_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / LAST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
     trainer.fit(ncp_lightning_module,
                 train_dataloaders=train_dataloader,
                 val_dataloaders=val_dataloader,
                 ckpt_path=last_ckpt_path if last_ckpt_path.exists() else None,
                 )
 
-    ncp_lightning_module.to(device="cpu")
+    ncp_lightning_module.to(device="cpu")  # Do testing in CPU as the testing rutine is memory intensive
     # Loads the best model.
-    test_logs = trainer.test(ncp_lightning_module, dataloaders=test_dataloader)
+    best_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / BEST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
+    test_logs = trainer.test(ncp_lightning_module,
+                             dataloaders=test_dataloader,
+                             ckpt_path=best_ckpt_path if best_ckpt_path.exists() else None,
+                             )
     test_metrics = test_logs[0]  # dict: metric_name -> value
     # Save the testing matrics in a csv file using pandas.
     test_metrics_path = pathlib.Path(run_path) / "test_metrics.csv"
@@ -500,6 +577,8 @@ def main(cfg: DictConfig):
 
     # Flush the logger.
     logger.finalize(trainer.state)
+    # Wand sync
+    logger.experiment.finish()
 
     log.info(f"Logging test metrics ... ")
     m, fig_pmd, fig_cde = measure_analytic_pmi_error(

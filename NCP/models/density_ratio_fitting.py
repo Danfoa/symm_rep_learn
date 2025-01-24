@@ -1,7 +1,6 @@
 # Created by danfoa at 16/01/25
 import torch.nn
-from torchvision.transforms.v2 import Lambda
-
+from NCP.nn.layers import Lambda
 
 # Density Ratio Fitting.
 class DRF(torch.nn.Module):
@@ -85,7 +84,7 @@ class DRF(torch.nn.Module):
         return f"Density Ratio Fitting"
 
 if __name__ == "__main__":
-    from NCP.nn.layers import MLP
+    from NCP.nn.layers import Lambda, MLP
 
     in_dim = 10
 

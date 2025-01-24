@@ -141,6 +141,17 @@ class IterNorm(Module):
         self._update_running_stats(*self._compute_whitening_matrix(X))
         return (X - self.running_mean) @ self.running_whitening_mat
 
+class Lambda(torch.nn.Module):
+    def __init__(self, func):
+        super(Lambda, self).__init__()
+        self.func = func
+
+    def forward(self, x):
+        return self.func(x)
+
+    def extra_repr(self):
+        return "function={}".format(self.func)
+
 
 # class iterative_normalization_py(torch.autograd.Function):
 #     @staticmethod

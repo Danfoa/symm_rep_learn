@@ -30,7 +30,7 @@ class IMLP(EquivariantModule):
 
         equiv_out_type = FieldType(
             gspace=in_type.gspace,
-            representations=[self.G.regular_representation] * ceil(hidden_units // self.G.order())
+            representations=[self.G.regular_representation] * max(1, ceil(hidden_units // self.G.order()))
             )
 
         self.equiv_feature_extractor = EMLP(
@@ -142,6 +142,9 @@ class FourierBlock(EquivariantModule):
 
     @staticmethod
     def get_group_kwargs(group: escnn.group.Group):
+        """
+        Configuration for sampling elements of the group to achieve equivariance.
+        """
         grid_type = 'regular' if not group.continuous else 'rand'
         N = group.order() if not group.continuous else 10
         kwargs = dict()

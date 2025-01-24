@@ -93,16 +93,24 @@ class TrainingModule(lightning.LightningModule):
         self._time = time.time()
 
     def on_train_epoch_end(self) -> None:
-        epoch_time = (time.time() - self._time)
-        self.log("epoch_time", epoch_time, on_epoch=True)
+        if hasattr(self, "_time"):
+            epoch_time = (time.time() - self._time)
+            self.log("epoch_time", epoch_time, on_epoch=True)
+
+    def on_validation_start(self) -> None:
+        self._val_metrics_run = False
 
     def on_validation_epoch_end(self) -> None:
-        if self._val_metrics is not None:
+        if self._val_metrics is not None and self._val_metrics_run is False:
             metrics = self._val_metrics(None)
             self.log_metrics(metrics, suffix="val", batch_size=None)
+            self._val_metrics_run = True
+
+    def on_test_start(self) -> None:
+        self._test_metrics_run = False
 
     def on_test_epoch_end(self) -> None:
-        if self._test_metrics is not None:
+        if self._test_metrics is not None and self._test_metrics_run is False:
             metrics = self._test_metrics(None)
             self.log_metrics(metrics, suffix="test", batch_size=None)
 

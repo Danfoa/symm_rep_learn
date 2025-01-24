@@ -323,22 +323,31 @@ def plot_analytic_pmd_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representati
     grid.fig.tight_layout()
     return grid
 
-def plot_npmi_error_distribution(NPMI_gt, NPMI_err):
+def plot_pmd_error_distribution(pmd_gt, pmd):
     # Create a JointGrid for the 2D KDE plot with marginals
     # Set PLT backed to AGG
+    max_pmd = np.max(pmd_gt)
     plt.switch_backend('agg')
-    fig = plt.figure(figsize=(8, 6))
-    contour = sns.kdeplot(
-        x=NPMI_gt,
-        y=NPMI_err,
-        fill=True,
-        cmap=sns.cubehelix_palette(as_cmap=True),
-        levels=15,
-        bw_adjust=0.6,
-        )
-    plt.colorbar(contour.collections[0], label='Density')
-    plt.xlabel('NPMI')
-    plt.ylabel(r'$NPMI$ - $NPMI_{\text{pred}}$')
-    plt.title('2D Distribution of NPMI Error') # Ensure aspect ratio is the same for both axes
+    fig = plt.figure(figsize=(6, 6))
+    # contour = sns.kdeplot(
+    #     x=pmd_gt,
+    #     y=pmd,
+    #     fill=True,
+    #     cmap=sns.cubehelix_palette(as_cmap=True),
+    #     levels=10,
+    #     bw_adjust=0.4,
+    #     clip=((0, None), (0, None))
+    #     )
+    # Plot samples in very very transparent markers
+    plt.scatter(pmd_gt, pmd, alpha=0.1)
+    # Plot a line from 0,0 to max_pmd, max_pmd
+    plt.plot([0, max_pmd], [0, max_pmd], 'k--')
+    # Set axes to be of equal aspect ratio and limits from 0 to max_pmd
+    plt.axis('equal')
+    plt.xlim([0, max_pmd])
+    # plt.colorbar(contour.collections[0], label='Density')
+    plt.xlabel('PMD ground truth')
+    plt.ylabel(r'PMD prediction')
+    plt.title('PMD regression error') # Ensure aspect ratio is the same for both axes
     # Set the limits for the marginal axes to match the joint axes
     return fig

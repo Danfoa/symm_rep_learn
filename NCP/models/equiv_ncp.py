@@ -188,10 +188,10 @@ class ENCP(NCP):
                        f"||mu_y||":       torch.sqrt(hy_centering_loss),
                        f"||Vy - I||_F^2": orthonormality_hy / embedding_dim_y,
                        } | {
-                          f"||Cx||_F^2/iso{k}": Cx_k_fro_2 / fx_c_iso[k].shape[-1] for k, Cx_k_fro_2 in
+                          f"||Cx||_F^2iso/{k}": Cx_k_fro_2 / fx_c_iso[k].shape[-1] for k, Cx_k_fro_2 in
                           enumerate(Cx_iso_fro_2)
                           } | {
-                          f"||Cy||_F^2/iso{k}": Cy_k_fro_2 / hy_c_iso[k].shape[-1] for k, Cy_k_fro_2 in
+                          f"||Cy||_F^2iso/{k}": Cy_k_fro_2 / hy_c_iso[k].shape[-1] for k, Cy_k_fro_2 in
                           enumerate(Cy_iso_fro_2)
                           }
 
@@ -248,9 +248,9 @@ class ENCP(NCP):
                             "E_p(x,y) k_r(x,y)":     Cxy_F_2.detach(),
                             }
                 for k, (Cxy_k_fro_2, tr_Pxyx_k) in enumerate(zip(Cxy_iso_fro_2, tr_Pxyx_iso)):
-                    metrics[f"E_p(x,y) k_r(x,y)/iso{k}"] = Cxy_k_fro_2 / self.iso_subspace_dims[k]
-                    metrics[f"E_p(x)p(y) k_r(x,y)^2/iso{k}"] = tr_Pxyx_k
-                    metrics[f"||k(x,y) - k_r(x,y)||/iso{k}"] = -2 * Cxy_k_fro_2 + tr_Pxyx_k
+                    metrics[f"E_p(x,y) k_r(x,y)iso/{k}"] = Cxy_k_fro_2 / self.iso_subspace_dims[k]
+                    metrics[f"E_p(x)p(y) k_r(x,y)^2iso/{k}"] = tr_Pxyx_k
+                    metrics[f"||k(x,y) - k_r(x,y)||iso/{k}"] = -2 * Cxy_k_fro_2 + tr_Pxyx_k
         elif self.truncated_op_bias == "full_rank":
             # k_r(x,y) = 1 + f(x)^T Dr h(y) = 1 + Σ_κ f_κ(x)^T Dr_κ h_κ(y)
             n_samples = fx_c.shape[0]
@@ -283,9 +283,9 @@ class ENCP(NCP):
                             "E_p(x,y) k_r(x,y)":     E_pxy_kr.detach(),
                             }
                 for k in range(self.n_iso_subspaces):
-                    metrics[f"||k(x,y) - k_r(x,y)||/iso{k}"] = truncation_err_iso[k]
-                    metrics[f"E_p(x,y) k_r(x,y)/iso{k}"] = E_pxy_kr_iso[k]
-                    metrics[f"E_p(x)p(y) k_r(x,y)^2/iso{k}"] = E_px_py_kr_iso[k]
+                    metrics[f"||k(x,y) - k_r(x,y)||iso/{k}"] = truncation_err_iso[k]
+                    metrics[f"E_p(x,y) k_r(x,y)iso/{k}"] = E_pxy_kr_iso[k]
+                    metrics[f"E_p(x)p(y) k_r(x,y)^2iso/{k}"] = E_px_py_kr_iso[k]
         else:
             raise ValueError(f"Invalid truncated operator bias: {self.truncated_op_bias}")
 
@@ -320,7 +320,7 @@ class ENCP(NCP):
 
         truncation_err = -2 * tr_CxyS + tr_CxSCyS
         with torch.no_grad():
-            metrics = {f"||E - diag(E_r)||_HS/iso{k}": -2 * A + B for k, (A, B) in
+            metrics = {f"||E - diag(E_r)||_HSiso/{k}": -2 * A + B for k, (A, B) in
                        enumerate(zip(tr_CxyS_iso, tr_CxSCyS_iso))}
         # L = -2 tr (Cxy Σ) + tr (Cx Σ Cy Σ)
         return truncation_err, metrics
@@ -336,8 +336,8 @@ class ENCP(NCP):
         hy_iso, reps_Hy_iso = self._orth_proj_isotypic_subspaces(z=hy), hy.type.representations
 
         if self.idx_inv_subspace is not None:
-            self.mean_fx = fx_iso[self.idx_inv_subspace].mean(dim=0)
-            self.mean_hy = hy_iso[self.idx_inv_subspace].mean(dim=0)
+            self.mean_fx = fx_iso[self.idx_inv_subspace].mean(dim=0, keepdim=True)
+            self.mean_hy = hy_iso[self.idx_inv_subspace].mean(dim=0, keepdim=True)
 
         # Compute the empirical covariance matrices
         nk = self.n_iso_subspaces
