@@ -682,6 +682,22 @@ def get_train_test_val_file_paths(data_path: Path):
     return train_data, test_data, val_data
 
 
+class ResidualEncoder(torch.nn.Module):
+    """Residual encoder for NCP. This encoder processes batches of shape (batch_size, dim_y) and
+    returns (batch_size, embedding_dim + dim_y).
+    """
+
+    def __init__(self, encoder: torch.nn.Module, dim_y: int):
+        super(ResidualEncoder, self).__init__()
+        self.encoder = encoder
+        self.dim_y = dim_y
+
+    def forward(self, y: torch.Tensor):
+        embedding = self.encoder(y)
+        out = torch.cat([embedding, y], dim=-1)
+        return out
+
+
 def get_model2(cfg: DictConfig) -> torch.nn.Module:
     # TODO: This function should be refactored into a utils file
     embedding_dim = cfg.architecture.embedding_dim
@@ -714,6 +730,51 @@ def get_model2(cfg: DictConfig) -> torch.nn.Module:
             truncated_op_bias=cfg.architecture.last_layer,
         )
         return ncp
+    elif cfg.model.lower() == "ncp_reg":  # NCP for regression
+        from NCP.models.ncp import NCP
+        from NCP.mysc.utils import class_from_name
+        from NCP.nn.layers import MLP
+
+        activation = class_from_name("torch.nn", cfg.architecture.activation)
+        kwargs_y = dict(
+            output_shape=embedding_dim,
+            n_hidden=cfg.architecture.hidden_layers,
+            layer_size=cfg.architecture.hidden_units,
+            activation=activation,
+            bias=False,
+            iterative_whitening=cfg.architecture.iter_whitening,
+        )
+        kwargs_x = kwargs_y.copy()
+        kwargs_x["output_shape"] += dim_y  # We enforce the latent representations to be of the same dim
+        fx = MLP(input_shape=dim_x, **kwargs_x)
+        fy = ResidualEncoder(encoder=MLP(input_shape=dim_y, **kwargs_y), dim_y=dim_y)
+        ncp_reg = NCP(
+            embedding_x=fx,
+            embedding_y=fy,
+            embedding_dim=embedding_dim + dim_y,
+            gamma=cfg.optim.regularization,
+            truncated_op_bias=cfg.architecture.last_layer,
+        )
+        return ncp_reg
+
+    elif cfg.model.lower() == "mlp_reg":
+        from NCP.mysc.utils import class_from_name
+        from NCP.nn.layers import MLP
+
+        activation = class_from_name("torch.nn", cfg.architecture.activation)
+        mlp = MLP(
+            input_shape=dim_x,
+            output_shape=dim_y,
+            n_hidden=cfg.architecture.hidden_layers,
+            layer_size=cfg.architecture.hidden_units * 2,
+            activation=activation,
+            bias=False,
+        )
+        mlp.loss = torch.nn.functional.mse_loss
+        raise NotImplementedError(
+            "TrainingModule must be either updated to accept models that don't process Y or a new Lightning Module must be defined."
+        )
+        return mlp
     elif cfg.model.lower() == "drf":  # Density Ratio Fitting
         from NCP.models.density_ratio_fitting import DRF
         from NCP.mysc.utils import class_from_name
@@ -793,7 +854,7 @@ def com_momentum_dataset(path_ds, gpu_num):
     )
 
 
-def run_com_regression(model, x_test, y_test, y_train):
+def run_com_regression(model, x_test, y_test, y_train, col_trick):
     """Predicts CoM Momenta from test sample (x_test, y_test)."""
     # TODO: Y is currently 6 dimension, without 'KinE'
     with torch.no_grad():
@@ -801,6 +862,15 @@ def run_com_regression(model, x_test, y_test, y_train):
         hy_train = model.embedding_y(y_train)  # shape: (n_train, embedding_dim)
 
         n_train = y_train.shape[0]
+        embedding_dim = hy_train.shape[1] - 6
+
+        # The orthonormality conditions give us that <h_j, y> is zero for all j <= r
+        # This trick is being performed by adding the observables we want to regress
+        # into the latent space by construction. This corresponds roughly to the
+        # generalized SVD of the operator E_{Y|X}.
+        if col_trick:
+            hy_train[:, :embedding_dim] = 0
+
         y_mean = y_train.mean(axis=0)  # shape: (6,)
 
         # shape: (n_test, 6). Check formula 12 from https://arxiv.org/pdf/2407.01171

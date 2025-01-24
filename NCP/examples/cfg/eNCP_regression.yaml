@@ -8,7 +8,7 @@ env:
   device: 5                 # gpu number to use
 
 # MODEL CONFIG
-model: NCP                  # 'NCP' or 'eNCP' or 'DRF'
+model: NCP_reg              # 'NCP' or 'NCP_reg' or 'eNCP' or 'DRF'
 architecture:
   hidden_layers: 4
   hidden_units: 128
@@ -23,7 +23,7 @@ optim:
   lr: 5e-4                  # Learning rate NCP train best at low lr values < 1e-3
   batch_size: 2048          # The higher the best
   max_epochs: 2000          # Number of passes over dataset before stop training. Early stopping is used.
-  patience: 10              # Epochs to wait for improvement before early stopping
+  patience: 50              # Epochs to wait for improvement before early stopping
 
 # EXPERIMENT CONFIG
 experiment:                 # CoM momentum estimation (regression). See Section VI of https://arxiv.org/abs/2302.10433.
