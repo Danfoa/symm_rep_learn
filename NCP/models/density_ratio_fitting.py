@@ -4,7 +4,6 @@ from NCP.nn.layers import Lambda
 
 # Density Ratio Fitting.
 class DRF(torch.nn.Module):
-
     def __init__(self, embedding: torch.nn.Module, gamma: float = 0.01):
         super(DRF, self).__init__()
         self.gamma = gamma
@@ -12,10 +11,10 @@ class DRF(torch.nn.Module):
             embedding,
             Lambda(lambda x: 1 + x),  # 1 of conditional independence, NN learns the remainder part.
             torch.nn.Softplus(),  # Ensure estimates of PMD are positive and that gradients are well-behaved
-            )
+        )
 
     def forward(self, x: torch.Tensor, y: torch.Tensor):
-        """ Computes the estimations of the Pointwise Mutual Dependency ratio for each pair of x and y.
+        """Computes the estimations of the Pointwise Mutual Dependency ratio for each pair of x and y.
 
         Args:
             x: (n_samples, x_dim) tensor
@@ -37,7 +36,7 @@ class DRF(torch.nn.Module):
 
         # Forward pass through the embedding function
         PMD = self.pmd(xy_pairs)
-        assert PMD.shape == (n_samples ** 2, 1)
+        assert PMD.shape == (n_samples**2, 1)
 
         # Reshape the scores back to (n_samples, n_samples)
         PMD_mat = PMD.view(n_samples, n_samples)
@@ -48,8 +47,15 @@ class DRF(torch.nn.Module):
         xy = torch.cat((x, y), dim=1)
         return self.pmd(xy).squeeze()
 
+    def pointwise_mutual_information(self, x: torch.Tensor, y: torch.Tensor):
+        PMD = self.pointwise_mutual_dependency(x, y)
+        PMD_pos = torch.clamp(PMD, min=1e-6)  # Need to clamp to avoid NaNs.
+        pmi = torch.log(PMD_pos)
+        assert torch.isfinite(pmi).all(), "NaN or Inf values found in the PMI estimation"
+        return pmi
+
     def loss(self, pmd_mat: torch.Tensor):
-        """ Computes the Density Ratio Fitting Loss
+        """Computes the Density Ratio Fitting Loss
 
         Args:
             pmd_mat: (n_samples, n_samples) tensor containing the PMD ratio for all pairwise combinations of x and y.
@@ -62,37 +68,44 @@ class DRF(torch.nn.Module):
         n_samples = pmd_mat.shape[0]
         # E_p(x,y)[pmd(x,y)]
         E_pxy = torch.diag(pmd_mat).mean()
-        pmd_2 = pmd_mat ** 2
+        pmd_2 = pmd_mat**2
         # E_p(x)p(y)[pmd(x,y)^2]
         E_px_py = (pmd_2.sum() - pmd_2.diag().sum()) / (n_samples * (n_samples - 1))
 
         # Penalization term: 1 - E_p(x)p(y)[pmd(x,y)]
-        prob_mass_penalization = (1 - pmd_mat.mean())**2
+        prob_mass_penalization = (1 - pmd_mat.mean()) ** 2
 
         # L(x,y) = -2 E_p(x,y)[pmd(x,y)] + E_p(x)p(y)[pmd(x,y)^2] + 1 - λ * ||E_p(x)p(y)[pmd(x,y)]||^2
-        density_ratio_err = (-2 * E_pxy) + (E_px_py) + 1    # Deflated loss
+        density_ratio_err = (-2 * E_pxy) + (E_px_py) + 1  # Deflated loss
         loss = density_ratio_err + self.gamma * prob_mass_penalization
         metrics = {
             "||k(x,y) - k_r(x,y)||": density_ratio_err.detach(),
             "E_p(x)p(y) k_r(x,y)^2": E_px_py.detach() - 1,
             "E_p(x,y) k_r(x,y)": E_pxy.detach() - 1,
-            "Prob Mass Distortion": prob_mass_penalization.detach()
-            }
+            "Prob Mass Distortion": prob_mass_penalization.detach(),
+        }
         return loss, metrics
 
     def extra_repr(self) -> str:
-        return f"Density Ratio Fitting"
+        return "Density Ratio Fitting"
+
 
 if __name__ == "__main__":
     from NCP.nn.layers import Lambda, MLP
 
     in_dim = 10
 
-    fxy = MLP(input_shape=in_dim, output_shape=1, n_hidden=3, layer_size=64, activation=torch.nn.GELU)
+    fxy = MLP(
+        input_shape=in_dim,
+        output_shape=1,
+        n_hidden=3,
+        layer_size=64,
+        activation=torch.nn.GELU,
+    )
     drf = DRF(embedding=fxy)
 
     x = torch.randn(10, in_dim // 2)
-    y = torch.randn(10, in_dim // 2 )
+    y = torch.randn(10, in_dim // 2)
 
     scores = drf(x, y)
 
@@ -108,7 +121,8 @@ if __name__ == "__main__":
     joint_scores_diag = torch.diag(scores.squeeze())
 
     # Check if the individual scores match the diagonal elements
-    assert torch.allclose(torch.tensor(joint_scores), joint_scores_diag, rtol=1e-5, atol=1e-5), \
+    assert torch.allclose(torch.tensor(joint_scores), joint_scores_diag, rtol=1e-5, atol=1e-5), (
         f"err_max = {torch.max(torch.abs(torch.tensor(joint_scores) - joint_scores_diag))}"
+    )
 
     print("Test passed: Diagonal scores match individual scores")

@@ -18,8 +18,8 @@ log = logging.getLogger(__name__)
 
 def indep_gaussian_dataset(n_samples, dim_x, dim_y, device):
     """Z = (X,Y), where Z ~ N(0,Id_{dim_x+dim_y})."""
-    x_samples = stats.norm.rvs(loc=1, scale=1, size=(n_samples, dim_x))
-    y_samples = stats.norm.rvs(loc=1, scale=1, size=(n_samples, dim_y))
+    x_samples = stats.norm.rvs(loc=0, scale=1, size=(n_samples, dim_x))
+    y_samples = stats.norm.rvs(loc=0, scale=1, size=(n_samples, dim_y))
 
     # Train, val, test splitting
     train_ratio, val_ratio, test_ratio = 0.7, 0.15, 0.15
