@@ -1,3 +1,5 @@
+/NCP/experiments
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -169,8 +171,5 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-NCP/lightning_logs/
 
-NCP/outputs/
-
-lightning_logs/
+NCP/models/lightning_logs/

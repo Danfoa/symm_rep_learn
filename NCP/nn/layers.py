@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import torch
 from torch.nn import Conv2d, Dropout, Linear, MaxPool2d, Module, ReLU, Sequential
 
@@ -291,3 +293,17 @@ class Lambda(torch.nn.Module):
 #             "{num_features}, num_channels={num_channels}, T={T}, eps={eps}, "
 #             "momentum={momentum}, affine={affine}".format(**self.__dict__)
 #         )
+class ResidualEncoder(torch.nn.Module):
+    """Residual encoder for NCP. This encoder processes batches of shape (batch_size, dim_y) and
+    returns (batch_size, embedding_dim + dim_y).
+    """
+
+    def __init__(self, encoder: torch.nn.Module, dim_y: int):
+        super(ResidualEncoder, self).__init__()
+        self.encoder = encoder
+        self.dim_y = dim_y
+
+    def forward(self, y: torch.Tensor):
+        embedding = self.encoder(y)
+        out = torch.cat([embedding, y], dim=-1)
+        return out

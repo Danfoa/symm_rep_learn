@@ -47,18 +47,20 @@ class SymmGaussianMixture(GaussianMixture):
         # If a subgroup is specified, restrict the GMM to that subgroup
         if x_subgroup_id is not None:
             x_subgroup_id = self.G.subgroup_trivial_id if x_subgroup_id == "trivial" else x_subgroup_id
-            self.Hx, self.Hx2G, self.G2Hx = self.G.subgroup(x_subgroup_id)
+            self.Hx, _, G2Hx = self.G.subgroup(x_subgroup_id)
+            self.G2Hx = lambda g: G2Hx(g) if G2Hx(g) is not None else self.Hx.identity
             rep_X = rep_X.restrict(x_subgroup_id)
             log.info(f"Restricting the X component to subgroup {self.Hx} of order {self.Hx.order()}")
         else:
-            self.Hx, self.Hx2G, self.G2Hx = self.G, lambda x: x, lambda x: x
+            self.Hx, _, self.G2Hx = self.G, lambda x: x, lambda x: x
         if y_subgroup_id is not None:
             y_subgroup_id = self.G.subgroup_trivial_id if y_subgroup_id == "trivial" else y_subgroup_id
-            self.Hy, self.Hy2G, self.G2Hy = self.G.subgroup(y_subgroup_id)
+            self.Hy, _, G2Hy = self.G.subgroup(y_subgroup_id)
+            self.G2Hy = lambda g: G2Hy(g) if G2Hy(g) is not None else self.Hy.identity
             rep_Y = rep_Y.restrict(y_subgroup_id)
             log.info(f"Restricting the Y component to subgroup {self.Hy} of order {self.Hy.order()}")
         else:
-            self.Hy, self.Hy2G, self.G2Hy = self.G, lambda x: x, lambda x: x
+            self.Hy, _, self.G2Hy = self.G, lambda x: x, lambda x: x
 
         """  set parameters, calculate weights, means and covariances """
         self.n_kernels = n_kernels
@@ -73,9 +75,9 @@ class SymmGaussianMixture(GaussianMixture):
         # self.means = self.random_state_params.normal(
         #     loc=np.zeros([self.ndim]), scale=self.means_max_norm, size=[n_kernels, self.ndim]
         #     )  # shape(n_kernels, n_dims)
-        norms_x = self.random_state_params.uniform(low=self.means_max_norm * 0.1, high=self.means_max_norm,
+        norms_x = self.random_state_params.uniform(low=self.means_max_norm * 0.05, high=self.means_max_norm,
                                                    size=(n_kernels, 1))
-        norms_y = self.random_state_params.uniform(low=self.means_max_norm * 0.1, high=self.means_max_norm,
+        norms_y = self.random_state_params.uniform(low=self.means_max_norm * 0.05, high=self.means_max_norm,
                                                    size=(n_kernels, 1))
         unit_vects = self.random_state_params.normal(size=(n_kernels, self.ndim_x))
         unit_vects /= np.linalg.norm(unit_vects, axis=-1, keepdims=True)
@@ -164,16 +166,16 @@ class SymmGaussianMixture(GaussianMixture):
         # Sample diagonal entries / eigenvalues of the covariance matrix
         num = means.shape[0]
 
-        pairwise_dist = np.linalg.norm(means[:, None, :] - means[None, :, :], axis=-1)
         norms = np.linalg.norm(means, axis=-1)
-        max_dist = np.max(np.concatenate([pairwise_dist, norms[:, None]], axis=-1))
+        min_norm, max_diff = np.min(norms), np.max(norms) - np.min(norms)
+        max_dis = max_diff # + min_norm
         eigenvalues = []
         for i, center in enumerate(means):
             # norm = np.linalg.norm(center)
             # Center should be 3 standard deviations away from the mean. Eigval = variance
-            max_var = max_dist / 3
+            max_var = max_dis / 3
             # Support of the gaussian should not collapse to less than 10% of the norm.
-            min_var = 0.1 * max_dist
+            min_var = max_dis / 2 / 3
             min_eigval, max_eigval = min_var, max_var
             mean_eigval = (max_eigval - min_eigval) / 2
             std_eigval = (max_eigval - min_eigval)

@@ -80,7 +80,7 @@ class EMLP(EquivariantModule):
         self.in_type, self.out_type = in_type, out_type
 
         hidden_irreps = hidden_irreps or self.G.regular_representation.irreps
-        hidden_irreps = set(hidden_irreps)
+        hidden_irreps = tuple(set(hidden_irreps))
         signal_dim = sum(self.G.irrep(*id).size for id in hidden_irreps)
         # Number of multiplicities / signals in the hidden layers
         channels = int(ceil(hidden_units // signal_dim))

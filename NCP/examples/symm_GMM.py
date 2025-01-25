@@ -22,7 +22,7 @@ from torch.utils.data import DataLoader, default_collate, TensorDataset
 
 from NCP.cde_fork.density_simulation.symmGMM import SymmGaussianMixture
 from NCP.examples.symmGMM.plot_utils import (plot_analytic_joint_2D, plot_analytic_npmi_2D, plot_analytic_pmd_2D,
-                                             plot_analytic_prod_2D, plot_pmd_error_distribution)
+                                             plot_analytic_prod_2D, plot_pmd_err_2D, plot_pmd_error_distribution)
 from NCP.models.ncp_lightning_module import TrainingModule
 
 import logging
@@ -30,7 +30,9 @@ import logging
 from NCP.nn.equiv_layers import IMLP
 
 log = logging.getLogger(__name__)
-
+DPI = 180
+X_LIMS = [None, None]
+Y_LIMS = [None, None]
 
 def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
     embedding_dim = lat_type.size
@@ -115,6 +117,12 @@ def gmm_dataset(cfg: DictConfig, gmm: SymmGaussianMixture, rep_X: Representation
     x_samples, y_samples = gmm.simulate(n_samples=total_samples)
     MI = gmm.MI(x_samples, y_samples),
     log.info(f"\n\n MI estimation: {MI}  with {total_samples} samples\n\n")
+
+    # Hack to standardize the 2D plots
+    if gmm.ndim_x == 1 and gmm.ndim_y == 1:
+        X_LIMS =  [np.min(x_samples), np.max(x_samples)]
+        Y_LIMS =  [np.min(y_samples), np.max(y_samples)]
+
     x_mean, x_var = symmetric_moments(x_samples, rep_X)
     y_mean, y_var = symmetric_moments(y_samples, rep_Y)
     # Train, val, test splitting
@@ -206,13 +214,8 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples,
     G_elements = [G.identity] + np.random.choice(G.elements[1:], min(G.order() - 1, 5), replace=False).tolist()
     G_X, G_Y = [], []
     for g in G_elements:
-        if hasattr(gmm, "G2H"):
-            g_X = X_pairs if g == G.identity else np.einsum("ij,...j->...i", gmm.rep_X(gmm.G2H(g)), X_pairs)
-            g_Y = Y_pairs if g == G.identity else np.einsum("ij,...j->...i", gmm.rep_Y(gmm.G2H(g)), Y_pairs)
-        else:
-            g_X = X_pairs if g == G.identity else np.einsum("ij,...j->...i", gmm.rep_X(g), X_pairs)
-            g_Y = Y_pairs if g == G.identity else np.einsum("ij,...j->...i", gmm.rep_Y(g), Y_pairs)
-
+        g_X = X_pairs if g == G.identity else np.einsum("ij,...j->...i", gmm.rep_X(gmm.G2Hx(g)), X_pairs)
+        g_Y = Y_pairs if g == G.identity else np.einsum("ij,...j->...i", gmm.rep_Y(gmm.G2Hy(g)), Y_pairs)
         G_X.append(g_X)
         G_Y.append(g_Y)
     G_X = np.concatenate(G_X, axis=0)
@@ -293,66 +296,11 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples,
     X_c_cond = X_c[cond_idx]
 
     # X_range_np = np.linspace(x_max, x_max, range_n_samples)
-    fig_cde, fig_pmd = None, None
+    fig_err, fig_pmd = None, None
     if y_samples.shape[-1] == 1:
-        x_max, y_max = max(np.abs(x_samples)), max(np.abs(y_samples))
-        Y_range_np = np.linspace(-y_max, y_max, range_n_samples)
-        p_Y_range_np = gmm.pdf_y(Y_range_np)
-        P_Y_range = torch.from_numpy(p_Y_range_np).to(device=device, dtype=dtype)
-        Y_c_range = ((torch.from_numpy(Y_range_np) - y_mean) / torch.sqrt(y_var)).to(device=device, dtype=dtype)
-
-        CDFs_mse, CDFs_gt, CDFs = [], [], []
-        for x_cond, x_c_cond in zip(X_cond_np, X_c_cond):  # Comptue p(y | x) for each conditioning value
-            cdf_gt = gmm.pdf(X=np.broadcast_to(x_cond, Y_range_np.shape), Y=Y_range_np)
-
-            if isinstance(nn_model, ENCP):
-                _x = x_type(torch.broadcast_to(x_c_cond, Y_c_range.shape)).to(device=device, dtype=dtype)
-                _y = y_type(Y_c_range).to(device=device, dtype=dtype)
-            else:
-                _x, _y = (torch.broadcast_to(x_c_cond, Y_range_np.shape), Y_c_range)
-
-            pmd = nn_model.pointwise_mutual_dependency(_x, _y)  # k_r(x,y) ≈ p(x,y) / p(x)p(y)
-
-            cdf = (pmd * P_Y_range).cpu().numpy()  # k(x,y) * p(y) = p(y | x)
-            CDFs_gt.append(cdf_gt)
-            CDFs.append(cdf)
-            CDFs_mse.append(((cdf - cdf_gt) ** 2).mean())
-
-        metrics["CDF/mse"] = np.mean(CDFs_mse)
-
-        if plot:
-            # Plot the 4 CDFs each pair in a separate subplot
-            import plotly.graph_objects as go
-            fig_cde = make_subplots(rows=4, cols=1, shared_xaxes=True,
-                                    subplot_titles=[rf"$p(y \mid x_{k})$" for k in range(4)])
-            colors = {
-                "p(y)":              "blue",
-                r"$\hat{p}(y | x)$": "red",
-                r"$p(y | x)$":       "green"
-                }
-
-            for i, (cdf, cdf_gt) in enumerate(zip(CDFs, CDFs_gt)):
-                fig_cde.add_trace(
-                    go.Scatter(x=Y_range_np.squeeze(), y=p_Y_range_np.squeeze(), mode='lines', name="p(y)",
-                               line=dict(dash='dash', color=colors["p(y)"]),
-                               legendgroup='p(y)', showlegend=(i == 0)), row=i + 1, col=1)
-                fig_cde.add_trace(
-                    go.Scatter(x=Y_range_np.squeeze(), y=cdf.squeeze(), mode='lines', name=r"$\hat{p}(y | x)$",
-                               line=dict(color=colors[r"$\hat{p}(y | x)$"]),
-                               legendgroup=r"$\hat{p}(y | x)$", showlegend=(i == 0)), row=i + 1, col=1)
-                fig_cde.add_trace(
-                    go.Scatter(x=Y_range_np.squeeze(), y=cdf_gt.squeeze(), mode='lines', name=r"$p(y | x)$",
-                               line=dict(color=colors[r"$p(y | x)$"]),
-                               legendgroup=r"$p(y | x)$", showlegend=(i == 0)), row=i + 1, col=1)
-                # Add shaded area for negative values of cdf
-                fig_cde.add_trace(go.Scatter(x=Y_range_np.squeeze(), y=np.minimum(cdf.squeeze(), 0), mode='lines',
-                                             fill='tozeroy',
-                                             fillcolor=colors[r"$\hat{p}(y | x)$"],
-                                             opacity=.5,
-                                             line=dict(color='rgba(0,0,0,0)'), showlegend=False), row=i + 1, col=1)
-
-            fig_cde.update_layout(template="plotly_white")
-
+        g = plot_pmd_err_2D(gmm, nn_model, G, x_samples, y_samples, x_mean, x_var, x_type, y_mean, y_var, y_type,
+                            X_LIMS, Y_LIMS)
+        fig_err = g.fig
     # Return to original device.
     nn_model.to(device=prev_device)
 
@@ -362,11 +310,11 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples,
         G_pmd_gt, G_pmd_pred = [], []
         for g in G_elements:
             pmd_gt_joint = np.diag(pmd_xy_gt_mat)
-            pmd_pred_joint = np.diag(G_pmd_xy_pred_mat[G.identity])
+            pmd_pred_joint = np.diag(G_pmd_xy_pred_mat[g])
             prod_idx = np.random.choice(len(pmd_gt_joint), n_samples_per_g, replace=False)
 
             pmd_gt_prod = pmd_xy_gt_mat[np.triu_indices(n_samples_per_g, k=1)][prod_idx]
-            pmd_pred_prod = G_pmd_xy_pred_mat[G.identity][np.triu_indices(n_samples_per_g, k=1)][prod_idx]
+            pmd_pred_prod = G_pmd_xy_pred_mat[g][np.triu_indices(n_samples_per_g, k=1)][prod_idx]
 
             pmd_gt = np.concatenate([pmd_gt_joint, pmd_gt_prod])
             pmd_pred = np.concatenate([pmd_pred_joint, pmd_pred_prod])
@@ -382,7 +330,7 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples,
             log.info(f"Saving NPMI data to {save_path.absolute()}")
             np.savez(save_path / "npmi_data.npz", pmd_gt=G_pmd_gt, pmd_pred=G_pmd_pred)
         fig_pmd = plot_pmd_error_distribution(pmd_gt, pmd_pred)
-        return metrics, fig_pmd, fig_cde
+        return metrics, fig_pmd, fig_err
 
     return metrics
 
@@ -398,6 +346,10 @@ def get_symmetry_group(cfg: DictConfig):
         if cfg.regular_multiplicity > 0:
             rep_X = directsum([G.regular_representation] * cfg.regular_multiplicity)  # ρ_Χ
             rep_Y = directsum([G.regular_representation] * cfg.regular_multiplicity)  # ρ_Y
+        else:
+            rep_X = G.representations['irrep_1']  # ρ_Χ
+            rep_Y = G.representations['irrep_1']  # ρ_Y
+
     elif group_label[0] == "D" and group_label[1:].isdigit():
         N = int(group_label[1:])
         G = escnn.group.DihedralGroup(N)
@@ -467,20 +419,49 @@ def main(cfg: DictConfig):
     x_val, y_val = val_samples
     x_test, y_test = test_samples
 
-    # Define the Input and Latent types for ESCNN
+    # Define the Input and Latent types for the model ______________________________________
     x_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=[rep_X])
     y_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=[rep_Y])
+
+    if cfg.constraint_out_irreps_dim:
+        # Avoid introducing irreducible representations of larger dimension that the ones in the input representation
+        _x_in_max_irrep_dim = np.max([G.irrep(*id).size for id in x_type.representation.irreps])
+        _y_in_max_irrep_dim = np.max([G.irrep(*id).size for id in y_type.representation.irreps])
+        _max_dk = max(_x_in_max_irrep_dim, _y_in_max_irrep_dim)
+        full_group_irreps = G.regular_representation.irreps
+        hidden_irreps = [id for id in full_group_irreps if G.irrep(*id).size <= _max_dk]
+        hidden_irreps = tuple(set(hidden_irreps))
+        lat_rep = G.spectral_regular_representation(*hidden_irreps, name=None)
+    else:
+        lat_rep = G.regular_representation
+        
     lat_type = FieldType(
         gspace=escnn.gspaces.no_base_space(G),
-        representations=[G.regular_representation] * ceil(cfg.embedding['embedding_dim'] / G.order())
+        representations=[lat_rep] * max(1, ceil(cfg.embedding['embedding_dim'] // lat_rep.size))
         )
 
+    # Get the model ______________________________________________________________________
+    nnPME = get_model(cfg, x_type, y_type, lat_type)
+    print(nnPME)
+    # Print the number of parameters
+    n_params = sum(p.numel() for p in nnPME.parameters())
+    log.info(f"Number of parameters: {n_params}")
+    nnPME.to(device=cfg.device)
+
+    # Get the torch datasets. ____________________________________________________________
     train_ds, val_ds, test_ds = datasets
 
     # ESCNN equivariagnt models expect GeometricTensors.
     def geom_tensor_collate_fn(batch) -> [GeometricTensor, GeometricTensor]:
         x_batch, y_batch = default_collate(batch)
         return GeometricTensor(x_batch, x_type), GeometricTensor(y_batch, y_type)
+
+    # Define the dataloaders
+    from NCP.models.equiv_ncp import ENCP
+    collate_fn = geom_tensor_collate_fn if isinstance(nnPME, ENCP) else default_collate
+    train_dataloader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_fn)
+    val_dataloader = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=collate_fn)
+    test_dataloader = DataLoader(test_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=collate_fn)
 
     # Plot the GT joint PDF and MI _______________________________________________________
     run_path = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
@@ -490,29 +471,13 @@ def main(cfg: DictConfig):
         if x_type.size == 1 and y_type.size == 1:
             x_samples, y_samples = gmm.simulate(n_samples=5000)
             grid = plot_analytic_joint_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"joint_pdf.png")
+            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"joint_pdf.png", dpi=DPI)
             grid = plot_analytic_prod_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"prod_pdf.png")
+            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"prod_pdf.png", dpi=DPI)
             grid = plot_analytic_npmi_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(
-                pathlib.Path(run_path).parent.parent / f"normalized_mutual_information.png")
+            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"normalized_mutual_information.png", dpi=DPI)
             grid = plot_analytic_pmd_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(
-                pathlib.Path(run_path).parent.parent / f"pointwise_mutual_dependency.png")
-
-    # Get the model ______________________________________________________________________
-    nnPME = get_model(cfg, x_type, y_type, lat_type)
-    print(nnPME)
-    # Print the number of parameters
-    n_params = sum(p.numel() for p in nnPME.parameters())
-    log.info(f"Number of parameters: {n_params}")
-    nnPME.to(device=cfg.device)
-    # Define the dataloaders
-    from NCP.models.equiv_ncp import ENCP
-    collate_fn = geom_tensor_collate_fn if isinstance(nnPME, ENCP) else default_collate
-    train_dataloader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_fn)
-    val_dataloader = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=collate_fn)
-    test_dataloader = DataLoader(test_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=collate_fn)
+            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"pointwise_mutual_dependency.png", dpi=DPI)
 
     # Define the Lightning module ________________________________________________________
     ncp_lightning_module = TrainingModule(
@@ -535,7 +500,10 @@ def main(cfg: DictConfig):
     scaled_saved_freq = int(5 * cfg.gmm.n_total_samples // cfg.batch_size)
     BEST_CKPT_NAME, LAST_CKPT_NAME = "best", ModelCheckpoint.CHECKPOINT_NAME_LAST
     ckpt_call = ModelCheckpoint(
-        dirpath=run_path, filename=BEST_CKPT_NAME, monitor='loss/val', save_top_k=1, save_last=True, mode='min',
+        dirpath=run_path,
+        filename=BEST_CKPT_NAME,
+        monitor='loss/val', save_top_k=1,
+        save_last=True, mode='min',
         every_n_epochs=scaled_saved_freq,
         )
 
@@ -587,16 +555,15 @@ def main(cfg: DictConfig):
         )
     run_desc = f"{pathlib.Path(run_path).parent.name}/{pathlib.Path(run_path).name}"
     if fig_cde is not None:  # Plot
-        fig_cde.update_layout(title_text=run_desc, title_font=dict(size=10))
-        # Get the str of the name of the current and parent directories
-        pio.write_html(fig_cde, file=pathlib.Path(run_path) / f"conditional_pdf.html", auto_open=False)
-        pio.write_image(fig_cde, file=pathlib.Path(run_path) / f"conditional_pdf.png", scale=1.5)
+        # fig_cde.suptitle(run_desc)
+        # fig_cde.tight_layout()
+        fig_cde.savefig(pathlib.Path(run_path) / f"PMD_err_pdf.png", dpi=DPI)
     if fig_pmd is not None:
         print("Plotting NPMI")
         # set title PLT fig
-        fig_pmd.suptitle(run_desc)
+        # fig_pmd.suptitle(run_desc)
         fig_pmd.tight_layout()
-        fig_pmd.savefig(pathlib.Path(run_path) / f"NPMI_pdf.png", dpi=100)
+        fig_pmd.savefig(pathlib.Path(run_path) / f"NPMI_pdf.png", dpi=DPI)
         print()
 
 

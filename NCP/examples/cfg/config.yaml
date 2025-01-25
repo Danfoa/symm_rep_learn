@@ -19,6 +19,7 @@ regular_multiplicity: 0                 # Multiplicity of the regular representa
 model: NCP
 truncated_op_bias: 'full_rank'  # 'Cxy' or 'diag' or 'svals'
 gamma: 0.5               # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
+constraint_out_irreps_dim: False
 
 embedding:
   hidden_units: 32

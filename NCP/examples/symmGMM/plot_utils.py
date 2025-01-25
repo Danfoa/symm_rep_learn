@@ -1,6 +1,7 @@
 # Created by danfoa at 21/01/25
 import numpy as np
 import seaborn as sns
+import torch
 from escnn.group import Group, Representation
 from matplotlib import pyplot as plt
 
@@ -26,19 +27,19 @@ PLOT_STYLE = {
         "legend": r"$p(y)$",
         },
     "mi_x": {
-        "color":  "blue",
+        "color":  "red",
         "legend": r"$NPMI(x, y)$",
         },
     "mi_gx": {
-        "color":  "purple",
+        "color":  "green",
         "legend": r"$NPMI(g \;\triangleright_{\mathcal{X}}\; x, y)$",
         },
     "mi_y": {
-        "color":  "orange",
+        "color":  "red",
         "legend": r"$NPMI(x, y)$",
         },
     "mi_gy": {
-        "color":  "brown",
+        "color":  "green",
         "legend": r"$NPMI(x, g \;\triangleright_{\mathcal{Y}}\; y)$",
         }
 }
@@ -50,7 +51,7 @@ PLOT_LINEWIDTH = 1
 PLOT_MARKERSIZE = 8
 PLOT_ALPHA = 0.7
 PLOT_FONT_SIZE = 7
-
+EXPECTATION_MARKER = "D"
 
 def plot_analytic_joint_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representation, rep_Y: Representation, x_samples,
                            y_samples):
@@ -75,7 +76,9 @@ def plot_analytic_joint_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representa
     # Select a random sample to test the conditional expectation
     x_t, y_t = x_samples[0], y_samples[0]
     g = G.elements[-1]
-    gx_t, gy_t = (rep_X(g) @ [x_t]).squeeze(), (rep_Y(g) @ [y_t]).squeeze()
+    rep_X = gmm.rep_X
+    rep_Y = gmm.rep_Y
+    gx_t, gy_t = (rep_X(gmm.G2Hx(g)) @ [x_t]).squeeze(), (rep_Y(gmm.G2Hy(g)) @ [y_t]).squeeze()
     grid.ax_joint.axvline(x_t, color='r', alpha=PLOT_ALPHA)
     grid.ax_joint.axvline(gx_t, color='g', alpha=PLOT_ALPHA)
     # Draw red point on the selected sample
@@ -104,7 +107,7 @@ def plot_analytic_joint_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representa
         grid.ax_marg_y.plot(cpd_vals, y_range, color=PLOT_STYLE[key]["color"], linestyle="-", alpha=0.9, linewidth=PLOT_LINEWIDTH,
                             label=PLOT_STYLE[key]["legend"])
         # Print a marker at the expected position using the color of the conditional distribution
-        grid.ax_marg_y.plot(0, expect_y, 'o', color=PLOT_STYLE[key]["color"], markersize=5, alpha=0.9,
+        grid.ax_marg_y.plot(0, expect_y, EXPECTATION_MARKER, color=PLOT_STYLE[key]["color"], markersize=5, alpha=0.9,
                             label=PLOT_STYLE[key]["expect"])
 
     # Plot marginal x
@@ -156,7 +159,9 @@ def plot_analytic_prod_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representat
     P_y_t = gmm.pdf_y(Y=np.repeat(y_t, 2))[0]
 
     g = G.elements[-1]
-    gx_t, gy_t = (rep_X(g) @ [x_t]).squeeze(), (rep_Y(g) @ [y_t]).squeeze()
+    rep_X = gmm.rep_X
+    rep_Y = gmm.rep_Y
+    gx_t, gy_t = (rep_X(gmm.G2Hx(g)) @ [x_t]).squeeze(), (rep_Y(gmm.G2Hy(g)) @ [y_t]).squeeze()
     grid.ax_joint.axvline(x_t, color='r', alpha=PLOT_ALPHA)
     grid.ax_joint.axhline(y_t, color='r', alpha=PLOT_ALPHA)
     grid.ax_joint.axvline(gx_t, color='g', alpha=PLOT_ALPHA)
@@ -234,7 +239,9 @@ def plot_analytic_npmi_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representat
 
     x_t, y_t = x_samples[0], y_samples[0]
     g = G.elements[-1]
-    gx_t, gy_t = (rep_X(g) @ [x_t]).squeeze(), (rep_Y(g) @ [y_t]).squeeze()
+    rep_X = gmm.rep_X
+    rep_Y = gmm.rep_Y
+    gx_t, gy_t = (rep_X(gmm.G2Hx(g)) @ [x_t]).squeeze(), (rep_Y(gmm.G2Hy(g)) @ [y_t]).squeeze()
     grid.ax_joint.axvline(x_t, color='r', alpha=PLOT_ALPHA)
     grid.ax_joint.axhline(y_t, color='r', alpha=PLOT_ALPHA)
     grid.ax_joint.axvline(gx_t, color='g', alpha=PLOT_ALPHA)
@@ -289,7 +296,9 @@ def plot_analytic_pmd_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representati
     
     x_t, y_t = x_samples[0], y_samples[0]
     g = G.elements[-1]
-    gx_t, gy_t = (rep_X(g) @ [x_t]).squeeze(), (rep_Y(g) @ [y_t]).squeeze()
+    rep_X = gmm.rep_X
+    rep_Y = gmm.rep_Y
+    gx_t, gy_t = (rep_X(gmm.G2Hx(g)) @ [x_t]).squeeze(), (rep_Y(gmm.G2Hy(g)) @ [y_t]).squeeze()
     grid.ax_joint.axvline(x_t, color='r', alpha=PLOT_ALPHA)
     grid.ax_joint.axhline(y_t, color='r', alpha=PLOT_ALPHA)
     grid.ax_joint.axvline(gx_t, color='g', alpha=PLOT_ALPHA)
@@ -317,10 +326,136 @@ def plot_analytic_pmd_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representati
         grid.ax_marg_x.plot(x_range, mi_vals, color=PLOT_STYLE[key]["color"], linestyle="-", alpha=0.9, linewidth=PLOT_LINEWIDTH,
                             label=PLOT_STYLE[key]["legend"])
 
+    # Plot constant line at 1 for both marginals
+    grid.ax_marg_y.axvline(1, color='k', linestyle='-', alpha=0.3)
+    grid.ax_marg_x.axhline(1, color='k', linestyle='-', alpha=0.3)
+
     grid.ax_marg_y.legend(loc="upper left", fontsize=PLOT_FONT_SIZE, borderaxespad=0)
     grid.ax_marg_x.legend(loc="upper left", fontsize=PLOT_FONT_SIZE, borderaxespad=0)
     grid.fig.suptitle(r"Analytic Normalized PMD $\frac{p(x,y)}{p(y)p(x)}$")
     grid.fig.tight_layout()
+    return grid
+
+def plot_pmd_err_2D(gmm: SymmGaussianMixture,
+                    nn_model: torch.nn.Module,
+                    G: Group,
+                    x_samples,
+                    y_samples,
+                    x_mean, x_var, x_type,
+                    y_mean, y_var, y_type,
+                    x_lims, y_lims
+                    ):
+    device = next(nn_model.parameters()).device
+    grid = sns.JointGrid(space=0.0, height=PLOT_SIZE)
+    x_samples = x_samples.squeeze()
+    y_samples = y_samples.squeeze()
+    if x_lims is not None:
+        x_max, y_max = np.max(np.abs(x_samples)), np.max(np.abs(y_samples))
+    else:
+        x_max, y_max = np.max(np.abs(x_lims)), np.max(np.abs(y_lims))
+    x_range = np.linspace(-x_max, x_max, 500)
+    y_range = np.linspace(-y_max, y_max, 500)
+
+    X_grid, Y_grid = np.meshgrid(x_range, y_range)
+    X_flat = X_grid.flatten()
+    Y_flat = Y_grid.flatten()
+    X_input = np.column_stack([X_flat])
+    Y_input = np.column_stack([Y_flat])
+    # Pxy = gmm.joint_pdf(X=X_input, Y=Y_input)
+    pmd = gmm.pointwise_mutual_dependency(X=X_input, Y=Y_input)
+    from NCP.models.equiv_ncp import ENCP
+    def get_pmd_pred(x, y):
+        X_c = ((torch.Tensor(x) - x_mean) / torch.sqrt(x_var)).to(device=device)
+        Y_c = ((torch.Tensor(y) - y_mean) / torch.sqrt(y_var)).to(device=device)
+        _x, _y = (x_type(X_c), y_type(Y_c)) if isinstance(nn_model, ENCP) else (X_c, Y_c)
+        pmd_pred = nn_model.pointwise_mutual_dependency(_x, _y).cpu().numpy()  # k_r(x,y) ≈ p(x,y) / p(x)p(y)
+        return pmd_pred
+    # Compute prediction
+    pmd_pred = get_pmd_pred(X_input, Y_input)
+    pmd_err = pmd - pmd_pred
+    max_pmd_gt = np.max(pmd)
+    Z = pmd_err.reshape(X_grid.shape)
+    contour = grid.ax_joint.contourf(X_grid,
+                           Y_grid,
+                           Z,
+                           cmap=sns.diverging_palette(250, 30, l=65, center="dark", as_cmap=True).reversed(),
+                           levels=PLOT_LEVELS
+                           )
+
+    # Plot constant line at 1 for both marginals
+    grid.ax_marg_y.axvline(1, color='k', linestyle='-', alpha=0.2,)
+    grid.ax_marg_x.axhline(1, color='k', linestyle='-', alpha=0.2,)
+    grid.ax_marg_y.axvline(0, color='b', linestyle='-', alpha=0.2,)
+    grid.ax_marg_x.axhline(0, color='b', linestyle='-', alpha=0.2,)
+
+    # Add a colorbar that does not overlap
+    colorbar_axes = grid.fig.add_axes([
+        grid.ax_marg_y.get_position().x1,  # To the right of the joint axes
+        grid.ax_joint.get_position().y0,  # Align bottom with joint axes
+        0.02,  # Width of the colorbar
+        grid.ax_marg_y.get_position().height  # Same height as joint axes
+        ])
+    colorbar = plt.colorbar(contour, cax=colorbar_axes)
+
+    # # Add a new axis at the bottom-left corner of the joint axes
+    # joint_axes_position = grid.ax_joint.get_position()
+    # bottom_axis_height = 0.2  # Adjust height as needed
+    # bottom_axis = grid.fig.add_axes([
+    #     joint_axes_position.x0,  # Align to joint axes' left edge
+    #     joint_axes_position.y0 - bottom_axis_height,  # Below the joint axes
+    #     joint_axes_position.width,  # Same width as joint axes
+    #     bottom_axis_height  # Height
+    #     ])
+
+    x_t, y_t = x_samples[0], y_samples[0]
+    g = G.elements[-1]
+    rep_X = gmm.rep_X
+    rep_Y = gmm.rep_Y
+    gx_t, gy_t = (rep_X(gmm.G2Hx(g)) @ [x_t]).squeeze(), (rep_Y(gmm.G2Hy(g)) @ [y_t]).squeeze()
+    grid.ax_joint.axvline(x_t, color='r', alpha=PLOT_ALPHA)
+    grid.ax_joint.axhline(y_t, color='r', alpha=PLOT_ALPHA)
+    grid.ax_joint.axvline(gx_t, color='g', alpha=PLOT_ALPHA)
+    grid.ax_joint.axhline(gy_t, color='g', alpha=PLOT_ALPHA)
+    grid.ax_joint.plot(x_t, y_t, 'ro', markersize=PLOT_MARKERSIZE, alpha=PLOT_ALPHA)
+    grid.ax_joint.plot(gx_t, gy_t, 'go', markersize=PLOT_MARKERSIZE, alpha=PLOT_ALPHA)
+    grid.ax_joint.set_xlim([-x_max, x_max])
+    grid.ax_joint.set_ylim([-y_max, y_max])
+    grid.ax_joint.set_xlabel(r"$\mathcal{X}$")
+    grid.ax_joint.set_ylabel(r"$\mathcal{Y}$")
+    grid.ax_marg_x.set_xlabel(r"$p(\textnormal{x})$")
+    grid.ax_marg_y.set_ylabel(r"$p(\textnormal{y})$")
+
+    n_samples_cpd = len(y_range)
+    pmd_x_vals = gmm.pointwise_mutual_dependency(X=np.repeat(x_t, n_samples_cpd), Y=y_range)
+    pmd_x_vals_pred = get_pmd_pred(np.repeat(x_t, n_samples_cpd)[:, None], y_range[:, None])
+    pmd_gx_vals = gmm.pointwise_mutual_dependency(X=np.repeat(gx_t, n_samples_cpd), Y=y_range)
+    pmd_gx_vals_pred = get_pmd_pred(np.repeat(gx_t, n_samples_cpd)[:, None], y_range[:, None])
+    pmd_y_vals = gmm.pointwise_mutual_dependency(X=x_range, Y=np.repeat(y_t, len(x_range)))
+    pmd_y_vals_pred = get_pmd_pred(x_range[:, None], np.repeat(y_t, len(x_range))[:, None])
+    pmf_gy_vals = gmm.pointwise_mutual_dependency(X=x_range, Y=np.repeat(gy_t, len(x_range)))
+    pmf_gy_vals_pred = get_pmd_pred(x_range[:, None], np.repeat(gy_t, len(x_range))[:, None])
+
+    for key, pmd_x, pmd_x_pred in zip(["mi_x", "mi_gx"], [pmd_x_vals, pmd_gx_vals], [pmd_x_vals_pred, pmd_gx_vals_pred]):
+        grid.ax_marg_y.plot(pmd_x, y_range, color=PLOT_STYLE[key]["color"], linestyle="-", alpha=0.9,
+                            linewidth=PLOT_LINEWIDTH,
+                            label=PLOT_STYLE[key]["legend"])
+        grid.ax_marg_y.plot(pmd_x_pred, y_range, color=PLOT_STYLE[key]["color"], linestyle="--", alpha=0.9,
+                            linewidth=PLOT_LINEWIDTH,
+                            label=PLOT_STYLE[key]["legend"] + " pred")
+
+    for key, pmd_y, pmd_y_pred in zip(["mi_y", "mi_gy"], [pmd_y_vals, pmf_gy_vals], [pmd_y_vals_pred, pmf_gy_vals_pred]):
+        grid.ax_marg_x.plot(x_range, pmd_y, color=PLOT_STYLE[key]["color"], linestyle="-", alpha=0.9,
+                            linewidth=PLOT_LINEWIDTH,
+                            label=PLOT_STYLE[key]["legend"])
+        grid.ax_marg_x.plot(x_range, pmd_y_pred, color=PLOT_STYLE[key]["color"], linestyle="--", alpha=0.9,
+                            linewidth=PLOT_LINEWIDTH,
+                            label=PLOT_STYLE[key]["legend"] + " pred")
+
+
+    # grid.ax_marg_y.legend(loc="upper left", fontsize=PLOT_FONT_SIZE, borderaxespad=0)
+    # grid.ax_marg_x.legend(loc="upper left", fontsize=PLOT_FONT_SIZE, borderaxespad=0)
+    # grid.fig.suptitle(r"Error PMD $\frac{p(x,y)}{p(y)p(x)}$")
+    # grid.fig.tight_layout()
     return grid
 
 def plot_pmd_error_distribution(pmd_gt, pmd):
