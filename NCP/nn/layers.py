@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+from escnn.nn import EquivariantModule
 from torch.nn import Conv2d, Dropout, Linear, MaxPool2d, Module, ReLU, Sequential
 
 
@@ -154,6 +155,14 @@ class Lambda(torch.nn.Module):
     def extra_repr(self):
         return "function={}".format(self.func)
 
+class ChangeBasis(EquivariantModule):
+
+    def __init__(self, change_of_basis: torch.Tensor, in_type, out_type):
+        super(ChangeBasis, self).__init__()
+        self.in_type = in_type
+        self.out_type = out_type
+        self.register_buffer("Q", change_of_basis)
+
 
 # class iterative_normalization_py(torch.autograd.Function):
 #     @staticmethod
@@ -293,17 +302,27 @@ class Lambda(torch.nn.Module):
 #             "{num_features}, num_channels={num_channels}, T={T}, eps={eps}, "
 #             "momentum={momentum}, affine={affine}".format(**self.__dict__)
 #         )
+
+
 class ResidualEncoder(torch.nn.Module):
     """Residual encoder for NCP. This encoder processes batches of shape (batch_size, dim_y) and
     returns (batch_size, embedding_dim + dim_y).
     """
 
-    def __init__(self, encoder: torch.nn.Module, dim_y: int):
+    def __init__(self, encoder: torch.nn.Module, in_dim: int):
         super(ResidualEncoder, self).__init__()
         self.encoder = encoder
-        self.dim_y = dim_y
+        self.in_dim = in_dim
 
-    def forward(self, y: torch.Tensor):
-        embedding = self.encoder(y)
-        out = torch.cat([embedding, y], dim=-1)
+    def forward(self, input: torch.Tensor):
+        embedding = self.encoder(input)
+        out = torch.cat([input, embedding], dim=-1)
         return out
+
+    def decode(self, encoded_x: torch.Tensor):
+        x = encoded_x[..., self.residual_dims]
+        return x
+
+    @property
+    def residual_dims(self):
+        return slice(0, self.in_dim)

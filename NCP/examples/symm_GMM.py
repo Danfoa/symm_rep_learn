@@ -451,7 +451,7 @@ def main(cfg: DictConfig):
     # Get the torch datasets. ____________________________________________________________
     train_ds, val_ds, test_ds = datasets
 
-    # ESCNN equivariagnt models expect GeometricTensors.
+    # ESCNN equivariant models expect GeometricTensors.
     def geom_tensor_collate_fn(batch) -> [GeometricTensor, GeometricTensor]:
         x_batch, y_batch = default_collate(batch)
         return GeometricTensor(x_batch, x_type), GeometricTensor(y_batch, y_type)

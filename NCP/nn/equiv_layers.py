@@ -83,11 +83,16 @@ class EMLP(EquivariantModule):
         hidden_irreps = tuple(set(hidden_irreps))
         signal_dim = sum(self.G.irrep(*id).size for id in hidden_irreps)
         # Number of multiplicities / signals in the hidden layers
-        channels = int(ceil(hidden_units // signal_dim))
+
+        if isinstance(hidden_units, int):
+            hidden_units = [hidden_units] * hidden_layers
+        elif isinstance(hidden_units, list):
+            assert len(hidden_units) == hidden_layers, "Number of hidden units must match the number of hidden layers"
 
         layers = []
         layer_in_type = in_type
-        for i in range(hidden_layers):
+        for i, units in enumerate(hidden_units):
+            channels = int(ceil(units // signal_dim))
             layer = FourierBlock(
                 in_type=layer_in_type, irreps=hidden_irreps, channels=channels, activation=activation, bias=bias
                 )
@@ -160,7 +165,7 @@ class FourierBlock(EquivariantModule):
         return dict(N=N, type=grid_type, **kwargs)
 
     def extra_repr(self) -> str:
-        return f"{self.G}-FourierBlock {self._activation}: in={self.in_type}, out={self.out_type}"
+        return f"{self.G}-FourierBlock {self._activation}: in={self.in_type.size}, out={self.out_type.size}"
 
 class Change2IsotypicBasis(EquivariantModule):
 
@@ -238,6 +243,36 @@ class IrrepSubspaceNormPooling(EquivariantModule):
 
     def extra_repr(self) -> str:
         return f"{self.G}-Irrep Norm Pooling: in={self.in_type} -> out={self.out_type}"
+
+
+
+class EquivResidualEncoder(EquivariantModule):
+    """Residual encoder for NCP. This encoder processes batches of shape (batch_size, dim_y) and
+    returns (batch_size, embedding_dim + dim_y).
+    """
+
+    def __init__(self, encoder: EquivariantModule, in_type):
+        super(EquivResidualEncoder, self).__init__()
+        self.encoder = encoder
+        self.in_type = in_type
+        self.out_type = FieldType(gspace=encoder.out_type.gspace,
+                                  representations=in_type.representations + encoder.out_type.representations)
+
+    def forward(self, input: GeometricTensor):
+        embedding = self.encoder(input)
+        out = torch.cat([input.tensor, embedding.tensor], dim=-1)
+        return self.out_type(out)
+
+    def decode(self, encoded_x: torch.Tensor):
+        x = encoded_x[..., self.residual_dims]
+        return x
+
+    @property
+    def residual_dims(self):
+        return slice(0, self.in_type.size)
+
+    def evaluate_output_shape(self, input_shape: Tuple[int, ...]) -> Tuple[int, ...]:
+        return input_shape[:-1] + (len(self.out_type.size),)
 
 
 if __name__ == "__main__":

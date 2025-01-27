@@ -5,27 +5,33 @@ from __future__ import annotations  # Support new typing structure in 3.8 and 3.
 import copy
 import logging
 import math
+import pathlib
 import pickle
 from dataclasses import dataclass, field
 from math import floor
 from pathlib import Path
 from typing import Iterable, List, Optional, Union
 
-import datasets
+import escnn
 import hydra
-import lightning as L
 import numpy as np
+import pandas as pd
 import torch
-from datasets import Features, IterableDataset
-from escnn.group import Representation, groups_dict
-from lightning import seed_everything
+from escnn.group import directsum, Representation, groups_dict
+from escnn.nn import EquivariantModule, FieldType, GeometricTensor
+from lightning import seed_everything, Trainer
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf
 from torch.optim import Adam
 from torch.utils.data import DataLoader, TensorDataset, default_collate
 
-from NCP.models.ncp_lightning_module import TrainingModule
+from NCP.models.equiv_ncp import ENCP
+from NCP.models.ncp import NCP
+from NCP.models.ncp_lightning_module import SupervisedTrainingModule, TrainingModule
+from NCP.mysc.symm_algebra import invariant_orthogonal_projector
+from NCP.nn.equiv_layers import EMLP, EquivResidualEncoder
+from NCP.nn.layers import MLP, ResidualEncoder
 
 log = logging.getLogger(__name__)
 
@@ -158,7 +164,7 @@ class DynamicsRecording:
                 # Since the irreps are unitary/orthogonal transformations, we are constrained compute a unique variance
                 # for all dimensions of the irrep G-stable subspace, as scaling the dimensions independently would break
                 # the symmetry of the rv. As a centered rv the variance is the expectation of the squared rv.
-                var_irrep = np.mean(centered_obs_irrep**2)  # Single scalar variance per G-stable subspace
+                var_irrep = np.mean(centered_obs_irrep ** 2)  # Single scalar variance per G-stable subspace
                 # Store the irrep mean and variance in the entire representation mean and variance
                 var_irrep_basis[irrep_dims] = var_irrep
             # Convert the variance from the irrep basis to the original basis
@@ -229,8 +235,8 @@ class DynamicsRecording:
         )
         obs_idx = [0] + [sum(obs_dims[:i]) for i in range(1, len(obs_dims))]
         obs_values = {
-            obs_name: vector[..., obs_idx[i] : obs_idx[i] + obs_dims[i]] for i, obs_name in enumerate(obs_names)
-        }
+            obs_name: vector[..., obs_idx[i]: obs_idx[i] + obs_dims[i]] for i, obs_name in enumerate(obs_names)
+            }
         return obs_values
 
     def save_to_file(self, file_path: Path):
@@ -256,8 +262,9 @@ class DynamicsRecording:
 
     @staticmethod
     def load_from_file(
-        file_path: Path, only_metadata=False, obs_names: Optional[Iterable[str]] = None, ignore_other_obs: bool = True
-    ) -> "DynamicsRecording":
+            file_path: Path, only_metadata=False, obs_names: Optional[Iterable[str]] = None,
+            ignore_other_obs: bool = True
+            ) -> "DynamicsRecording":
         """Load a DynamicsRecording object from a file.
 
         Args:
@@ -297,19 +304,19 @@ class DynamicsRecording:
                     else:
                         data.obs_representations[obs_name] = Representation(
                             group, name=rep_name, irreps=irreps_ids, change_of_basis=rep_Q
-                        )
+                            )
                     group.representations[rep_name] = data.obs_representations[obs_name]
         data.__post_init__()
         return data
 
     @staticmethod
     def load_data_generator(
-        dynamics_recordings: list["DynamicsRecording"],
-        frames_per_step: int = 1,
-        prediction_horizon: Union[int, float] = 1,
-        state_obs: Optional[list[str]] = None,
-        action_obs: Optional[list[str]] = None,
-    ):
+            dynamics_recordings: list["DynamicsRecording"],
+            frames_per_step: int = 1,
+            prediction_horizon: Union[int, float] = 1,
+            state_obs: Optional[list[str]] = None,
+            action_obs: Optional[list[str]] = None,
+            ):
         """Generator that yields observation samples of length `n_frames_per_state` from the Markov Dynamics recordings.
 
         Args:
@@ -366,7 +373,7 @@ class DynamicsRecording:
                         start_indices = np.arange(0, num_steps) * frames_per_step + frame
                         end_indices = start_indices + frames_per_step
                         # Use these indices to slice the relevant portion of the trajectory
-                        obs_time_horizon = trajs[traj_id][start_indices[0] : end_indices[-1]]
+                        obs_time_horizon = trajs[traj_id][start_indices[0]: end_indices[-1]]
                         # Reshape the slice to have the desired shape (time, frames_per_step, obs_dim)
                         obs_dim = file_data.obs_dims[obs_name]
                         obs_time_horizon = obs_time_horizon.reshape((num_steps, frames_per_step, obs_dim))
@@ -382,11 +389,11 @@ class DynamicsRecording:
 
     @staticmethod
     def map_state_next_state(
-        sample: dict,
-        state_observations: List[str],
-        state_mean: Optional[np.ndarray] = None,
-        state_std: Optional[np.ndarray] = None,
-    ) -> dict:
+            sample: dict,
+            state_observations: List[str],
+            state_mean: Optional[np.ndarray] = None,
+            state_std: Optional[np.ndarray] = None,
+            ) -> dict:
         """Map composing multiple frames of observations into a flat vectors `state` and `next_state` samples.
 
         This method constructs the state `s_t` and history of nex steps `s_t+1` of the Markov Process.
@@ -426,286 +433,52 @@ class DynamicsRecording:
         return flat_sample
 
 
-def estimate_dataset_size(
-    recordings: list[DynamicsRecording], prediction_horizon: Union[int, float] = 1, frames_per_step: int = 1
-):
-    num_trajs = 0
-    num_samples = 0
-    steps_pred_horizon = []
-    for r in recordings:
-        r_num_trajs = r.info["num_traj"]
-        r_traj_length = r.info["trajectory_length"]
-        if isinstance(prediction_horizon, float):
-            steps_in_pred_horizon = floor((prediction_horizon * r_traj_length) // frames_per_step)
-        else:
-            steps_in_pred_horizon = prediction_horizon
-        steps_pred_horizon.append(steps_in_pred_horizon)
-        frames_in_pred_horizon = steps_in_pred_horizon * frames_per_step
-        samples = r_traj_length - frames_in_pred_horizon - (r_traj_length % frames_per_step) + 1
-        num_samples += r_num_trajs * samples
-        num_trajs += r_num_trajs
-    steps_pred_horizon = np.mean(steps_pred_horizon)
-    log.debug(f"Steps in prediction horizon {int(steps_pred_horizon)}")
-    return num_trajs, num_samples
-
-
-def reduce_dataset_size(recordings: Iterable[DynamicsRecording], train_ratio: float = 1.0):
-    assert 0.0 < train_ratio <= 1.0, f"Invalid train ratio {train_ratio}"
-    if train_ratio == 1.0:
-        return recordings
-    log.info(f"Reducing dataset size to {train_ratio * 100}%")
-    # Ensure all training seeds use the same training data partitions
-    from morpho_symm.utils.mysc import TemporaryNumpySeed
-
-    with TemporaryNumpySeed(10):
-        for r in recordings:
-            # Decide to keep a ratio of the original trajectories
-            num_trajs = r.info["num_traj"]
-            if num_trajs < 10:  # Do not discard entire trajectories, but rather parts of the trajectories
-                time_horizon = r.recordings[r.state_obs[0]].shape[1]  # Take the time horizon from the first observation
-
-                # Split the trajectory into "virtual" subtrajectories, and discard some of them
-                idx = np.arange(time_horizon)
-                n_partitions = math.ceil((1 / (1 - train_ratio)))
-                n_partitions = n_partitions * 10 if n_partitions < 10 else n_partitions
-                # Ensure partitions of the same time duration
-                partitions_idx = np.split(idx[: -(time_horizon % n_partitions)], indices_or_sections=n_partitions)
-                partition_length = partitions_idx[0].shape[0]
-                n_partitions_to_keep = math.ceil(n_partitions * train_ratio)
-                partitions_to_keep = np.random.choice(range(n_partitions), size=n_partitions_to_keep, replace=False)
-                print(partitions_to_keep)
-                partitions_to_keep = [partitions_idx[i] for i in partitions_to_keep]
-
-                ratio_of_samples_removed = (time_horizon - (len(partitions_to_keep) * partition_length)) / time_horizon
-                assert ratio_of_samples_removed - (1 - train_ratio) < 0.05, (
-                    f"Requested to remove {(1 - train_ratio) * 100}% of the samples, "
-                    f"but removed {ratio_of_samples_removed * 100}%"
-                )
-
-                new_recordings = {}
-                for obs_name, obs in r.recordings.items():
-                    new_obs_trajs = []
-                    for part_time_idx in partitions_to_keep:
-                        new_obs_trajs.append(obs[:, part_time_idx])
-                    new_recordings[obs_name] = np.concatenate(new_obs_trajs, axis=0)
-                r.recordings = new_recordings
-                r.info["num_traj"] = len(partitions_to_keep)
-                r.info["trajectory_length"] = partition_length
-            else:  # Discard entire trajectories
-                # Sample int(num_trajs * train_ratio) trajectories from the original recordings
-                num_trajs_to_keep = math.ceil(num_trajs * train_ratio)
-                idx = range(num_trajs)
-                idx_to_keep = np.random.choice(idx, size=num_trajs_to_keep, replace=False)
-                # Keep only the selected trajectories
-                new_recordings = {k: v[idx_to_keep] for k, v in r.recordings.items()}
-                r.recordings = new_recordings
-
-
-def split_train_val_test(
-    dyn_recording: DynamicsRecording,
-    partition_sizes=(0.70, 0.15, 0.15),
-    split_dimension: str = "auto",  # 'time' or 'trajectory'
-) -> [DynamicsRecording, DynamicsRecording, DynamicsRecording]:
-    """Split the recordings into training, validation and test sets.
-
-    Args:
-        dyn_recording: (DynamicsRecording): The recordings to split.
-        partition_sizes: (tuple): The sizes of the training, validation and test sets.
-        split_dimension: (str): The dimension to split the data. Can be 'time' or 'trajectory' or 'auto'. In the case
-         of auto, the function will decide the best way to split the data based on the shape of the data.
-
-    Returns:
-        (DynamicsRecording, DynamicsRecording, DynamicsRecording): The training, validation and test sets.
-    """
-    assert np.isclose(np.sum(partition_sizes), 1.0), f"Invalid partition sizes {partition_sizes}"
-    partitions_names = ["train", "val", "test"]
-
-    log.info(f"Partitioning {dyn_recording.description} into train/val/test of sizes {partition_sizes}[%]")
-    # Ensure all training seeds use the same training data partitions
-    from morpho_symm.utils.mysc import TemporaryNumpySeed
-
-    with TemporaryNumpySeed(10):  # Ensure deterministic behavior
-        # Decide to keep a ratio of the original trajectories
-        state_traj = dyn_recording.get_state_trajs()
-        assert state_traj.ndim == 3, f"Expectec (traj, time, state_dim) but got {state_traj.shape}"
-        num_trajs, time_horizon, state_dim = state_traj.shape
-
-        if split_dimension == "auto":
-            split_time = time_horizon > num_trajs
-        elif split_dimension == "time":
-            split_time = True
-        elif split_dimension == "trajectory":
-            split_time = False
-        else:
-            raise ValueError(f"Invalid split dimension {split_dimension} expected 'time', 'trajectory' or 'auto'")
-
-        if split_time:  # Do not discard entire trajectories, but rather parts of the trajectories
-            num_samples = time_horizon
-            min_idx = 0
-            partitions_sample_idx = {partition: None for partition in partitions_names}
-            for partition_name, ratio in zip(partitions_names, partition_sizes):
-                max_idx = min_idx + int(num_samples * ratio)
-                partitions_sample_idx[partition_name] = list(range(min_idx, max_idx))
-                min_idx = min_idx + int(num_samples * ratio)
-
-            # TODO: Avoid deep copying the data itself.
-            partitions_recordings = {partition: copy.deepcopy(dyn_recording) for partition in partitions_names}
-            for partition_name, sample_idx in partitions_sample_idx.items():
-                part_num_samples = len(sample_idx)
-                partitions_recordings[partition_name].info["trajectory_length"] = part_num_samples
-                partitions_recordings[partition_name].recordings = dict()
-                for obs_name in dyn_recording.recordings.keys():
-                    if len(dyn_recording.recordings[obs_name].shape) == 3:
-                        data = dyn_recording.recordings[obs_name][:, sample_idx]
-                    elif len(dyn_recording.recordings[obs_name].shape) == 2:
-                        data = dyn_recording.recordings[obs_name][sample_idx]
-                    else:
-                        raise RuntimeError(f"Invalid shape {dyn_recording.recordings[obs_name].shape} of {obs_name}")
-                    partitions_recordings[partition_name].recordings[obs_name] = data
-
-        else:  # Select train/val/test from individual trajectories
-            num_samples = num_trajs
-            min_idx = 0
-            partitions_sample_idx = {partition: None for partition in partitions_names}
-            for partition_name, ratio in zip(partitions_names, partition_sizes):
-                max_idx = min_idx + int(num_samples * ratio)
-                partitions_sample_idx[partition_name] = list(range(min_idx, max_idx))
-                min_idx = min_idx + int(num_samples * ratio)
-
-            partitions_recordings = {partition: copy.deepcopy(dyn_recording) for partition in partitions_names}
-            for partition_name, sample_idx in partitions_sample_idx.items():
-                part_num_samples = len(sample_idx)
-                partitions_recordings[partition_name].info["num_traj"] = part_num_samples
-                partitions_recordings[partition_name].recordings = dict()
-                for obs_name in dyn_recording.recordings.keys():
-                    data = dyn_recording.recordings[obs_name][sample_idx]
-                    partitions_recordings[partition_name].recordings[obs_name] = data
-
-        return partitions_recordings["train"], partitions_recordings["val"], partitions_recordings["test"]
-
-
-def get_dynamics_dataset(
-    train_shards: list[Path],
-    test_shards: Optional[list[Path]] = None,
-    val_shards: Optional[list[Path]] = None,
-    frames_per_step: int = 1,
-    train_ratio: float = 1.0,
-    train_pred_horizon: Union[int, float] = 1,
-    eval_pred_horizon: Union[int, float] = 10,
-    test_pred_horizon: Union[int, float] = 10,
-    state_obs: Optional[tuple[str]] = None,
-    action_obs: Optional[tuple[str]] = None,
-    hard_test_augment: bool = False,
-    hard_val_augment: bool = False,
-) -> tuple[list[IterableDataset], DynamicsRecording]:
-    """Load Markov Dynamics recordings from a list of files and return a train, test and validation dataset."""
-    # TODO: ensure all shards come from the same dynamical system
-    metadata: DynamicsRecording = DynamicsRecording.load_from_file(train_shards[0])
-    test_shards = [] if test_shards is None else test_shards
-    val_shards = [] if val_shards is None else val_shards
-
-    if len(test_shards) > 0:
-        from morpho_symm.utils.mysc import compare_dictionaries
-
-        test_metadata = DynamicsRecording.load_from_file(test_shards[0], only_metadata=True)
-        dyn_params_diff = compare_dictionaries(metadata.dynamics_parameters, test_metadata.dynamics_parameters)
-        assert len(dyn_params_diff) == 0, "Different dynamical systems loaded in train/test sets"
-
-    # Define the relevant observations of the recording to load.
-    state_obs = state_obs if state_obs is not None else metadata.state_obs
-    action_obs = action_obs if action_obs is not None else metadata.action_obs
-    relevant_obs = set(state_obs).union(set(action_obs))
-    features = {}
-    assert len(relevant_obs) > 0, "Provide the names of the observations to be included in state (and action)"
-    for obs_name in relevant_obs:
-        assert obs_name in metadata.recordings.keys(), f"Observation {obs_name} not found in recordings"
-    for obs_name in relevant_obs:
-        features[obs_name] = datasets.Array2D(shape=(frames_per_step, metadata.obs_dims[obs_name]), dtype="float32")
-
-    part_datasets = []
-    for partition, partition_shards in zip(["train", "test", "val"], [train_shards, test_shards, val_shards]):
-        if len(partition_shards) == 0:
-            part_datasets.append(None)
-            continue
-
-        recordings = [DynamicsRecording.load_from_file(f, obs_names=relevant_obs) for f in partition_shards]
-        a = recordings[0]
-        mean, var = a.state_moments()
-        if partition == "train":
-            pred_horizon = train_pred_horizon
-            if train_ratio < 1.0:
-                reduce_dataset_size(recordings, train_ratio)
-        elif partition == "val":
-            pred_horizon = eval_pred_horizon
-        else:
-            pred_horizon = test_pred_horizon
-
-        num_trajs, num_samples = estimate_dataset_size(recordings, pred_horizon, frames_per_step)
-        dataset = IterableDataset.from_generator(
-            DynamicsRecording.load_data_generator,
-            features=Features(features),
-            gen_kwargs=dict(
-                dynamics_recordings=recordings,
-                frames_per_step=frames_per_step,
-                prediction_horizon=pred_horizon,
-                state_obs=tuple(state_obs),
-                action_obs=tuple(action_obs),
-            ),
-        )
-
-        log.debug(
-            f"[Dataset {partition} - Trajs:{num_trajs} - Samples: {num_samples} - "
-            f"Frames per sample : {frames_per_step}]-----------------------------"
-        )
-
-        dataset.info.dataset_size = num_samples
-        dataset.info.dataset_name = f"[{partition}] Linear dynamics"
-        dataset.info.description = metadata.description
-        # dataset = partition
-        part_datasets.append(dataset)
-
-    metadata.state_obs = state_obs
-    metadata.action_obs = action_obs
-    return part_datasets, metadata
-
-
-def get_train_test_val_file_paths(data_path: Path):
-    """Search in folder for files ending in train/test/val.pkl and return a list of paths to each file."""
-    train_data, test_data, val_data = [], [], []
-    for file_path in data_path.iterdir():
-        if file_path.name.endswith("train.pkl"):
-            train_data.append(file_path)
-        elif file_path.name.endswith("test.pkl"):
-            test_data.append(file_path)
-        elif file_path.name.endswith("val.pkl"):
-            val_data.append(file_path)
-    return train_data, test_data, val_data
-
-
-class ResidualEncoder(torch.nn.Module):
-    """Residual encoder for NCP. This encoder processes batches of shape (batch_size, dim_y) and
-    returns (batch_size, embedding_dim + dim_y).
-    """
-
-    def __init__(self, encoder: torch.nn.Module, dim_y: int):
-        super(ResidualEncoder, self).__init__()
-        self.encoder = encoder
-        self.dim_y = dim_y
-
-    def forward(self, y: torch.Tensor):
-        embedding = self.encoder(y)
-        out = torch.cat([embedding, y], dim=-1)
-        return out
-
-
-def get_model2(cfg: DictConfig) -> torch.nn.Module:
-    # TODO: This function should be refactored into a utils file
+def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
     embedding_dim = cfg.architecture.embedding_dim
-    dim_x = 24
-    dim_y = 6
+    dim_x = x_type.size
+    dim_y = y_type.size
+
 
     if cfg.model.lower() == "encp":  # Equivariant NCP
-        raise NotImplementedError("This experiment currently doesn't support eNCP.")
+        from NCP.models.equiv_ncp import ENCP
+        from NCP.nn.equiv_layers import EMLP
+        from escnn.nn import FieldType
+        G = x_type.representation.group
+
+        reg_rep = G.regular_representation
+
+        kwargs = dict(hidden_layers=cfg.architecture.hidden_layers,
+                      activation=cfg.architecture.activation,
+                      hidden_units=cfg.architecture.hidden_units,
+                      bias=False)
+        if cfg.architecture.residual_encoder:
+            lat_rep = [reg_rep] * max(1, math.ceil(cfg.architecture.embedding_dim // reg_rep.size))
+            lat_x_type = FieldType(
+                gspace=escnn.gspaces.no_base_space(G),
+                representations=list(y_type.representations) + lat_rep
+                )
+            lat_y_type = FieldType(
+                gspace=escnn.gspaces.no_base_space(G),
+                representations=lat_rep)
+            x_embedding = EMLP(in_type=x_type, out_type=lat_x_type, **kwargs)
+            y_embedding = EquivResidualEncoder(
+                encoder=EMLP(in_type=y_type, out_type=lat_y_type, **kwargs),
+                in_type=y_type)
+            assert y_embedding.out_type.size == x_embedding.out_type.size, \
+                f"{y_embedding.out_type.size} != {x_embedding.out_type.size}"
+        else:
+            lat_type = FieldType(
+                gspace=escnn.gspaces.no_base_space(G),
+                representations=[reg_rep] * max(1, math.ceil(cfg.architecture.embedding_dim // reg_rep.size))
+                )
+            x_embedding = EMLP(in_type=x_type, out_type=lat_type, **kwargs)
+            y_embedding = EMLP(in_type=y_type, out_type=lat_type, **kwargs)
+        eNCPop = ENCP(embedding_x=x_embedding,
+                      embedding_y=y_embedding,
+                      gamma=cfg.gamma,
+                      truncated_op_bias=cfg.truncated_op_bias)
+
+        return eNCPop
     elif cfg.model.lower() == "ncp":  # NCP
         from NCP.models.ncp import NCP
         from NCP.mysc.utils import class_from_name
@@ -719,124 +492,118 @@ def get_model2(cfg: DictConfig) -> torch.nn.Module:
             activation=activation,
             bias=False,
             iterative_whitening=cfg.architecture.iter_whitening,
-        )
-        fx = MLP(input_shape=dim_x, **kwargs)
-        fy = MLP(input_shape=dim_y, **kwargs)
+            )
+        if cfg.architecture.residual_encoder_x:
+            dim_free_embedding = embedding_dim - dim_x
+            fx = ResidualEncoder(
+                encoder=MLP(input_shape=dim_x, **kwargs | {"output_shape": dim_free_embedding}),
+                in_dim=dim_x
+                )
+        else:
+            fx = MLP(input_shape=dim_x, **kwargs)
+        if cfg.architecture.residual_encoder:
+            dim_free_embedding = embedding_dim - dim_y
+            fy = ResidualEncoder(
+                encoder=MLP(input_shape=dim_y, **kwargs | {"output_shape": dim_free_embedding}),
+                in_dim=dim_y
+                )
+        else:
+            fy = MLP(input_shape=dim_y, **kwargs)
         ncp = NCP(
             embedding_x=fx,
             embedding_y=fy,
             embedding_dim=embedding_dim,
-            gamma=cfg.optim.regularization,
-            truncated_op_bias=cfg.architecture.last_layer,
-        )
+            gamma=cfg.gamma,
+            truncated_op_bias=cfg.truncated_op_bias,
+            )
         return ncp
-    elif cfg.model.lower() == "ncp_reg":  # NCP for regression
-        from NCP.models.ncp import NCP
+
+    elif cfg.model.lower() == "mlp":
         from NCP.mysc.utils import class_from_name
         from NCP.nn.layers import MLP
 
         activation = class_from_name("torch.nn", cfg.architecture.activation)
-        kwargs_y = dict(
-            output_shape=embedding_dim,
-            n_hidden=cfg.architecture.hidden_layers,
-            layer_size=cfg.architecture.hidden_units,
-            activation=activation,
-            bias=False,
-            iterative_whitening=cfg.architecture.iter_whitening,
-        )
-        kwargs_x = kwargs_y.copy()
-        kwargs_x["output_shape"] += dim_y  # We enforce the latent representations to be of the same dim
-        fx = MLP(input_shape=dim_x, **kwargs_x)
-        fy = ResidualEncoder(encoder=MLP(input_shape=dim_y, **kwargs_y), dim_y=dim_y)
-        ncp_reg = NCP(
-            embedding_x=fx,
-            embedding_y=fy,
-            embedding_dim=embedding_dim + dim_y,
-            gamma=cfg.optim.regularization,
-            truncated_op_bias=cfg.architecture.last_layer,
-        )
-        return ncp_reg
-
-    elif cfg.model.lower() == "mlp_reg":
-        from NCP.mysc.utils import class_from_name
-        from NCP.nn.layers import MLP
-
-        activation = class_from_name("torch.nn", cfg.architecture.activation)
+        n_h_layers = cfg.architecture.hidden_layers
         mlp = MLP(
             input_shape=dim_x,
             output_shape=dim_y,
             n_hidden=cfg.architecture.hidden_layers,
-            layer_size=cfg.architecture.hidden_units * 2,
+            layer_size=[cfg.architecture.hidden_units] * (n_h_layers - 1) + [cfg.architecture.embedding_dim],
             activation=activation,
             bias=False,
-        )
-        mlp.loss = torch.nn.functional.mse_loss
-        raise NotImplementedError(
-            "TrainingModule must be either updated to accept models that don't process Y or a new Lightning Module must be defined."
-        )
+            )
         return mlp
-    elif cfg.model.lower() == "drf":  # Density Ratio Fitting
-        from NCP.models.density_ratio_fitting import DRF
-        from NCP.mysc.utils import class_from_name
-        from NCP.nn.layers import MLP
-
-        activation = class_from_name("torch.nn", cfg.architecture.activation)
-        embedding = MLP(
-            input_shape=dim_x + dim_y,  # z = (x,y)
-            output_shape=1,
-            n_hidden=cfg.architecture.hidden_layers,
-            layer_size=cfg.architecture.hidden_units * 2,
-            activation=activation,
-            bias=False,
-        )
-        drf = DRF(embedding=embedding, gamma=cfg.optim.regularization)
-        return drf
+    elif cfg.model.lower() == "emlp":
+        from NCP.nn.equiv_layers import EMLP
+        n_h_layers = cfg.architecture.hidden_layers
+        emlp = EMLP(in_type=x_type,
+                    out_type=y_type,
+                    hidden_layers=cfg.architecture.hidden_layers,
+                    activation=cfg.architecture.activation,
+                    hidden_units=[cfg.architecture.hidden_units] * (n_h_layers - 1) + [cfg.architecture.embedding_dim],
+                    bias=False,)
+        return emlp
     else:
         raise ValueError(f"Model {cfg.model} not recognized")
 
 
-def com_momentum_dataset(path_ds, gpu_num):
+def com_momentum_dataset(cfg):
     """Loads dataset for 'Center of Mass Momentum Regression' experiment from https://arxiv.org/pdf/2302.10433."""
+    device = cfg.device
     # TODO: Y is currently 6 dimension, without 'KinE'.
-    dr = DynamicsRecording.load_from_file(Path(path_ds))
-    X = dr.recordings["X"].squeeze()
-    Y = dr.recordings["Y"].squeeze()
+    dr = DynamicsRecording.load_from_file(Path(cfg.path_ds).absolute())
+    X_obs = [dr.recordings[obs_name].squeeze(1) for obs_name in cfg.x_obs_names]
+    Y_obs = [dr.recordings[obs_name].squeeze(1) for obs_name in cfg.y_obs_names]
+    X = np.concatenate(X_obs, axis=-1)
+    Y = np.concatenate(Y_obs, axis=-1)
+
+    # Compute the symmetry aware meand and variance of each observable
+    X_mean_obs, X_var_obs = [], []
+    for obs_name in cfg.x_obs_names:
+        dr.compute_obs_moments(obs_name)
+        mean, var = dr.obs_moments[obs_name]
+        X_mean_obs.append(mean)
+        X_var_obs.append(var)
+    X_mean = np.concatenate(X_mean_obs, axis=-1)
+    X_var = np.concatenate(X_var_obs, axis=-1)
+    Y_mean_obs, Y_var_obs = [], []
+    y_obs_dims = {}
+    start_dim = 0
+    for obs_name in cfg.y_obs_names:
+        dr.compute_obs_moments(obs_name)
+        mean, var = dr.obs_moments[obs_name]
+        Y_mean_obs.append(mean)
+        Y_var_obs.append(var)
+        y_obs_dims[obs_name] = slice(start_dim, start_dim + mean.shape[-1])
+        start_dim += mean.shape[-1]
+    Y_mean = np.concatenate(Y_mean_obs, axis=-1)
+    Y_var = np.concatenate(Y_var_obs, axis=-1)
+    # Get the group representations per obs
+    rep_X_obs = [dr.obs_representations[obs_name] for obs_name in cfg.x_obs_names]
+    rep_Y_obs = [dr.obs_representations[obs_name] for obs_name in cfg.y_obs_names]
+    rep_X = directsum(rep_X_obs, name="X")
+    rep_Y = directsum(rep_Y_obs, name="Y")
 
     # Split data into train, validation, and test subsets
-    # TODO: Split rations could be params
-    train_ratio, val_ratio, test_ratio = 0.7, 0.15, 0.15
+    assert 0 < cfg.optim.train_sample_ratio <= 0.7, f"Invalid train ratio {cfg.optim.train_sample_ratio}"
+    train_ratio, val_ratio, test_ratio = cfg.optim.train_sample_ratio, 0.15, 0.15
     n_samples = X.shape[0]
     n_train, n_val, n_test = np.asarray(np.array([train_ratio, val_ratio, test_ratio]) * n_samples, dtype=int)
-    # train_samples = X[:n_train], Y[:n_train]
-    # val_samples = X[n_train : n_train + n_val], Y[n_train : n_train + n_val]
-    # test_samples = X[n_train + n_val :], Y[n_train + n_val :]
-
-    # Standardize data
-    dr.compute_obs_moments("X")
-    dr.compute_obs_moments("Y")
-    X_mean, X_var = dr.obs_moments["X"]
-    Y_mean, Y_var = dr.obs_moments["Y"]
 
     X_c = (X - X_mean) / np.sqrt(X_var)
     Y_c = (Y - Y_mean) / np.sqrt(Y_var)
-    x_train, x_val, x_test = (
-        X_c[:n_train],
-        X_c[n_train : n_train + n_val],
-        X_c[n_train + n_val :],
-    )
-    y_train, y_val, y_test = (
-        Y_c[:n_train],
-        Y_c[n_train : n_train + n_val],
-        Y_c[n_train + n_val :],
-    )
+    x_train, x_val, x_test = (X_c[:n_train], X_c[n_train: n_train + n_val], X_c[n_train + n_val:])
+    y_train, y_val, y_test = (Y_c[:n_train], Y_c[n_train: n_train + n_val], Y_c[n_train + n_val:])
 
     # Moving data to gpu
-    X_train = torch.atleast_2d(torch.from_numpy(x_train).float()).to(f"cuda:{gpu_num}")
-    Y_train = torch.atleast_2d(torch.from_numpy(y_train).float()).to(f"cuda:{gpu_num}")
-    X_val = torch.atleast_2d(torch.from_numpy(x_val).float()).to(f"cuda:{gpu_num}")
-    Y_val = torch.atleast_2d(torch.from_numpy(y_val).float()).to(f"cuda:{gpu_num}")
-    X_test = torch.atleast_2d(torch.from_numpy(x_test).float()).to(f"cuda:{gpu_num}")
-    Y_test = torch.atleast_2d(torch.from_numpy(y_test).float()).to(f"cuda:{gpu_num}")
+    X_train = torch.atleast_2d(torch.from_numpy(x_train).float()).to(device)
+    Y_train = torch.atleast_2d(torch.from_numpy(y_train).float()).to(device)
+    X_val = torch.atleast_2d(torch.from_numpy(x_val).float())
+    Y_val = torch.atleast_2d(torch.from_numpy(y_val).float())
+    X_test = torch.atleast_2d(torch.from_numpy(x_test).float())
+    Y_test = torch.atleast_2d(torch.from_numpy(y_test).float())
+    y_moments = (torch.from_numpy(Y_mean).float().to(device),
+                 torch.from_numpy(Y_var).float().to(device))
 
     # Define data samples
     train_samples = X_train, Y_train
@@ -848,116 +615,241 @@ def com_momentum_dataset(path_ds, gpu_num):
     val_dataset = TensorDataset(X_val, Y_val)
     test_dataset = TensorDataset(X_test, Y_test)
 
-    return (
-        (train_samples, val_samples, test_samples),
-        (train_dataset, val_dataset, test_dataset),
-    )
+    return ((train_samples, val_samples, test_samples),
+            (train_dataset, val_dataset, test_dataset),
+            rep_X, rep_Y,
+            y_obs_dims,
+            y_moments,
+            )
 
-
-def run_com_regression(model, x_test, y_test, y_train, col_trick):
+@torch.no_grad()
+def regression_metrics(model, x, y, y_train, x_type, y_type, y_obs_dims, y_moments):
     """Predicts CoM Momenta from test sample (x_test, y_test)."""
-    # TODO: Y is currently 6 dimension, without 'KinE'
-    with torch.no_grad():
-        fx_test = model.embedding_x(x_test)  # shape: (n_test, embedding_dim)
-        hy_train = model.embedding_y(y_train)  # shape: (n_train, embedding_dim)
+    device = next(model.parameters()).device
+    prev_data_device = x.device
+
+    x = x.to(device)
+    y = y.to(device)
+    # Introduce the entire group orbit of the testing set, to appropriately compute the equivariant error.
+    rep_X, rep_Y = x_type.representation, y_type.representation
+    G = rep_X.group
+    G_loss, G_metrics = [], []
+    for g in G.elements:
+        rep_X_g = torch.from_numpy(rep_X(g)).float().to(device)
+        rep_Y_g = torch.from_numpy(rep_Y(g)).float().to(device)
+
+        gx = torch.einsum("ij,kj->ki", rep_X_g, x)
+        gy = torch.einsum("ij,kj->ki", rep_Y_g, y)
+
+        if isinstance(model.embedding_x, EquivariantModule):
+            fgx = model.embedding_x(x_type(gx)).tensor
+        else:
+            fgx = model.embedding_x(gx)  # shape: (n_test, embedding_dim)
+        if isinstance(model.embedding_y, EquivariantModule):
+            hy_train = model.embedding_y(y_type(y_train)).tensor  # shape: (n_train, embedding_dim)
+        else:
+            hy_train = model.embedding_y(y_train)  # shape: (n_train, embedding_dim)
 
         n_train = y_train.shape[0]
-        embedding_dim = hy_train.shape[1] - 6
 
-        # The orthonormality conditions give us that <h_j, y> is zero for all j <= r
-        # This trick is being performed by adding the observables we want to regress
-        # into the latent space by construction. This corresponds roughly to the
-        # generalized SVD of the operator E_{Y|X}.
-        if col_trick:
-            hy_train[:, :embedding_dim] = 0
+        if isinstance(model.embedding_y, ResidualEncoder):
+            y_dims_in_hy = model.embedding_y.residual_dims
+            mask = torch.zeros(hy_train.shape[-1], device=device)
+            mask[y_dims_in_hy] = 1
+            hy_train = hy_train * mask
 
-        y_mean = y_train.mean(axis=0)  # shape: (6,)
+        if isinstance(model.embedding_y, escnn.nn.SequentialModule):
+            # Get last module of the sequetial mod
+            if isinstance(model.embedding_y[0], EquivResidualEncoder):
+                res_encoder = model.embedding_y[0]
+                y_dims_in_hy = res_encoder.residual_dims
+                change2iso_module = model.embedding_y[-1]
+                Qy2iso = change2iso_module.Qin2iso
+                mask = torch.zeros(hy_train.shape[-1], device=device)
+                mask[y_dims_in_hy] = 1
+                # mask_projector = Qy2iso @ mask @ Qy2iso.T
+                mask_projector = torch.einsum("ij,j,jk->ik", Qy2iso, mask, Qy2iso.T)
+                hy_train = hy_train * mask
+                hy_train = torch.einsum("ij,...j->...i", mask_projector, hy_train)
+            print("")
+
+        E_y = y_train.mean(axis=0)  # shape: (6,)
+        if rep_Y is not None:
+            inv_projector = invariant_orthogonal_projector(rep_Y).to(y_train.device)
+            E_y = inv_projector @ E_y  # Mean of symmetric RV lives in the invariant subspace.
 
         # shape: (n_test, 6). Check formula 12 from https://arxiv.org/pdf/2407.01171
         Dr = model.truncated_operator
-        weird_ass_term = (1 / n_train) * torch.einsum("ij,ki,lj,lm->km", Dr, fx_test, hy_train, y_train)
-        y_test_pred = y_mean + weird_ass_term  # TODO: experiment with linear regression instead of einsums
+        gy_deflated_basis_expansion = (1 / n_train) * torch.einsum("ij,ki,lj,lm->km", Dr, fgx, hy_train, y_train)
+        gy_pred = E_y + gy_deflated_basis_expansion  # TODO: experiment with linear regression instead of einsums
 
-        # This loss is normalized by the dimension
-        # I.e., L = 1/6 * ||Y_i - \hat{Y}_i||_2^2, where Y_i, \hat{Y}_i are in R^6
-        reg_mse = torch.nn.functional.mse_loss(y_test, y_test_pred, reduction="mean")
+        gy_mse, metrics = proprioceptive_regression_metrics(gy, gy_pred, y_obs_dims, y_moments)
+        G_loss.append(gy_mse)
+        G_metrics.append(metrics)
 
-        return {"reg_mse": reg_mse}
+    # Compute average over the orbit for all metrics
+    metrics_names = G_metrics[0].keys()
+    metrics = {name: torch.stack([m[name] for m in G_metrics]).mean() for name in metrics_names}
 
+    x = x.to(prev_data_device)
+    y = y.to(prev_data_device)
+    return metrics
+
+
+def proprioceptive_regression_metrics(y, y_pred, y_obs_dims: dict, y_moments):
+    # Compute MSE with standarized data
+    if isinstance(y, GeometricTensor):
+        assert y.type == y_pred.type
+        y = y.tensor
+        y_pred = y_pred.tensor
+
+    mse = torch.nn.MSELoss(reduce=False)
+    y_mse = mse(y_pred, y)
+    loss = y_mse.mean()
+    metrics = {"y_mse": loss}
+    with torch.no_grad():
+        # Unstandardie data and compute MSE in the original data scale
+        y_mean, y_var = y_moments
+        y_mse_un = y_mse * y_var
+
+        metrics["hg_mse"] = y_mse_un.mean()
+        for obs_name, dims in y_obs_dims.items():
+            obs_mse = y_mse_un[..., dims]
+            metrics[obs_name] = obs_mse.mean()
+
+    return loss, metrics
 
 @hydra.main(config_path="cfg", config_name="eNCP_regression", version_base="1.3")
 def main(cfg: DictConfig):
-    seed = cfg.experiment.seed if cfg.experiment.seed >= 0 else np.random.randint(0, 1000)
+    seed = cfg.seed if cfg.seed >= 0 else np.random.randint(0, 1000)
     seed_everything(seed)
 
     # Load dataset______________________________________________________________________
-    (train_samples, val_samples, test_samples), (train_ds, val_ds, test_ds) = com_momentum_dataset(
-        path_ds=cfg.experiment.path_ds, gpu_num=cfg.env.device
-    )
-
+    samples, datasets, rep_X, rep_Y, y_obs_dims, y_moments = com_momentum_dataset(cfg)
+    train_samples, val_samples, test_samples = samples
+    train_ds, val_ds, test_ds = datasets
     x_train, y_train = train_samples
     x_val, y_val = val_samples
     x_test, y_test = test_samples
 
-    collate_fn = default_collate
+    G = rep_X.group
+    # lat_rep = G.regular_representation
+    x_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=[rep_X])
+    y_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=[rep_Y])
+    # lat_type = FieldType(
+    #     gspace=escnn.gspaces.no_base_space(G),
+    #     representations=[lat_rep] * max(1, math.ceil(cfg.architecture.embedding_dim // lat_rep.size))
+    #     )
+
+    # Get the model_____________________________________________________________________
+    model = get_model(cfg, x_type, y_type)
+    print(model)
+    # Print the number of trainable paramerters
+    n_trainable_params = sum(p.numel() for p in model.parameters())
+    log.info(f"No. trainable parameters: {n_trainable_params}")
+
+    # Define the dataloaders_____________________________________________________________
+    # ESCNN equivariant models expect GeometricTensors.
+    def geom_tensor_collate_fn(batch) -> [GeometricTensor, GeometricTensor]:
+        x_batch, y_batch = default_collate(batch)
+        return GeometricTensor(x_batch, x_type), GeometricTensor(y_batch, y_type)
+
+    is_equiv_model = isinstance(model, ENCP) or isinstance(model, EMLP)
+    collate_fn = geom_tensor_collate_fn if is_equiv_model else default_collate
     train_dataloader = DataLoader(train_ds, batch_size=cfg.optim.batch_size, shuffle=True, collate_fn=collate_fn)
     val_dataloader = DataLoader(val_ds, batch_size=cfg.optim.batch_size, shuffle=False, collate_fn=collate_fn)
     test_dataloader = DataLoader(test_ds, batch_size=cfg.optim.batch_size, shuffle=False, collate_fn=collate_fn)
 
-    # Get the model_____________________________________________________________________
-    model = get_model2(cfg)
-    print(model)
-
     # Define the Lightning module ______________________________________________________
-    lightning_module = TrainingModule(
-        model=model,
-        optimizer_fn=Adam,
-        optimizer_kwargs={"lr": cfg.optim.lr},
-        loss_fn=model.loss,
-        val_metrics=lambda _: run_com_regression(model=model, x_test=x_val, y_test=y_val, y_train=y_train),
-        test_metrics=lambda _: run_com_regression(model=model, x_test=x_test, y_test=y_test, y_train=y_train),
-    )
+    if isinstance(model, MLP) or isinstance(model, EMLP):
+        lightning_module = SupervisedTrainingModule(
+            model=model,
+            optimizer_fn=Adam,
+            optimizer_kwargs={"lr": cfg.optim.lr},
+            loss_fn=lambda x, y: proprioceptive_regression_metrics(x, y, y_obs_dims, y_moments),
+            )
+    else: # NCP / ENCP models
+        lightning_module = TrainingModule(
+            model=model,
+            optimizer_fn=Adam,
+            optimizer_kwargs={"lr": cfg.optim.lr},
+            loss_fn=model.loss if hasattr(model, "loss") else None,
+            val_metrics=lambda _: regression_metrics(
+                model=model, x=x_val, y=y_val, y_train=y_train,
+                x_type=x_type,
+                y_type=y_type,
+                y_obs_dims=y_obs_dims,
+                y_moments=y_moments,
+                ),
+            test_metrics=lambda _: regression_metrics(
+                model=model, x=x_test, y=y_test, y_train=y_train,
+                x_type=x_type,
+                y_type=y_type,
+                y_obs_dims=y_obs_dims,
+                y_moments=y_moments,
+                ),
+            )
 
     # Define the logger and callbacks
     run_path = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
     log.info(f"Run path: {run_path}")
     run_cfg = OmegaConf.to_container(cfg, resolve=True)
     logger = WandbLogger(save_dir=run_path, project=cfg.proj_name, log_model=False, config=run_cfg)
+    n_total_samples = int(train_samples[0].shape[0] / cfg.optim.train_sample_ratio)
+    scaled_saved_freq = int(5 * n_total_samples // cfg.optim.batch_size)
+    BEST_CKPT_NAME, LAST_CKPT_NAME = "best", ModelCheckpoint.CHECKPOINT_NAME_LAST
     ckpt_call = ModelCheckpoint(
         dirpath=run_path,
-        filename="best",
-        monitor="loss/val",
-        save_top_k=1,
-        save_last=True,
-        mode="min",
-    )
+        filename=BEST_CKPT_NAME,
+        monitor='loss/val', save_top_k=1,
+        save_last=True, mode='min',
+        every_n_epochs=scaled_saved_freq,
+        )
 
-    # NCP seems to saturate MI mse when "||E - E_r||_HS" is minimized
-    early_call = EarlyStopping(monitor="||k(x,y) - k_r(x,y)||/val", patience=cfg.optim.patience, mode="min")
+    # Fix for all runs independent on the train_ratio chosen. This way we compare on effective number of "epochs"
+    max_steps = int(n_total_samples * cfg.optim.max_epochs // cfg.optim.batch_size)
+    scaled_patience = int(cfg.optim.patience * n_total_samples * 0.7 // cfg.optim.batch_size)
 
-    trainer = L.Trainer(
+    metric_to_monitor = "||k(x,y) - k_r(x,y)||/val" if isinstance(model, ENCP) or isinstance(model, NCP) else "loss/val"
+    early_call = EarlyStopping(monitor=metric_to_monitor, patience=scaled_patience, mode='min')
+
+    trainer = Trainer(
         accelerator="gpu",
-        devices=[cfg.env.device] if cfg.env.device != -1 else cfg.env.device,  # -1 for all available GPUs
-        max_epochs=cfg.optim.max_epochs,
+        devices=[cfg.device] if cfg.device != -1 else cfg.device,  # -1 for all available GPUs
+        max_epochs=max_steps,
         logger=logger,
         enable_progress_bar=True,
         log_every_n_steps=25,
-        check_val_every_n_epoch=20,
+        check_val_every_n_epoch=5,
         callbacks=[ckpt_call, early_call],
-        fast_dev_run=25 if cfg.experiment.debug else False,
-    )
+        fast_dev_run=25 if cfg.debug else False,
+        num_sanity_val_steps=5,
+        )
 
     torch.set_float32_matmul_precision("medium")
+    last_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / LAST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
     trainer.fit(
         lightning_module,
         train_dataloaders=train_dataloader,
         val_dataloaders=val_dataloader,
-    )
+        ckpt_path=last_ckpt_path if last_ckpt_path.exists() else None,
+        )
 
     # Loads the best model.
-    trainer.test(lightning_module, dataloaders=test_dataloader)
+    best_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / BEST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
+    test_logs = trainer.test(lightning_module,
+                             dataloaders=test_dataloader,
+                             ckpt_path=best_ckpt_path if best_ckpt_path.exists() else None,
+                             )
+    test_metrics = test_logs[0]  # dict: metric_name -> value
+    # Save the testing matrics in a csv file using pandas.
+    test_metrics_path = pathlib.Path(run_path) / "test_metrics.csv"
+    pd.DataFrame(test_metrics, index=[0]).to_csv(test_metrics_path, index=False)
+
     # Flush the logger.
     logger.finalize(trainer.state)
+    # Wand sync
+    logger.experiment.finish()
 
 
 if __name__ == "__main__":

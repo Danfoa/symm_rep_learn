@@ -10,10 +10,12 @@ from escnn.group import directsum
 from escnn.nn import FieldType, GeometricTensor
 
 from NCP.models.ncp import NCP
-from NCP.mysc.rep_theory_utils import field_type_to_isotypic_basis
+from NCP.mysc.rep_theory_utils import field_type_to_isotypic_basis, isotypic_decomp_rep
 from NCP.mysc.statistics import cov_norm_squared_unbiased_estimation, cross_cov_norm_squared_unbiased_estimation
 from NCP.mysc.symm_algebra import (invariant_orthogonal_projector, isotypic_cross_cov,
                                    isotypic_signal2irreducible_subspaces)
+from NCP.nn.equiv_layers import Change2IsotypicBasis
+from NCP.nn.layers import Lambda
 
 log = logging.getLogger(__name__)
 
@@ -24,27 +26,24 @@ class ENCP(NCP):
     def __init__(self,
                  embedding_x: escnn.nn.EquivariantModule,
                  embedding_y: escnn.nn.EquivariantModule,
-                 gamma=0.001,
-                 truncated_op_bias: str = 'Cxy',
+                 gamma=1.0,
+                 truncated_op_bias: str = 'full_rank',
                  ):
-        # Get field type in the singular-isotypic basis
-        assert embedding_x.out_type == embedding_y.out_type, "Embeddings field types must be the same"
-        lat_singular_type = field_type_to_isotypic_basis(embedding_x.out_type)
-        self.G = lat_singular_type.fibergroup
-        # Take any input field-type, add a G-equivariant linear layer, parameterizing a change of basis to the
-        # Iso-singular basis. (singular functions clustered by isotypic subspaces)
-        x2singular = escnn.nn.Linear(in_type=embedding_x.out_type, out_type=lat_singular_type, bias=False)
-        y2singular = escnn.nn.Linear(in_type=embedding_y.out_type, out_type=lat_singular_type, bias=False)
-        embedding_x = escnn.nn.SequentialModule(embedding_x, x2singular)
-        embedding_y = escnn.nn.SequentialModule(embedding_y, y2singular)
+
+        self.G = embedding_x.out_type.fibergroup
+        embedding_dim = embedding_x.out_type.size
+        gspace = embedding_x.in_type.gspace
+        # Given any Field types of the embeddings of x and y, we need to change basis to the isotypic basis.
+        embedding_x_iso = escnn.nn.SequentialModule(embedding_x, Change2IsotypicBasis(in_type=embedding_x.out_type))
+        embedding_y_iso = escnn.nn.SequentialModule(embedding_y, Change2IsotypicBasis(in_type=embedding_y.out_type))
 
         # Isotypic subspace are identified by the irrep id associated with the subspace
-        self.n_iso_subspaces = len(lat_singular_type.representations)
-        self.iso_subspace_ids = [iso_rep.irreps[0] for iso_rep in lat_singular_type.representations]
-        self.iso_subspace_dims = [iso_rep.size for iso_rep in lat_singular_type.representations]
+        self.n_iso_subspaces = len(embedding_x_iso.out_type.representations)
+        self.iso_subspace_ids = [iso_rep.irreps[0] for iso_rep in embedding_x_iso.out_type.representations]
+        self.iso_subspace_dims = [iso_rep.size for iso_rep in embedding_x_iso.out_type.representations]
         self.irreps_dim = {irrep_id: self.G.irrep(*irrep_id).size for irrep_id in self.iso_subspace_ids}
         self.iso_subspace_slice = [
-            slice(s, e) for s, e in zip(lat_singular_type.fields_start, lat_singular_type.fields_end)
+            slice(s, e) for s, e in zip(embedding_x_iso.out_type.fields_start, embedding_x_iso.out_type.fields_end)
             ]
         self.iso_irreps_multiplicities = [
             space_dim // self.irreps_dim[id] for space_dim, id in zip(self.iso_subspace_dims, self.iso_subspace_ids)
@@ -55,9 +54,9 @@ class ENCP(NCP):
             self.idx_inv_subspace = None
 
         # Intialize the NCP module
-        super().__init__(embedding_x=embedding_x,
-                         embedding_y=embedding_y,
-                         embedding_dim=lat_singular_type.size,
+        super().__init__(embedding_x=embedding_x_iso,
+                         embedding_y=embedding_y_iso,
+                         embedding_dim=embedding_x_iso.out_type.size,
                          gamma=gamma,
                          truncated_op_bias=truncated_op_bias)
 

@@ -9,6 +9,7 @@ import torch
 
 from NCP.mysc.utils import flatten_dict
 
+
 class TrainingModule(lightning.LightningModule):
     def __init__(
             self,
@@ -17,7 +18,7 @@ class TrainingModule(lightning.LightningModule):
             optimizer_kwargs: dict,
             loss_fn: torch.nn.Module | callable,
             test_metrics: callable = None,  # Callable at the end of testing
-            val_metrics: callable = None,   # Callable at the end of validation
+            val_metrics: callable = None,  # Callable at the end of validation
             ):
         super(TrainingModule, self).__init__()
         self._test_metrics = test_metrics
@@ -35,7 +36,8 @@ class TrainingModule(lightning.LightningModule):
                 "No learning rate specified. Using default value of 1e-3. You can specify the learning rate by passing "
                 "it to the optimizer_kwargs argument."
                 )
-        self.loss_fn = loss_fn if loss_fn is not None else model.loss
+        assert loss_fn is not None, "Loss function must be specified."
+        self.loss_fn = loss_fn
         self.train_loss = []
         self.val_loss = []
         self._n_train_samples = torch.tensor(0).to(dtype=torch.int64)
@@ -126,3 +128,52 @@ class TrainingModule(lightning.LightningModule):
 
     def on_fit_end(self):
         pass
+
+
+class SupervisedTrainingModule(TrainingModule):
+
+    def __init__(self,
+                 model: torch.nn.Module,
+                 optimizer_fn: torch.optim.Optimizer,
+                 optimizer_kwargs: dict,
+                 loss_fn: torch.nn.Module | callable,
+                 test_metrics: callable = None,  # Callable at the end of testing
+                 val_metrics: callable = None,  # Callable at the end of validation
+                 ):
+        super(SupervisedTrainingModule, self).__init__(
+            model=model,
+            optimizer_fn=optimizer_fn,
+            optimizer_kwargs=optimizer_kwargs,
+            loss_fn=torch.nn.MSELoss(reduce=True, reduction='mean') if loss_fn is None else loss_fn,
+            test_metrics=test_metrics,
+            val_metrics=val_metrics,
+            )
+
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        y_pred = self.model(x)
+        loss, metrics = self.loss_fn(y, y_pred)
+        batch_dim = self.get_batch_dim(batch)
+        self._n_train_samples += batch_dim
+        self.log("loss/train", loss, prog_bar=True, batch_size=batch_dim)
+        self.log("train_samples [k]", self._n_train_samples / 1000, on_step=True, on_epoch=False)
+        self.log_metrics(metrics, suffix="train", batch_size=batch_dim)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        y_pred = self.model(x)
+        loss, metrics = self.loss_fn(y, y_pred)
+
+        self.log("loss/val", loss, prog_bar=True, batch_size=self.get_batch_dim(batch))
+        self.log_metrics(metrics, suffix="val", batch_size=self.get_batch_dim(batch))
+        return loss
+
+    def test_step(self, batch, batch_idx):
+        x, y = batch
+        y_pred = self.model(x)
+        loss, metrics = self.loss_fn(y, y_pred)
+
+        self.log("loss/test", loss, prog_bar=True, batch_size=self.get_batch_dim(batch))
+        self.log_metrics(metrics, suffix="test", batch_size=self.get_batch_dim(batch))
+        return loss
