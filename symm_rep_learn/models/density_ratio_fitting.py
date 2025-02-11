@@ -1,6 +1,8 @@
 # Created by danfoa at 16/01/25
 import torch.nn
-from NCP.nn.layers import Lambda
+
+from symm_rep_learn.nn.layers import Lambda
+
 
 # Density Ratio Fitting.
 class DRF(torch.nn.Module):
@@ -55,7 +57,7 @@ class DRF(torch.nn.Module):
         return pmi
 
     def loss(self, pmd_mat: torch.Tensor):
-        """Computes the Density Ratio Fitting Loss
+        """Computes the Density Ratio Fitting Loss.
 
         Args:
             pmd_mat: (n_samples, n_samples) tensor containing the PMD ratio for all pairwise combinations of x and y.
@@ -91,7 +93,7 @@ class DRF(torch.nn.Module):
 
 
 if __name__ == "__main__":
-    from NCP.nn.layers import Lambda, MLP
+    from symm_rep_learn.nn.layers import MLP, Lambda
 
     in_dim = 10
 
@@ -121,8 +123,8 @@ if __name__ == "__main__":
     joint_scores_diag = torch.diag(scores.squeeze())
 
     # Check if the individual scores match the diagonal elements
-    assert torch.allclose(torch.tensor(joint_scores), joint_scores_diag, rtol=1e-5, atol=1e-5), (
-        f"err_max = {torch.max(torch.abs(torch.tensor(joint_scores) - joint_scores_diag))}"
-    )
+    assert torch.allclose(
+        torch.tensor(joint_scores), joint_scores_diag, rtol=1e-5, atol=1e-5
+    ), f"err_max = {torch.max(torch.abs(torch.tensor(joint_scores) - joint_scores_diag))}"
 
     print("Test passed: Diagonal scores match individual scores")

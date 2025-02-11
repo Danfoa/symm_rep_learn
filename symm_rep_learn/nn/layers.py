@@ -144,6 +144,7 @@ class IterNorm(Module):
         self._update_running_stats(*self._compute_whitening_matrix(X))
         return (X - self.running_mean) @ self.running_whitening_mat
 
+
 class Lambda(torch.nn.Module):
     def __init__(self, func):
         super(Lambda, self).__init__()
@@ -155,8 +156,8 @@ class Lambda(torch.nn.Module):
     def extra_repr(self):
         return "function={}".format(self.func)
 
-class ChangeBasis(EquivariantModule):
 
+class ChangeBasis(EquivariantModule):
     def __init__(self, change_of_basis: torch.Tensor, in_type, out_type):
         super(ChangeBasis, self).__init__()
         self.in_type = in_type
@@ -305,7 +306,7 @@ class ChangeBasis(EquivariantModule):
 
 
 class ResidualEncoder(torch.nn.Module):
-    """Residual encoder for NCP. This encoder processes batches of shape (batch_size, dim_y) and
+    """Residual encoder for symm_rep_learn. This encoder processes batches of shape (batch_size, dim_y) and
     returns (batch_size, embedding_dim + dim_y).
     """
 

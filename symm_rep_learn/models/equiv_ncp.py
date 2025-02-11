@@ -1,5 +1,6 @@
 # Created by danfoa at 19/12/24
 from __future__ import annotations
+
 import logging
 
 import escnn.nn
@@ -9,30 +10,30 @@ import torch
 from escnn.group import directsum
 from escnn.nn import FieldType, GeometricTensor
 
-from NCP.models.ncp import NCP
-from NCP.mysc.rep_theory_utils import field_type_to_isotypic_basis, isotypic_decomp_rep
-from NCP.mysc.statistics import cov_norm_squared_unbiased_estimation, cross_cov_norm_squared_unbiased_estimation
-from NCP.mysc.symm_algebra import (invariant_orthogonal_projector, isotypic_cross_cov,
-                                   isotypic_signal2irreducible_subspaces)
-from NCP.nn.equiv_layers import Change2IsotypicBasis
-from NCP.nn.layers import Lambda
+from symm_rep_learn.models.ncp import NCP
+from symm_rep_learn.mysc.statistics import (
+    cov_norm_squared_unbiased_estimation,
+    cross_cov_norm_squared_unbiased_estimation,
+)
+from symm_rep_learn.mysc.symm_algebra import (
+    isotypic_cross_cov,
+    isotypic_signal2irreducible_subspaces,
+)
+from symm_rep_learn.nn.equiv_layers import Change2IsotypicBasis
 
 log = logging.getLogger(__name__)
 
 
 # Equivariant Neural Conditional Probabily (e-NCP) module ==============================================================
 class ENCP(NCP):
-
-    def __init__(self,
-                 embedding_x: escnn.nn.EquivariantModule,
-                 embedding_y: escnn.nn.EquivariantModule,
-                 gamma=1.0,
-                 truncated_op_bias: str = 'full_rank',
-                 ):
-
+    def __init__(
+        self,
+        embedding_x: escnn.nn.EquivariantModule,
+        embedding_y: escnn.nn.EquivariantModule,
+        gamma=1.0,
+        truncated_op_bias: str = "full_rank",
+    ):
         self.G = embedding_x.out_type.fibergroup
-        embedding_dim = embedding_x.out_type.size
-        gspace = embedding_x.in_type.gspace
         # Given any Field types of the embeddings of x and y, we need to change basis to the isotypic basis.
         embedding_x_iso = escnn.nn.SequentialModule(embedding_x, Change2IsotypicBasis(in_type=embedding_x.out_type))
         embedding_y_iso = escnn.nn.SequentialModule(embedding_y, Change2IsotypicBasis(in_type=embedding_y.out_type))
@@ -44,21 +45,23 @@ class ENCP(NCP):
         self.irreps_dim = {irrep_id: self.G.irrep(*irrep_id).size for irrep_id in self.iso_subspace_ids}
         self.iso_subspace_slice = [
             slice(s, e) for s, e in zip(embedding_x_iso.out_type.fields_start, embedding_x_iso.out_type.fields_end)
-            ]
+        ]
         self.iso_irreps_multiplicities = [
             space_dim // self.irreps_dim[id] for space_dim, id in zip(self.iso_subspace_dims, self.iso_subspace_ids)
-            ]
+        ]
         if self.G.trivial_representation.id in self.iso_subspace_ids:
             self.idx_inv_subspace = self.iso_subspace_ids.index(self.G.trivial_representation.id)
         else:
             self.idx_inv_subspace = None
 
         # Intialize the NCP module
-        super().__init__(embedding_x=embedding_x_iso,
-                         embedding_y=embedding_y_iso,
-                         embedding_dim=embedding_x_iso.out_type.size,
-                         gamma=gamma,
-                         truncated_op_bias=truncated_op_bias)
+        super().__init__(
+            embedding_x=embedding_x_iso,
+            embedding_y=embedding_y_iso,
+            embedding_dim=embedding_x_iso.out_type.size,
+            gamma=gamma,
+            truncated_op_bias=truncated_op_bias,
+        )
 
     def forward(self, x: GeometricTensor, y: GeometricTensor):
         """Forward pass of the eNCP operator.
@@ -91,21 +94,21 @@ class ENCP(NCP):
             hy_c[self.idx_inv_subspace] = hy_c[self.idx_inv_subspace] - self.mean_hy
 
         k_iso = []
-        if self.truncated_op_bias == 'Cxy':
+        if self.truncated_op_bias == "Cxy":
             for iso_idx, fx_ci, hy_ci in zip(range(self.n_iso_subspaces), fx_c, hy_c):
                 Cxy_i = self.Cxy(iso_idx=iso_idx)
-                k_iso.append(torch.einsum('nr,rc,nc->n', fx_ci, Cxy_i, hy_ci))
-        elif self.truncated_op_bias == 'diag':
+                k_iso.append(torch.einsum("nr,rc,nc->n", fx_ci, Cxy_i, hy_ci))
+        elif self.truncated_op_bias == "diag":
             for iso_idx, fx_ci, hy_ci in zip(range(self.n_iso_subspaces), fx_c, hy_c):
                 Cxy_i = self.Cxy(iso_idx=iso_idx)
-                k_iso.append(torch.einsum('nr,r,nc->n', fx_ci, torch.diag(Cxy_i), hy_ci))
-        elif self.truncated_op_bias == 'svals':
-            k_iso.append(torch.einsum('nr,r,nc->n', torch.cat(fx_c, dim=-1), self.svals, torch.cat(hy_c, dim=-1)))
+                k_iso.append(torch.einsum("nr,r,nc->n", fx_ci, torch.diag(Cxy_i), hy_ci))
+        elif self.truncated_op_bias == "svals":
+            k_iso.append(torch.einsum("nr,r,nc->n", torch.cat(fx_c, dim=-1), self.svals, torch.cat(hy_c, dim=-1)))
         elif self.truncated_op_bias == "full_rank":
             Dr = self.truncated_operator
             fx_c = torch.cat(fx_c, dim=-1)
             hy_c = torch.cat(hy_c, dim=-1)
-            k_r = 1 + torch.einsum('...x,xy,...y->...', fx_c, Dr, hy_c)
+            k_r = 1 + torch.einsum("...x,xy,...y->...", fx_c, Dr, hy_c)
             return k_r
         else:
             raise ValueError(f"Invalid truncated operator bias: {self.truncated_op_bias}")
@@ -113,12 +116,10 @@ class ENCP(NCP):
         k_r = 1 + sum(k_iso)
         return k_r
 
-    def orthonormality_penalization(self,
-                                    fx_c: GeometricTensor,
-                                    hy_c: GeometricTensor,
-                                    return_inner_prod=False,
-                                    permutation=None):
-        """ Computes orthonormality and centering regularization penalization for a batch of feature vectors.
+    def orthonormality_penalization(
+        self, fx_c: GeometricTensor, hy_c: GeometricTensor, return_inner_prod=False, permutation=None
+    ):
+        """Computes orthonormality and centering regularization penalization for a batch of feature vectors.
 
         Computes finite sample unbiased empirical estimates of the term:
         || Vx - I ||_F^2 = || Cx - I ||_F^2 + 2 || E_p(x) f(x) ||^2
@@ -133,6 +134,7 @@ class ENCP(NCP):
             hy_c: (n_samples, r) Centered feature vectors h_c(y) = [h_c,1(y), ..., h_c,r(y)].
             return_inner_prod: (bool) If True, return intermediate inner products.
             permutation: (torch.Tensor) Permutation tensor to shuffle the samples in the batch.
+
         Returns:
             Regularization term as a scalar tensor.
         """
@@ -152,8 +154,8 @@ class ENCP(NCP):
             Dx_k_fro_2 = cov_norm_squared_unbiased_estimation(zx, False, permutation=permutation)
             Dy_k_fro_2 = cov_norm_squared_unbiased_estimation(zy, False, permutation=permutation)
             # Trace terms without need of unbiased estimation
-            tr_Dx_k = torch.trace(self.__getattr__(f'Dx_{k}'))  # tr(Dx_k)
-            tr_Dy_k = torch.trace(self.__getattr__(f'Dy_{k}'))  # tr(Dy_k)
+            tr_Dx_k = torch.trace(self.__getattr__(f"Dx_{k}"))  # tr(Dx_k)
+            tr_Dy_k = torch.trace(self.__getattr__(f"Dy_{k}"))  # tr(Dy_k)
             #  ||Cx_k||_F^2 := |ρk| (||Dx_k||_F^2 - 2tr(Dx_k)) + r_k
             Cx_k_fro_2 = irrep_dim * (Dx_k_fro_2 - 2 * tr_Dx_k) + r_xk
             #  ||Cy_k||_F^2 := |ρk| (||Dy_k||_F^2 - 2tr(Dy_k)) + r_k
@@ -169,8 +171,8 @@ class ENCP(NCP):
         # Cy_fro_2_biased = torch.linalg.matrix_norm(self.Cy(None)) ** 2
 
         # TODO: Unbiased estimation of mean squared
-        fx_centering_loss = (self.mean_fx ** 2).sum()  # ||E_p(x) (f(x_i))||^2
-        hy_centering_loss = (self.mean_hy ** 2).sum()  # ||E_p(y) (h(y_i))||^2
+        fx_centering_loss = (self.mean_fx**2).sum()  # ||E_p(x) (f(x_i))||^2
+        hy_centering_loss = (self.mean_hy**2).sum()  # ||E_p(y) (h(y_i))||^2
 
         # ||Vx - I||_F^2 = ||Cx - I||_F^2 + 2||E_p(x) f(x)||^2
         orthonormality_fx = Cx_I_err_fro_2 + 2 * fx_centering_loss
@@ -179,20 +181,25 @@ class ENCP(NCP):
 
         with torch.no_grad():
             embedding_dim_x, embedding_dim_y = self.embedding_x.out_type.size, self.embedding_y.out_type.size
-            metrics = {f"||Cx||_F^2":     Cx_I_err_fro_2 / embedding_dim_x,
-                       f"||mu_x||":       torch.sqrt(fx_centering_loss),
-                       f"||Vx - I||_F^2": orthonormality_fx / embedding_dim_x,
-                       #
-                       f"||Cy||_F^2":     Cy_I_err_fro_2 / embedding_dim_y,
-                       f"||mu_y||":       torch.sqrt(hy_centering_loss),
-                       f"||Vy - I||_F^2": orthonormality_hy / embedding_dim_y,
-                       } | {
-                          f"||Cx||_F^2iso/{k}": Cx_k_fro_2 / fx_c_iso[k].shape[-1] for k, Cx_k_fro_2 in
-                          enumerate(Cx_iso_fro_2)
-                          } | {
-                          f"||Cy||_F^2iso/{k}": Cy_k_fro_2 / hy_c_iso[k].shape[-1] for k, Cy_k_fro_2 in
-                          enumerate(Cy_iso_fro_2)
-                          }
+            metrics = (
+                {
+                    "||Cx||_F^2": Cx_I_err_fro_2 / embedding_dim_x,
+                    "||mu_x||": torch.sqrt(fx_centering_loss),
+                    "||Vx - I||_F^2": orthonormality_fx / embedding_dim_x,
+                    #
+                    "||Cy||_F^2": Cy_I_err_fro_2 / embedding_dim_y,
+                    "||mu_y||": torch.sqrt(hy_centering_loss),
+                    "||Vy - I||_F^2": orthonormality_hy / embedding_dim_y,
+                }
+                | {
+                    f"||Cx||_F^2iso/{k}": Cx_k_fro_2 / fx_c_iso[k].shape[-1]
+                    for k, Cx_k_fro_2 in enumerate(Cx_iso_fro_2)
+                }
+                | {
+                    f"||Cy||_F^2iso/{k}": Cy_k_fro_2 / hy_c_iso[k].shape[-1]
+                    for k, Cy_k_fro_2 in enumerate(Cy_iso_fro_2)
+                }
+            )
 
         if return_inner_prod:
             raise NotImplementedError("Inner products not implemented yet.")
@@ -200,7 +207,7 @@ class ENCP(NCP):
             return orthonormality_fx, orthonormality_hy, metrics
 
     def unbiased_truncation_error_matrix_form(self, fx_c: GeometricTensor, hy_c: GeometricTensor):
-        """ Implementation of ||E - E_r||_HS^2, while assuming E_r is a full matrix.
+        """Implementation of ||E - E_r||_HS^2, while assuming E_r is a full matrix.
 
         Case 1: Orthogonal basis functions give:
             E_r = Cxy -> ||E - E_r||_HS - ||E||_HS = -2 ||Cxy||_F^2 + tr(Cxy Cy Cxy^T Cx) + 1
@@ -211,6 +218,7 @@ class ENCP(NCP):
             of L^2(X).
             hy_c: (torch.Tensor) of shape (n_samples, r) representing the centered singular functions of a subspace
             of L^2(Y).
+
         Returns:
             (torch.Tensor) representing the unbiased truncation error.
         """
@@ -233,8 +241,12 @@ class ENCP(NCP):
                 # Cxy_k_fro_2_biased = torch.linalg.matrix_norm(self.Cxy(k)) ** 2
                 Cxy_iso_fro_2.append(Cxy_k_fro_2)
                 # Trace term: Pxyx_k := Cxy_k Cy_k Cxy_k Cx_k = (Dxy_k Dy_k Dxy_k.T Dx_k) ⊗ I_|ρk|
-                Dxy_k, Dx_k, Dy_k = self.__getattr__(f'Dxy_{k}'), self.__getattr__(f'Dx_{k}'), self.__getattr__(f'Dy_{k}')
-                Dxyx_k = torch.einsum('ab,bc,cd,de->ae', Dxy_k, Dy_k, Dxy_k, Dx_k)
+                Dxy_k, Dx_k, Dy_k = (
+                    self.__getattr__(f"Dxy_{k}"),
+                    self.__getattr__(f"Dx_{k}"),
+                    self.__getattr__(f"Dy_{k}"),
+                )
+                Dxyx_k = torch.einsum("ab,bc,cd,de->ae", Dxy_k, Dy_k, Dxy_k, Dx_k)
                 # tr(Pxyx_k) := tr(Dxy_k Dy_k Dxy_k.T Dx_k) * |ρk|
                 tr_Pxyx_iso.append(torch.trace(Dxyx_k) * irrep_dim)
 
@@ -243,9 +255,10 @@ class ENCP(NCP):
             truncation_err = -2 * Cxy_F_2 + tr_Pxyx_biased
 
             with torch.no_grad():
-                metrics |= {"E_p(x)p(y) k_r(x,y)^2": tr_Pxyx_biased.detach(),
-                            "E_p(x,y) k_r(x,y)":     Cxy_F_2.detach(),
-                            }
+                metrics |= {
+                    "E_p(x)p(y) k_r(x,y)^2": tr_Pxyx_biased.detach(),
+                    "E_p(x,y) k_r(x,y)": Cxy_F_2.detach(),
+                }
                 for k, (Cxy_k_fro_2, tr_Pxyx_k) in enumerate(zip(Cxy_iso_fro_2, tr_Pxyx_iso)):
                     metrics[f"E_p(x,y) k_r(x,y)iso/{k}"] = Cxy_k_fro_2 / self.iso_subspace_dims[k]
                     metrics[f"E_p(x)p(y) k_r(x,y)^2iso/{k}"] = tr_Pxyx_k
@@ -264,11 +277,11 @@ class ENCP(NCP):
             E_pxy_kr_iso, E_px_py_kr_iso = [], []
             truncation_err_iso = []
             for fx_ci, hy_ci, Dr_i in zip(fx_c_iso, hy_c_iso, Dr_iso):
-                k_r_i = torch.einsum('nx,xy,my->nm', fx_ci, Dr_i, hy_ci)  # (n_samples, n_samples)
+                k_r_i = torch.einsum("nx,xy,my->nm", fx_ci, Dr_i, hy_ci)  # (n_samples, n_samples)
                 # pmd_mat = pmd_mat + k_r_i
                 E_pxy_kr_i = torch.diag(k_r_i).mean()
                 E_pxy_kr_iso.append(E_pxy_kr_i)
-                k_r_i2 = k_r_i ** 2
+                k_r_i2 = k_r_i**2
                 E_px_py_kr_i = (k_r_i2.sum() - k_r_i2.diag().sum()) / (n_samples * (n_samples - 1))
                 E_px_py_kr_iso.append(E_px_py_kr_i)
                 truncation_err_iso.append(-2 * E_pxy_kr_i + E_px_py_kr_i)
@@ -278,9 +291,10 @@ class ENCP(NCP):
             E_px_py_kr = sum(E_px_py_kr_iso)
             truncation_err = (-2 * E_pxy_kr) + (E_px_py_kr)
             with torch.no_grad():
-                metrics |= {"E_p(x)p(y) k_r(x,y)^2": E_px_py_kr.detach(),
-                            "E_p(x,y) k_r(x,y)":     E_pxy_kr.detach(),
-                            }
+                metrics |= {
+                    "E_p(x)p(y) k_r(x,y)^2": E_px_py_kr.detach(),
+                    "E_p(x,y) k_r(x,y)": E_pxy_kr.detach(),
+                }
                 for k in range(self.n_iso_subspaces):
                     metrics[f"||k(x,y) - k_r(x,y)||iso/{k}"] = truncation_err_iso[k]
                     metrics[f"E_p(x,y) k_r(x,y)iso/{k}"] = E_pxy_kr_iso[k]
@@ -291,24 +305,26 @@ class ENCP(NCP):
         return truncation_err, metrics
 
     def unbiased_truncation_error_diag_form(self, fx_c: GeometricTensor, hy_c: GeometricTensor):
-        """ Implementation of ||E - E_r||_HS^2, while assuming E_r is diagonal. """
+        """Implementation of ||E - E_r||_HS^2, while assuming E_r is diagonal."""
         assert fx_c.type == self.embedding_x.out_type and hy_c.type == self.embedding_y.out_type  # Iso basis.
         # Project embedding into the isotypic subspaces
-        fx_c_iso, reps_Fx_iso = self._orth_proj_isotypic_subspaces(z=fx_c), fx_c.type.representations
-        hy_c_iso, reps_Hy_iso = self._orth_proj_isotypic_subspaces(z=hy_c), hy_c.type.representations
+        fx_c_iso, _reps_Fx_iso = self._orth_proj_isotypic_subspaces(z=fx_c), fx_c.type.representations
+        hy_c_iso, _reps_Hy_iso = self._orth_proj_isotypic_subspaces(z=hy_c), hy_c.type.representations
 
         # Basis of singular functions and isotypic basis have the same symmetry group reoresentation, hence:
-        use_expectations = self.truncated_op_bias == 'diag' or self.truncated_op_bias == 'Cxy'
+        use_expectations = self.truncated_op_bias == "diag" or self.truncated_op_bias == "Cxy"
         # Singular vectors with symmetry constrained multiplicities.
         Dr = self.svals if not use_expectations else torch.diag(self.Cxy())
         Dr_iso = [Dr[s:e] for s, e in zip(fx_c.type.fields_start, fx_c.type.fields_end)]
 
         tr_CxSCyS_iso, tr_CxyS_iso = [], []
         for k, (fx_ck, hy_ck, Dr_k) in enumerate(zip(fx_c_iso, hy_c_iso, Dr_iso)):
-            irrep_dim = self.irreps_dim[self.iso_subspace_ids[k]]
+            self.irreps_dim[self.iso_subspace_ids[k]]
             # Tr (Cx Σ Cy Σ) = Σ_k tr(Cx_k Dr_k Cy_k Dr_k) * |ρ_k|
-            tr_CxSCyS = torch.einsum("ik, il, k, jl, jk, l->", fx_ck, fx_ck, Dr_k, hy_ck, hy_ck, Dr_k) / (
-                    fx_ck.shape[0] - 1) ** 2
+            tr_CxSCyS = (
+                torch.einsum("ik, il, k, jl, jk, l->", fx_ck, fx_ck, Dr_k, hy_ck, hy_ck, Dr_k)
+                / (fx_ck.shape[0] - 1) ** 2
+            )
             # Tr(Cxy Σ) = Σ_k tr(Cxy_k Dr_k)
             tr_CxyS = torch.einsum("ik, ik, k->", fx_ck, hy_ck, Dr_k) / (fx_ck.shape[0] - 1)
             tr_CxSCyS_iso.append(tr_CxSCyS)
@@ -319,16 +335,18 @@ class ENCP(NCP):
 
         truncation_err = -2 * tr_CxyS + tr_CxSCyS
         with torch.no_grad():
-            metrics = {f"||E - diag(E_r)||_HSiso/{k}": -2 * A + B for k, (A, B) in
-                       enumerate(zip(tr_CxyS_iso, tr_CxSCyS_iso))}
+            metrics = {
+                f"||E - diag(E_r)||_HSiso/{k}": -2 * A + B for k, (A, B) in enumerate(zip(tr_CxyS_iso, tr_CxSCyS_iso))
+            }
         # L = -2 tr (Cxy Σ) + tr (Cx Σ Cy Σ)
         return truncation_err, metrics
 
     def update_fns_statistics(self, fx: GeometricTensor, hy: GeometricTensor):
-        assert isinstance(fx, GeometricTensor) and isinstance(hy, GeometricTensor), \
-            f"Expected Geometric Tensors got f(x): {type(fx)} and h(y): {type(hy)}"
+        assert isinstance(fx, GeometricTensor) and isinstance(
+            hy, GeometricTensor
+        ), f"Expected Geometric Tensors got f(x): {type(fx)} and h(y): {type(hy)}"
         assert fx.type == self.embedding_x.out_type and hy.type == self.embedding_y.out_type
-        device, dtype = fx.tensor.device, fx.tensor.dtype
+        _device, _dtype = fx.tensor.device, fx.tensor.dtype
 
         # Get projections into isotypic subspaces.  fx_iso[k] = fx^(k), hy_iso[k] = hy^(k)
         fx_iso, reps_Fx_iso = self._orth_proj_isotypic_subspaces(z=fx), fx.type.representations
@@ -347,9 +365,9 @@ class ENCP(NCP):
             _, Dxy_k = isotypic_cross_cov(X=fx_ck, Y=hy_ck, rep_X=rep_x_k, rep_Y=rep_y_k, centered=True)
             _, Dx_k = isotypic_cross_cov(X=fx_ck, Y=fx_ck, rep_X=rep_x_k, rep_Y=rep_x_k, centered=True)
             _, Dy_k = isotypic_cross_cov(X=hy_ck, Y=hy_ck, rep_X=rep_y_k, rep_Y=rep_y_k, centered=True)
-            setattr(self, f'Dxy_{k}', Dxy_k)
-            setattr(self, f'Dx_{k}', Dx_k)
-            setattr(self, f'Dy_{k}', Dy_k)
+            setattr(self, f"Dxy_{k}", Dxy_k)
+            setattr(self, f"Dx_{k}", Dx_k)
+            setattr(self, f"Dy_{k}", Dy_k)
 
         # Center basis functions. Centering occurs only at the G-invariant subspace.
         fx_c, hy_c = fx.tensor.clone(), hy.tensor.clone()
@@ -373,7 +391,7 @@ class ENCP(NCP):
         Returns:
             The singular values in the form of a tensor.
         """
-        unique_svals = torch.exp(-self.log_svals ** 2)
+        unique_svals = torch.exp(-(self.log_svals**2))
         return unique_svals.repeat_interleave(repeats=self.sval_multiplicities.to(unique_svals.device))
 
     @property
@@ -385,8 +403,8 @@ class ENCP(NCP):
         elif self.truncated_op_bias == "full_rank":
             # D_r is diagonal and is stable (that is has eivalues <= 1)
             D_r, _ = self._Dr.expand_parameters()  # Expand the equiv lin layer into its matrix form
-            a = D_r.detach().cpu().numpy()
-            Dr_symm = (D_r @ D_r.T ) / 2 # Ensure its symmetric.
+            D_r.detach().cpu().numpy()
+            Dr_symm = (D_r @ D_r.T) / 2  # Ensure its symmetric.
             eigval_max = torch.linalg.eigvalsh(Dr_symm)[-1]
             Dr = Dr_symm / eigval_max
             return Dr
@@ -410,8 +428,9 @@ class ENCP(NCP):
             Cxy_iso = [self.Cxy(k) for k in range(self.n_iso_subspaces)]
             return torch.block_diag(*Cxy_iso)
         else:
-            assert 0 <= iso_idx < self.n_iso_subspaces, \
-                f"Invalid isotypic subspace index {iso_idx} !in [0,{self.n_iso_subspaces}]"
+            assert (
+                0 <= iso_idx < self.n_iso_subspaces
+            ), f"Invalid isotypic subspace index {iso_idx} !in [0,{self.n_iso_subspaces}]"
             irrep_dim = self.irreps_dim[self.iso_subspace_ids[iso_idx]]
             Dxy_k = self.__getattr__(f"Dxy_{iso_idx}")
             return torch.kron(Dxy_k, torch.eye(irrep_dim, dtype=Dxy_k.dtype, device=Dxy_k.device))
@@ -429,8 +448,9 @@ class ENCP(NCP):
             Cx_iso = [self.Cx(k) for k in range(self.n_iso_subspaces)]
             return torch.block_diag(*Cx_iso)
         else:
-            assert 0 <= iso_idx < self.n_iso_subspaces, \
-                f"Invalid isotypic subspace index {iso_idx} !in [0,{self.n_iso_subspaces}]"
+            assert (
+                0 <= iso_idx < self.n_iso_subspaces
+            ), f"Invalid isotypic subspace index {iso_idx} !in [0,{self.n_iso_subspaces}]"
             irrep_dim = self.irreps_dim[self.iso_subspace_ids[iso_idx]]
             Dx_k = self.__getattr__(f"Dx_{iso_idx}")
             return torch.kron(Dx_k, torch.eye(irrep_dim, dtype=Dx_k.dtype, device=Dx_k.device))
@@ -448,36 +468,35 @@ class ENCP(NCP):
             Cy_iso = [self.Cy(k) for k in range(self.n_iso_subspaces)]
             return torch.block_diag(*Cy_iso)
         else:
-            assert 0 <= iso_idx < self.n_iso_subspaces, \
-                f"Invalid isotypic subspace index {iso_idx} !in [0,{self.n_iso_subspaces}]"
+            assert (
+                0 <= iso_idx < self.n_iso_subspaces
+            ), f"Invalid isotypic subspace index {iso_idx} !in [0,{self.n_iso_subspaces}]"
             irrep_dim = self.irreps_dim[self.iso_subspace_ids[iso_idx]]
             Dy_k = self.__getattr__(f"Dy_{iso_idx}")
             return torch.kron(Dy_k, torch.eye(irrep_dim, dtype=Dy_k.dtype, device=Dy_k.device))
 
     def _orth_proj_isotypic_subspaces(self, z: GeometricTensor) -> [torch.Tensor]:
         """Compute the orthogonal projection of the input tensor into the isotypic subspaces."""
-
         z_iso = [z.tensor[..., s:e] for s, e in zip(z.type.fields_start, z.type.fields_end)]
         return z_iso
 
     def _process_truncated_op_bias(self):
         truncated_op_bias = self.truncated_op_bias
-        embedding_dim = self.embedding_dim
         lat_singular_type = self.embedding_x.out_type
 
         self._is_truncated_op_diag = False
         # Diagonal Biases
-        if truncated_op_bias == 'svals':
+        if truncated_op_bias == "svals":
             # Store the sval trainable parameters / degrees of freedom (dof)
             num_sval_dof = np.sum(self.iso_irreps_multiplicities)  # There is one sval per irrep
             assert num_sval_dof == len(lat_singular_type.irreps), f"{num_sval_dof} != {len(lat_singular_type.irreps)}"
             self.log_svals = torch.nn.Parameter(
-                torch.normal(mean=0., std=2. / num_sval_dof, size=(num_sval_dof,)), requires_grad=True
-                )
+                torch.normal(mean=0.0, std=2.0 / num_sval_dof, size=(num_sval_dof,)), requires_grad=True
+            )
             # vector storing the multiplicity of each singular value
             self.sval_multiplicities = torch.tensor(
                 [self.irreps_dim[irrep_id] for irrep_id in lat_singular_type.irreps]
-                )
+            )
             self._is_truncated_op_diag = True
         elif truncated_op_bias == "diag":
             self._is_truncated_op_diag = True
@@ -493,24 +512,23 @@ class ENCP(NCP):
 
     def _register_stats_buffers(self):
         """Register the buffers for the running mean, Covariance and Cross-Covariance matrix matrix."""
-
         if self.idx_inv_subspace is not None:
             dim_x_inv_subspace = self.embedding_x.out_type.representations[self.idx_inv_subspace].size
             dim_y_inv_subspace = self.embedding_y.out_type.representations[self.idx_inv_subspace].size
-            self.register_buffer('mean_fx', torch.zeros((1, dim_x_inv_subspace)))
-            self.register_buffer('mean_hy', torch.zeros((1, dim_y_inv_subspace)))
+            self.register_buffer("mean_fx", torch.zeros((1, dim_x_inv_subspace)))
+            self.register_buffer("mean_hy", torch.zeros((1, dim_y_inv_subspace)))
 
         for iso_idx, iso_id, iso_subspace_dim in zip(
-                range(self.n_iso_subspaces), self.iso_subspace_ids, self.iso_subspace_dims
-                ):
+            range(self.n_iso_subspaces), self.iso_subspace_ids, self.iso_subspace_dims
+        ):
             irrep_dim = self.irreps_dim[iso_id]  # |ρ_k|  Dimension of the irrep
             effective_dim = int(iso_subspace_dim // irrep_dim)
             # Matrix containing the DoF of Cxy^(k) = Dxy ⊗ Iρ_k: L^2(Y^(k)) -> L^2(X^(k))
-            self.register_buffer(f'Dxy_{iso_idx}', torch.zeros(effective_dim, effective_dim))
+            self.register_buffer(f"Dxy_{iso_idx}", torch.zeros(effective_dim, effective_dim))
             # Matrix containing the DoF of Cx^(k) = Dx ⊗ Iρ_k: L^2(X^(k)) -> L^2(X^(k))
-            self.register_buffer(f'Dx_{iso_idx}', torch.zeros(effective_dim, effective_dim))
+            self.register_buffer(f"Dx_{iso_idx}", torch.zeros(effective_dim, effective_dim))
             # Matrix containing the DoF of Cy^(k) = Dy ⊗ Iρ_k: L^2(Y^(k)) -> L^2(Y^(k))
-            self.register_buffer(f'Dy_{iso_idx}', torch.zeros(effective_dim, effective_dim))
+            self.register_buffer(f"Dy_{iso_idx}", torch.zeros(effective_dim, effective_dim))
 
 
 if __name__ == "__main__":
@@ -542,12 +560,10 @@ if __name__ == "__main__":
 
     batch_size = 256
 
-
     # ESCNN equivariant models expect GeometricTensors.
     def geom_tensor_collate_fn(batch) -> [GeometricTensor, GeometricTensor]:
         x_batch, y_batch = default_collate(batch)
         return GeometricTensor(x_batch, type_X), GeometricTensor(y_batch, type_Y)
-
 
     n_samples = 1000
     X_train, X_val = torch.randn(n_samples, x_rep.size), torch.randn(int(n_samples * 0.15), x_rep.size)
@@ -574,12 +590,12 @@ if __name__ == "__main__":
         break
 
     # Train using lightning_______________________________________________
-    from lightning.pytorch.loggers import CSVLogger, WandbLogger
-    from NCP.models.lightning_modules import TrainingModule
+    from symm_rep_learn.models.lightning_modules import TrainingModule
 
-    light_module = TrainingModule(model, optimizer_fn=torch.optim.Adam, optimizer_kwargs=dict(lr=1e-3),
-                                  loss_fn=model.loss)
+    light_module = TrainingModule(
+        model, optimizer_fn=torch.optim.Adam, optimizer_kwargs=dict(lr=1e-3), loss_fn=model.loss
+    )
     trainer = lightning.Trainer(max_epochs=50)
 
-    torch.set_float32_matmul_precision('medium')
+    torch.set_float32_matmul_precision("medium")
     trainer.fit(light_module, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)

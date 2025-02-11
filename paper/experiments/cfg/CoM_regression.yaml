@@ -46,10 +46,10 @@ model_desc: "${model}_${truncated_op_bias}_gamma${gamma}_lr${optim.lr}_bs${optim
 
 hydra:
   run:
-    dir: "../experiments/${proj_name}/${exp_name}/${experiment_desc}/${model_desc}--${embedding_desc}/${hydra.job.override_dirname} seed=${seed}"
+    dir: "./paper/results/${proj_name}/${exp_name}/${experiment_desc}/${model_desc}--${embedding_desc}/${hydra.job.override_dirname} seed=${seed}"
 
   sweep:
-    dir: ./experiments/${proj_name}/${exp_name}/${experiment_desc}/
+    dir: ./paper/results/${proj_name}/${exp_name}/${experiment_desc}/
     subdir: ${model_desc}--${embedding_desc}/${hydra.job.override_dirname} seed=${seed}
 
   job:

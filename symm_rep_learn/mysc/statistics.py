@@ -2,10 +2,9 @@ import torch
 
 
 def cross_cov_norm_squared_unbiased_estimation(
-        x: torch.Tensor, y: torch.Tensor, return_inner_prods=False, permutation=None
-        ):
-    """
-    Compute the unbiased estimation of ||Cxy||_F^2 from a batch of samples.
+    x: torch.Tensor, y: torch.Tensor, return_inner_prods=False, permutation=None
+):
+    """Compute the unbiased estimation of ||Cxy||_F^2 from a batch of samples.
 
     Given the Covariance matrix Cxy = E_p(x,y) [x.T y], this function computes an unbiased estimation
     of the Frobenius norm of the covariance matrix from two independent sampling sets.
@@ -34,21 +33,20 @@ def cross_cov_norm_squared_unbiased_estimation(
 
     if return_inner_prods:
         # Compute the inner products
-        x_yp = torch.einsum('ij,kj->ik', x, yp)  # (n_samples, n_samples) x_yp_n,m = (x_n.T y'_m)
-        xp_y = torch.einsum('ik,jk->ij', xp, y)  # (n_samples, n_samples) xp_y_n,m = (x'_n.T y_m)
+        x_yp = torch.einsum("ij,kj->ik", x, yp)  # (n_samples, n_samples) x_yp_n,m = (x_n.T y'_m)
+        xp_y = torch.einsum("ik,jk->ij", xp, y)  # (n_samples, n_samples) xp_y_n,m = (x'_n.T y_m)
         # Compute 1/N^2 Σ_n Σ_m [(x_n.T y'_m) (x'_m.T y_n)]
-        cov_fro_norm = torch.trace(torch.mm(x_yp, xp_y)) / (n_samples ** 2)
+        cov_fro_norm = torch.trace(torch.mm(x_yp, xp_y)) / (n_samples**2)
         return cov_fro_norm, (x_yp, xp_y)
     else:  # Equivalent einsum implementation, without intermediate storage
         # Compute 1/N^2 Σ_n Σ_m [(x_n.T y'_m) (x'_m.T y_n)]
-        val = torch.einsum('nj,mj,mk,nk->', x, yp, xp, y)
-        cov_fro_norm = val / (n_samples ** 2)
+        val = torch.einsum("nj,mj,mk,nk->", x, yp, xp, y)
+        cov_fro_norm = val / (n_samples**2)
         return cov_fro_norm
 
 
 def cov_norm_squared_unbiased_estimation(x: torch.Tensor, return_inner_prod=False, permutation=None):
-    """
-    Compute the unbiased estimation of ||Cx||_F^2 from a batch of samples.
+    """Compute the unbiased estimation of ||Cx||_F^2 from a batch of samples.
 
     Given the Covariance matrix Cx = E_p(x) [x.T x], this function computes an unbiased estimation
     of the Frobenius norm of the covariance matrix from a single sampling set.
@@ -71,9 +69,9 @@ def cov_norm_squared_unbiased_estimation(x: torch.Tensor, return_inner_prod=Fals
     xp = x[perm]  # Independent sampling of x'
 
     if return_inner_prod:
-        x_xp = torch.einsum('ij,kj->ik', x, xp)  # (n_samples, n_samples) x_xp_n,m = (x_n.T x'_m)
+        x_xp = torch.einsum("ij,kj->ik", x, xp)  # (n_samples, n_samples) x_xp_n,m = (x_n.T x'_m)
         # Compute 1/N^2 Σ_n Σ_m [(x_n.T x'_m)^2]
-        cov_fro_norm = (x_xp ** 2).sum() / (n_samples ** 2)
+        cov_fro_norm = (x_xp**2).sum() / (n_samples**2)
         return cov_fro_norm, x_xp
     else:  # Equivalent einsum implementation, without intermediate storage
         return cross_cov_norm_squared_unbiased_estimation(x=x, y=x, return_inner_prods=False)

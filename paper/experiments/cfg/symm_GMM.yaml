@@ -50,10 +50,10 @@ model_desc: "${model}_gamma${gamma}_lr${lr}_bs${batch_size}"
 
 hydra:
   run:
-    dir: "../experiment_results/${exp_name}/${exp_label}/${gmm_desc}/${model_desc}--${embedding_desc}/${hydra.job.override_dirname} seed=${seed}"
+    dir: "./paper/results/${exp_name}/${exp_label}/${gmm_desc}/${model_desc}--${embedding_desc}/${hydra.job.override_dirname} seed=${seed}"
 
   sweep:
-    dir: ./experiments/${exp_name}/${exp_label}/${gmm_desc}/
+    dir: ./paper/results/${exp_name}/${exp_label}/${gmm_desc}/
     subdir: ${model_desc}--${embedding_desc}/${hydra.job.override_dirname} seed=${seed}
 
   job:

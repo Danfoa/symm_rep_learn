@@ -3,11 +3,10 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "NCP"
-dynamic = [
-  "version"
-]  
-description = "Neural Conditional Probabilities" 
+name = "symm_rep_learn "
+version = "0.1.0"
+
+description = "Code of paper Learning Disentangled Representations for Equivariant Inference"
 readme = "README.md"
 requires-python = ">=3.6"
 
@@ -15,22 +14,9 @@ authors = [
 
 ]
 dependencies = [
-  "torch"
+  "torch",
+  "escnn",
 ]
-
-[project.optional-dependencies]
-docs = [
-  "sphinx",
-  "sphinx-book-theme",
-  "sphinx-design",
-  "sphinxcontrib-bibtex",
-  "sphinx-autobuild",
-  "myst-nb",
-  "normflows",
-]
-
-[tool.hatch.version]
-path = "NCP/__about__.py"
 
 # RUFF ___________________________________________________________________________________________________________
 [tool.ruff]
@@ -42,7 +28,7 @@ select = [
   "F",    # pyflakes: general code quality checks
   "E",    # pycodestyle: PEP8 error checks
   "W",    # pycodestyle: PEP8 warning checks
-  "I001", # isort: import sorting checks
+  "I", # isort: import sorting checks
   "D"     # pydocstyle: docstring style checks
 ]
 
@@ -58,7 +44,8 @@ ignore = [
 exclude = [
   ".git",  # Git version control directory
   ".idea", # PyCharm project settings directory
-  ".venv"  # Virtual environment directory
+  ".venv",  # Virtual environment directory
+  ".vscode"
 ]
 
 [tool.ruff.pydocstyle]

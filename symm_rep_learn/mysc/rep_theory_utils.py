@@ -2,7 +2,7 @@ import functools
 from collections import OrderedDict
 
 import numpy as np
-from escnn.group import directsum, Representation
+from escnn.group import Representation, directsum
 from escnn.nn import FieldType
 
 
@@ -49,11 +49,13 @@ def isotypic_decomp_rep(rep: Representation) -> Representation:
     for irrep_id, indices in isotypic_subspaces_indices.items():
         irrep = symm_group.irrep(*irrep_id)
         multiplicities = len(indices)
-        active_isotypic_reps[irrep_id] = Representation(group=rep.group,
-                                                        irreps=[irrep_id] * multiplicities,
-                                                        name=f'IsoSubspace {irrep_id}',
-                                                        change_of_basis=np.identity(irrep.size * multiplicities),
-                                                        supported_nonlinearities=irrep.supported_nonlinearities)
+        active_isotypic_reps[irrep_id] = Representation(
+            group=rep.group,
+            irreps=[irrep_id] * multiplicities,
+            name=f"IsoSubspace {irrep_id}",
+            change_of_basis=np.identity(irrep.size * multiplicities),
+            supported_nonlinearities=irrep.supported_nonlinearities,
+        )
 
     # Impose canonical order on the Isotypic Subspaces.
     # If the trivial representation is active it will be the first Isotypic Subspace.
@@ -71,28 +73,25 @@ def isotypic_decomp_rep(rep: Representation) -> Representation:
     P_in2iso = permutation_matrix(oneline_permutation)
 
     Q_iso = rep.change_of_basis @ P_in2iso.T
-    rep_iso_basis = directsum(list(ordered_isotypic_reps.values()),
-                              name=rep.name + '-Iso',
-                              change_of_basis=Q_iso)
+    rep_iso_basis = directsum(list(ordered_isotypic_reps.values()), name=rep.name + "-Iso", change_of_basis=Q_iso)
 
     iso_supported_nonlinearities = [iso_rep.supported_nonlinearities for iso_rep in ordered_isotypic_reps.values()]
     rep_iso_basis.supported_nonlinearities = functools.reduce(set.intersection, iso_supported_nonlinearities)
-    rep_iso_basis.attributes['isotypic_reps'] = ordered_isotypic_reps
+    rep_iso_basis.attributes["isotypic_reps"] = ordered_isotypic_reps
 
     return rep_iso_basis
 
-def field_type_to_isotypic_basis(field_type: FieldType):
-    from escnn.group import change_basis
 
+def field_type_to_isotypic_basis(field_type: FieldType):
     rep = field_type.representation
     # Organize the irreps such that we get: rep_ordered_irreps := Q (⊕_k (⊕_i^mk irrep_k)) Q^T
     rep_ordered_irreps = isotypic_decomp_rep(rep)
     # Get dictionary of irrep_id: (⊕_i^mk irrep_k)
-    iso_subspaces_reps = rep_ordered_irreps.attributes['isotypic_reps']
+    iso_subspaces_reps = rep_ordered_irreps.attributes["isotypic_reps"]
     # Define a field type composed of the representations of each isotypic subspace
-    new_field_type = FieldType(gspace=field_type.gspace,
-                               representations=list(iso_subspaces_reps.values()))
+    new_field_type = FieldType(gspace=field_type.gspace, representations=list(iso_subspaces_reps.values()))
     return new_field_type
+
 
 def permutation_matrix(oneline_notation):
     """Generate a permutation matrix from its oneline notation."""

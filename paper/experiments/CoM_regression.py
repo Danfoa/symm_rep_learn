@@ -2,7 +2,6 @@
 
 from __future__ import annotations  # Support new typing structure in 3.8 and 3.9
 
-import copy
 import logging
 import math
 import pathlib
@@ -17,21 +16,21 @@ import hydra
 import numpy as np
 import pandas as pd
 import torch
-from escnn.group import directsum, Representation, groups_dict
+from escnn.group import Representation, directsum, groups_dict
 from escnn.nn import EquivariantModule, FieldType, GeometricTensor
-from lightning import seed_everything, Trainer
+from lightning import Trainer, seed_everything
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf
 from torch.optim import Adam
 from torch.utils.data import DataLoader, TensorDataset, default_collate
 
-from NCP.models.equiv_ncp import ENCP
-from NCP.models.ncp import NCP
-from NCP.models.lightning_modules import SupervisedTrainingModule, TrainingModule
-from NCP.mysc.symm_algebra import invariant_orthogonal_projector
-from NCP.nn.equiv_layers import EMLP, EquivResidualEncoder
-from NCP.nn.layers import MLP, ResidualEncoder
+from symm_rep_learn.models.equiv_ncp import ENCP
+from symm_rep_learn.models.lightning_modules import SupervisedTrainingModule, TrainingModule
+from symm_rep_learn.models.ncp import NCP
+from symm_rep_learn.mysc.symm_algebra import invariant_orthogonal_projector
+from symm_rep_learn.nn.equiv_layers import EMLP, EquivResidualEncoder
+from symm_rep_learn.nn.layers import MLP, ResidualEncoder
 
 log = logging.getLogger(__name__)
 
@@ -57,9 +56,9 @@ class DynamicsRecording:
     def __post_init__(self):
         # Check provided state observables are in the recordings
         for obs_name in self.state_obs:
-            assert obs_name in self.recordings.keys(), (
-                f"State observable {obs_name} not in the provided recordings: {self.recordings.keys()}"
-            )
+            assert (
+                obs_name in self.recordings.keys()
+            ), f"State observable {obs_name} not in the provided recordings: {self.recordings.keys()}"
         for obs_name in self.recordings.keys():
             # Scalar observations should have shape (traj, time, 1)
             # obs_shape = self.recordings[obs_name].shape
@@ -68,9 +67,9 @@ class DynamicsRecording:
             # If group representation of observation is provided, check the representation has the same dimension
             if obs_name in self.obs_representations.keys():
                 rep = self.obs_representations[obs_name]
-                assert rep.size == self.recordings[obs_name].shape[-1], (
-                    f"[{obs_name}] Invalid rep dim={rep.size} for {self.recordings[obs_name]}"
-                )
+                assert (
+                    rep.size == self.recordings[obs_name].shape[-1]
+                ), f"[{obs_name}] Invalid rep dim={rep.size} for {self.recordings[obs_name]}"
 
     @property
     def obs_dims(self):
@@ -157,14 +156,14 @@ class DynamicsRecording:
             for irrep_id, irrep_dims in zip(rep_obs.irreps, irreps_dimension):
                 irrep = G.irrep(*irrep_id)
                 centered_obs_irrep = centered_obs_irrep_basis[..., irrep_dims]
-                assert centered_obs_irrep.shape[-1] == irrep.size, (
-                    f"Obs irrep shape {centered_obs_irrep.shape} != {irrep.size}"
-                )
+                assert (
+                    centered_obs_irrep.shape[-1] == irrep.size
+                ), f"Obs irrep shape {centered_obs_irrep.shape} != {irrep.size}"
 
                 # Since the irreps are unitary/orthogonal transformations, we are constrained compute a unique variance
                 # for all dimensions of the irrep G-stable subspace, as scaling the dimensions independently would break
                 # the symmetry of the rv. As a centered rv the variance is the expectation of the squared rv.
-                var_irrep = np.mean(centered_obs_irrep ** 2)  # Single scalar variance per G-stable subspace
+                var_irrep = np.mean(centered_obs_irrep**2)  # Single scalar variance per G-stable subspace
                 # Store the irrep mean and variance in the entire representation mean and variance
                 var_irrep_basis[irrep_dims] = var_irrep
             # Convert the variance from the irrep basis to the original basis
@@ -187,12 +186,12 @@ class DynamicsRecording:
         else:
             mean = np.mean(np.asarray(self.recordings[obs_name]), axis=(0, 1))
             var = np.var(np.asarray(self.recordings[obs_name]), axis=(0, 1))
-        assert mean.shape == (self.obs_dims[obs_name],), (
-            f"Obs {obs_name} dim ({self.obs_dims[obs_name]},) diff from estimated mean dim ({mean.shape},)!= "
-        )
-        assert var.shape == (self.obs_dims[obs_name],), (
-            f"Obs {obs_name} dim ({self.obs_dims[obs_name]},) diff from estimated var dim ({var.shape},)!= "
-        )
+        assert mean.shape == (
+            self.obs_dims[obs_name],
+        ), f"Obs {obs_name} dim ({self.obs_dims[obs_name]},) diff from estimated mean dim ({mean.shape},)!= "
+        assert var.shape == (
+            self.obs_dims[obs_name],
+        ), f"Obs {obs_name} dim ({self.obs_dims[obs_name]},) diff from estimated var dim ({var.shape},)!= "
 
         self.obs_moments[obs_name] = mean, var
 
@@ -230,13 +229,13 @@ class DynamicsRecording:
             for name in obs_names:
                 assert name in self.recordings.keys(), f"Observation {name} not in recordings {self.recordings.keys()}"
         obs_dims = [self.obs_dims[obs] for obs in obs_names]
-        assert vector.shape[-1] == sum(obs_dims), (
-            f"Vector dim {vector.shape[-1]} differs from expected dimension {sum(obs_dims)}"
-        )
+        assert vector.shape[-1] == sum(
+            obs_dims
+        ), f"Vector dim {vector.shape[-1]} differs from expected dimension {sum(obs_dims)}"
         obs_idx = [0] + [sum(obs_dims[:i]) for i in range(1, len(obs_dims))]
         obs_values = {
-            obs_name: vector[..., obs_idx[i]: obs_idx[i] + obs_dims[i]] for i, obs_name in enumerate(obs_names)
-            }
+            obs_name: vector[..., obs_idx[i] : obs_idx[i] + obs_dims[i]] for i, obs_name in enumerate(obs_names)
+        }
         return obs_values
 
     def save_to_file(self, file_path: Path):
@@ -262,9 +261,8 @@ class DynamicsRecording:
 
     @staticmethod
     def load_from_file(
-            file_path: Path, only_metadata=False, obs_names: Optional[Iterable[str]] = None,
-            ignore_other_obs: bool = True
-            ) -> "DynamicsRecording":
+        file_path: Path, only_metadata=False, obs_names: Optional[Iterable[str]] = None, ignore_other_obs: bool = True
+    ) -> "DynamicsRecording":
         """Load a DynamicsRecording object from a file.
 
         Args:
@@ -304,19 +302,19 @@ class DynamicsRecording:
                     else:
                         data.obs_representations[obs_name] = Representation(
                             group, name=rep_name, irreps=irreps_ids, change_of_basis=rep_Q
-                            )
+                        )
                     group.representations[rep_name] = data.obs_representations[obs_name]
         data.__post_init__()
         return data
 
     @staticmethod
     def load_data_generator(
-            dynamics_recordings: list["DynamicsRecording"],
-            frames_per_step: int = 1,
-            prediction_horizon: Union[int, float] = 1,
-            state_obs: Optional[list[str]] = None,
-            action_obs: Optional[list[str]] = None,
-            ):
+        dynamics_recordings: list["DynamicsRecording"],
+        frames_per_step: int = 1,
+        prediction_horizon: Union[int, float] = 1,
+        state_obs: Optional[list[str]] = None,
+        action_obs: Optional[list[str]] = None,
+    ):
         """Generator that yields observation samples of length `n_frames_per_state` from the Markov Dynamics recordings.
 
         Args:
@@ -373,27 +371,27 @@ class DynamicsRecording:
                         start_indices = np.arange(0, num_steps) * frames_per_step + frame
                         end_indices = start_indices + frames_per_step
                         # Use these indices to slice the relevant portion of the trajectory
-                        obs_time_horizon = trajs[traj_id][start_indices[0]: end_indices[-1]]
+                        obs_time_horizon = trajs[traj_id][start_indices[0] : end_indices[-1]]
                         # Reshape the slice to have the desired shape (time, frames_per_step, obs_dim)
                         obs_dim = file_data.obs_dims[obs_name]
                         obs_time_horizon = obs_time_horizon.reshape((num_steps, frames_per_step, obs_dim))
 
                         # Test no copy is being made (too costly to do at runtime)
                         # assert np.shares_memory(obs_time_horizon, trajs[traj_id])
-                        assert len(obs_time_horizon) == steps_in_pred_horizon + 1, (
-                            f"{len(obs_time_horizon)} != {steps_in_pred_horizon + 1}"
-                        )
+                        assert (
+                            len(obs_time_horizon) == steps_in_pred_horizon + 1
+                        ), f"{len(obs_time_horizon)} != {steps_in_pred_horizon + 1}"
                         sample[obs_name] = obs_time_horizon
                     # print(frame)
                     yield sample
 
     @staticmethod
     def map_state_next_state(
-            sample: dict,
-            state_observations: List[str],
-            state_mean: Optional[np.ndarray] = None,
-            state_std: Optional[np.ndarray] = None,
-            ) -> dict:
+        sample: dict,
+        state_observations: List[str],
+        state_mean: Optional[np.ndarray] = None,
+        state_std: Optional[np.ndarray] = None,
+    ) -> dict:
         """Map composing multiple frames of observations into a flat vectors `state` and `next_state` samples.
 
         This method constructs the state `s_t` and history of nex steps `s_t+1` of the Markov Process.
@@ -438,51 +436,51 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
     dim_x = x_type.size
     dim_y = y_type.size
 
-
     if cfg.model.lower() == "encp":  # Equivariant NCP
-        from NCP.models.equiv_ncp import ENCP
-        from NCP.nn.equiv_layers import EMLP
         from escnn.nn import FieldType
+
+        from symm_rep_learn.models.equiv_ncp import ENCP
+        from symm_rep_learn.nn.equiv_layers import EMLP
+
         G = x_type.representation.group
 
         reg_rep = G.regular_representation
 
-        kwargs = dict(hidden_layers=cfg.architecture.hidden_layers,
-                      activation=cfg.architecture.activation,
-                      hidden_units=cfg.architecture.hidden_units,
-                      bias=False)
+        kwargs = dict(
+            hidden_layers=cfg.architecture.hidden_layers,
+            activation=cfg.architecture.activation,
+            hidden_units=cfg.architecture.hidden_units,
+            bias=False,
+        )
         if cfg.architecture.residual_encoder:
             lat_rep = [reg_rep] * max(1, math.ceil(cfg.architecture.embedding_dim // reg_rep.size))
             lat_x_type = FieldType(
-                gspace=escnn.gspaces.no_base_space(G),
-                representations=list(y_type.representations) + lat_rep
-                )
-            lat_y_type = FieldType(
-                gspace=escnn.gspaces.no_base_space(G),
-                representations=lat_rep)
+                gspace=escnn.gspaces.no_base_space(G), representations=list(y_type.representations) + lat_rep
+            )
+            lat_y_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=lat_rep)
             x_embedding = EMLP(in_type=x_type, out_type=lat_x_type, **kwargs)
             y_embedding = EquivResidualEncoder(
-                encoder=EMLP(in_type=y_type, out_type=lat_y_type, **kwargs),
-                in_type=y_type)
-            assert y_embedding.out_type.size == x_embedding.out_type.size, \
-                f"{y_embedding.out_type.size} != {x_embedding.out_type.size}"
+                encoder=EMLP(in_type=y_type, out_type=lat_y_type, **kwargs), in_type=y_type
+            )
+            assert (
+                y_embedding.out_type.size == x_embedding.out_type.size
+            ), f"{y_embedding.out_type.size} != {x_embedding.out_type.size}"
         else:
             lat_type = FieldType(
                 gspace=escnn.gspaces.no_base_space(G),
-                representations=[reg_rep] * max(1, math.ceil(cfg.architecture.embedding_dim // reg_rep.size))
-                )
+                representations=[reg_rep] * max(1, math.ceil(cfg.architecture.embedding_dim // reg_rep.size)),
+            )
             x_embedding = EMLP(in_type=x_type, out_type=lat_type, **kwargs)
             y_embedding = EMLP(in_type=y_type, out_type=lat_type, **kwargs)
-        eNCPop = ENCP(embedding_x=x_embedding,
-                      embedding_y=y_embedding,
-                      gamma=cfg.gamma,
-                      truncated_op_bias=cfg.truncated_op_bias)
+        eNCPop = ENCP(
+            embedding_x=x_embedding, embedding_y=y_embedding, gamma=cfg.gamma, truncated_op_bias=cfg.truncated_op_bias
+        )
 
         return eNCPop
     elif cfg.model.lower() == "ncp":  # NCP
-        from NCP.models.ncp import NCP
-        from NCP.mysc.utils import class_from_name
-        from NCP.nn.layers import MLP
+        from symm_rep_learn.models.ncp import NCP
+        from symm_rep_learn.mysc.utils import class_from_name
+        from symm_rep_learn.nn.layers import MLP
 
         activation = class_from_name("torch.nn", cfg.architecture.activation)
         kwargs = dict(
@@ -492,21 +490,19 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             activation=activation,
             bias=False,
             iterative_whitening=cfg.architecture.iter_whitening,
-            )
+        )
         if cfg.architecture.residual_encoder_x:
             dim_free_embedding = embedding_dim - dim_x
             fx = ResidualEncoder(
-                encoder=MLP(input_shape=dim_x, **kwargs | {"output_shape": dim_free_embedding}),
-                in_dim=dim_x
-                )
+                encoder=MLP(input_shape=dim_x, **kwargs | {"output_shape": dim_free_embedding}), in_dim=dim_x
+            )
         else:
             fx = MLP(input_shape=dim_x, **kwargs)
         if cfg.architecture.residual_encoder:
             dim_free_embedding = embedding_dim - dim_y
             fy = ResidualEncoder(
-                encoder=MLP(input_shape=dim_y, **kwargs | {"output_shape": dim_free_embedding}),
-                in_dim=dim_y
-                )
+                encoder=MLP(input_shape=dim_y, **kwargs | {"output_shape": dim_free_embedding}), in_dim=dim_y
+            )
         else:
             fy = MLP(input_shape=dim_y, **kwargs)
         ncp = NCP(
@@ -515,12 +511,12 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             embedding_dim=embedding_dim,
             gamma=cfg.gamma,
             truncated_op_bias=cfg.truncated_op_bias,
-            )
+        )
         return ncp
 
     elif cfg.model.lower() == "mlp":
-        from NCP.mysc.utils import class_from_name
-        from NCP.nn.layers import MLP
+        from symm_rep_learn.mysc.utils import class_from_name
+        from symm_rep_learn.nn.layers import MLP
 
         activation = class_from_name("torch.nn", cfg.architecture.activation)
         n_h_layers = cfg.architecture.hidden_layers
@@ -531,17 +527,20 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             layer_size=[cfg.architecture.hidden_units] * (n_h_layers - 1) + [cfg.architecture.embedding_dim],
             activation=activation,
             bias=False,
-            )
+        )
         return mlp
     elif cfg.model.lower() == "emlp":
-        from NCP.nn.equiv_layers import EMLP
+        from symm_rep_learn.nn.equiv_layers import EMLP
+
         n_h_layers = cfg.architecture.hidden_layers
-        emlp = EMLP(in_type=x_type,
-                    out_type=y_type,
-                    hidden_layers=cfg.architecture.hidden_layers,
-                    activation=cfg.architecture.activation,
-                    hidden_units=[cfg.architecture.hidden_units] * (n_h_layers - 1) + [cfg.architecture.embedding_dim],
-                    bias=False,)
+        emlp = EMLP(
+            in_type=x_type,
+            out_type=y_type,
+            hidden_layers=cfg.architecture.hidden_layers,
+            activation=cfg.architecture.activation,
+            hidden_units=[cfg.architecture.hidden_units] * (n_h_layers - 1) + [cfg.architecture.embedding_dim],
+            bias=False,
+        )
         return emlp
     else:
         raise ValueError(f"Model {cfg.model} not recognized")
@@ -592,8 +591,8 @@ def com_momentum_dataset(cfg):
 
     X_c = (X - X_mean) / np.sqrt(X_var)
     Y_c = (Y - Y_mean) / np.sqrt(Y_var)
-    x_train, x_val, x_test = (X_c[:n_train], X_c[n_train: n_train + n_val], X_c[n_train + n_val:])
-    y_train, y_val, y_test = (Y_c[:n_train], Y_c[n_train: n_train + n_val], Y_c[n_train + n_val:])
+    x_train, x_val, x_test = (X_c[:n_train], X_c[n_train : n_train + n_val], X_c[n_train + n_val :])
+    y_train, y_val, y_test = (Y_c[:n_train], Y_c[n_train : n_train + n_val], Y_c[n_train + n_val :])
 
     # Moving data to gpu
     X_train = torch.atleast_2d(torch.from_numpy(x_train).float()).to(device)
@@ -602,8 +601,7 @@ def com_momentum_dataset(cfg):
     Y_val = torch.atleast_2d(torch.from_numpy(y_val).float())
     X_test = torch.atleast_2d(torch.from_numpy(x_test).float())
     Y_test = torch.atleast_2d(torch.from_numpy(y_test).float())
-    y_moments = (torch.from_numpy(Y_mean).float().to(device),
-                 torch.from_numpy(Y_var).float().to(device))
+    y_moments = (torch.from_numpy(Y_mean).float().to(device), torch.from_numpy(Y_var).float().to(device))
 
     # Define data samples
     train_samples = X_train, Y_train
@@ -615,12 +613,15 @@ def com_momentum_dataset(cfg):
     val_dataset = TensorDataset(X_val, Y_val)
     test_dataset = TensorDataset(X_test, Y_test)
 
-    return ((train_samples, val_samples, test_samples),
-            (train_dataset, val_dataset, test_dataset),
-            rep_X, rep_Y,
-            y_obs_dims,
-            y_moments,
-            )
+    return (
+        (train_samples, val_samples, test_samples),
+        (train_dataset, val_dataset, test_dataset),
+        rep_X,
+        rep_Y,
+        y_obs_dims,
+        y_moments,
+    )
+
 
 @torch.no_grad()
 def regression_metrics(model, x, y, y_train, x_type, y_type, y_obs_dims, y_moments):
@@ -719,6 +720,7 @@ def proprioceptive_regression_metrics(y, y_pred, y_obs_dims: dict, y_moments):
 
     return loss, metrics
 
+
 @hydra.main(config_path="cfg", config_name="eNCP_regression", version_base="1.3")
 def main(cfg: DictConfig):
     seed = cfg.seed if cfg.seed >= 0 else np.random.randint(0, 1000)
@@ -767,28 +769,34 @@ def main(cfg: DictConfig):
             optimizer_fn=Adam,
             optimizer_kwargs={"lr": cfg.optim.lr},
             loss_fn=lambda x, y: proprioceptive_regression_metrics(x, y, y_obs_dims, y_moments),
-            )
-    else: # NCP / ENCP models
+        )
+    else:  # NCP / ENCP models
         lightning_module = TrainingModule(
             model=model,
             optimizer_fn=Adam,
             optimizer_kwargs={"lr": cfg.optim.lr},
             loss_fn=model.loss if hasattr(model, "loss") else None,
             val_metrics=lambda _: regression_metrics(
-                model=model, x=x_val, y=y_val, y_train=y_train,
+                model=model,
+                x=x_val,
+                y=y_val,
+                y_train=y_train,
                 x_type=x_type,
                 y_type=y_type,
                 y_obs_dims=y_obs_dims,
                 y_moments=y_moments,
-                ),
+            ),
             test_metrics=lambda _: regression_metrics(
-                model=model, x=x_test, y=y_test, y_train=y_train,
+                model=model,
+                x=x_test,
+                y=y_test,
+                y_train=y_train,
                 x_type=x_type,
                 y_type=y_type,
                 y_obs_dims=y_obs_dims,
                 y_moments=y_moments,
-                ),
-            )
+            ),
+        )
 
     # Define the logger and callbacks
     run_path = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
@@ -801,17 +809,19 @@ def main(cfg: DictConfig):
     ckpt_call = ModelCheckpoint(
         dirpath=run_path,
         filename=BEST_CKPT_NAME,
-        monitor='loss/val', save_top_k=1,
-        save_last=True, mode='min',
+        monitor="loss/val",
+        save_top_k=1,
+        save_last=True,
+        mode="min",
         every_n_epochs=scaled_saved_freq,
-        )
+    )
 
     # Fix for all runs independent on the train_ratio chosen. This way we compare on effective number of "epochs"
     max_steps = int(n_total_samples * cfg.optim.max_epochs // cfg.optim.batch_size)
     scaled_patience = int(cfg.optim.patience * n_total_samples * 0.7 // cfg.optim.batch_size)
 
     metric_to_monitor = "||k(x,y) - k_r(x,y)||/val" if isinstance(model, ENCP) or isinstance(model, NCP) else "loss/val"
-    early_call = EarlyStopping(monitor=metric_to_monitor, patience=scaled_patience, mode='min')
+    early_call = EarlyStopping(monitor=metric_to_monitor, patience=scaled_patience, mode="min")
 
     trainer = Trainer(
         accelerator="gpu",
@@ -824,7 +834,7 @@ def main(cfg: DictConfig):
         callbacks=[ckpt_call, early_call],
         fast_dev_run=25 if cfg.debug else False,
         num_sanity_val_steps=5,
-        )
+    )
 
     torch.set_float32_matmul_precision("medium")
     last_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / LAST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
@@ -833,14 +843,15 @@ def main(cfg: DictConfig):
         train_dataloaders=train_dataloader,
         val_dataloaders=val_dataloader,
         ckpt_path=last_ckpt_path if last_ckpt_path.exists() else None,
-        )
+    )
 
     # Loads the best model.
     best_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / BEST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
-    test_logs = trainer.test(lightning_module,
-                             dataloaders=test_dataloader,
-                             ckpt_path=best_ckpt_path if best_ckpt_path.exists() else None,
-                             )
+    test_logs = trainer.test(
+        lightning_module,
+        dataloaders=test_dataloader,
+        ckpt_path=best_ckpt_path if best_ckpt_path.exists() else None,
+    )
     test_metrics = test_logs[0]  # dict: metric_name -> value
     # Save the testing matrics in a csv file using pandas.
     test_metrics_path = pathlib.Path(run_path) / "test_metrics.csv"

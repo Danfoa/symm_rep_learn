@@ -5,7 +5,7 @@ import logging
 
 import torch
 
-from NCP.mysc.statistics import (
+from symm_rep_learn.mysc.statistics import (
     cov_norm_squared_unbiased_estimation,
     cross_cov_norm_squared_unbiased_estimation,
 )
@@ -15,15 +15,15 @@ log = logging.getLogger(__name__)
 
 # Neural Conditional Probability (NCP) modelule ========================================================================
 class NCP(torch.nn.Module):
-
-    def __init__(self,
-                 embedding_x: torch.nn.Module,
-                 embedding_y: torch.nn.Module,
-                 embedding_dim: int,
-                 gamma=0.1,  # Will be multiplied by the embedding_dim
-                 gamma_centering=None,  # Penalizes probability mass distortion
-                 truncated_op_bias: str = 'full_rank',  # 'Cxy', 'diag', 'svals'
-                 ):
+    def __init__(
+        self,
+        embedding_x: torch.nn.Module,
+        embedding_y: torch.nn.Module,
+        embedding_dim: int,
+        gamma=0.1,  # Will be multiplied by the embedding_dim
+        gamma_centering=None,  # Penalizes probability mass distortion
+        truncated_op_bias: str = "full_rank",  # 'Cxy', 'diag', 'svals'
+    ):
         super(NCP, self).__init__()
         self.gamma = gamma
         self.gamma_centering = gamma_centering if gamma_centering is not None else gamma
@@ -117,9 +117,9 @@ class NCP(torch.nn.Module):
                 + γ(||Cx - I||_F^2 + ||Cy - I||_F^2 + ||E_p(x) f(x)||_F^2 + ||E_p(y) h(y)||_F^2)
             metrics: Scalar valued metrics to monitor during training.
         """
-        assert fx.shape[-1] == hy.shape[-1] == self.embedding_dim, (
-            f"Expected number of singular functions to be {self.embedding_dim}, got {fx.shape[-1]} and {hy.shape[-1]}."
-        )
+        assert (
+            fx.shape[-1] == hy.shape[-1] == self.embedding_dim
+        ), f"Expected number of singular functions to be {self.embedding_dim}, got {fx.shape[-1]} and {hy.shape[-1]}."
 
         # Center basis functions and update mean_fx, mean_hy, Cx, Cy, Cxy
         fx_c, hy_c = self.update_fns_statistics(fx, hy)
@@ -363,7 +363,7 @@ class NCP(torch.nn.Module):
 
 
 if __name__ == "__main__":
-    from NCP.nn.layers import MLP
+    from symm_rep_learn.nn.layers import MLP
 
     in_dim, out_dim, embedding_dim = 10, 4, 40
 

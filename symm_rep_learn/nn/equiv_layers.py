@@ -8,21 +8,31 @@ import escnn
 import torch
 from escnn.nn import EquivariantModule, FieldType, FourierPointwise, GeometricTensor
 
-from NCP.mysc.rep_theory_utils import field_type_to_isotypic_basis, isotypic_decomp_rep
+from symm_rep_learn.mysc.rep_theory_utils import isotypic_decomp_rep
 
-# G-Invariant Multi-Layer Perceptron.
+
 class IMLP(EquivariantModule):
+    """G-Invariant Multi-Layer Perceptron.
+
+    This module is a G-invariant MLP that extracts G-invariant features from the input tensor. The input tensor
+    is first processed by an EMLP module that extracts G-equivariant features. The output of the EMLP module is
+    then processed by an IrrepSubspaceNormPooling module that computes the norm of the features in each G-stable
+    subspace associated to individual irreducible representations. The output of the IrrepSubspaceNormPooling module
+    is a tensor with G-invariant features that can be processed with any NN architecture.
+    Default implementation is to add a single linear layer projecting the invariant features to the desired
+    output dimension.
+    """
 
     def __init__(
-            self,
-            in_type: FieldType,
-            out_dim: int, # Number of G-invariant features to extract.
-            hidden_layers: int = 1,
-            hidden_units: int = 128,
-            activation: str = "ReLU",
-            bias: bool = False,
-            hidden_irreps: list | tuple = None
-            ):
+        self,
+        in_type: FieldType,
+        out_dim: int,  # Number of G-invariant features to extract.
+        hidden_layers: int = 1,
+        hidden_units: int = 128,
+        activation: str = "ReLU",
+        bias: bool = False,
+        hidden_irreps: list | tuple = None,
+    ):
         super(IMLP, self).__init__()
 
         self.G = in_type.fibergroup
@@ -30,22 +40,22 @@ class IMLP(EquivariantModule):
 
         equiv_out_type = FieldType(
             gspace=in_type.gspace,
-            representations=[self.G.regular_representation] * max(1, ceil(hidden_units // self.G.order()))
-            )
+            representations=[self.G.regular_representation] * max(1, ceil(hidden_units // self.G.order())),
+        )
 
         self.equiv_feature_extractor = EMLP(
             in_type=in_type,
             out_type=equiv_out_type,
-            hidden_layers=hidden_layers - 1, # Last layer will be an unconstrained linear layer.
+            hidden_layers=hidden_layers - 1,  # Last layer will be an unconstrained linear layer.
             hidden_units=hidden_units,
             activation=activation,
             bias=bias,
-            hidden_irreps=hidden_irreps
-            )
+            hidden_irreps=hidden_irreps,
+        )
         self.inv_feature_extractor = IrrepSubspaceNormPooling(in_type=self.equiv_feature_extractor.out_type)
-        self.head = torch.nn.Linear(in_features=self.inv_feature_extractor.out_type.size,
-                                    out_features=out_dim,
-                                    bias=bias)
+        self.head = torch.nn.Linear(
+            in_features=self.inv_feature_extractor.out_type.size, out_features=out_dim, bias=bias
+        )
         self.out_type = FieldType(gspace=in_type.gspace, representations=[self.G.trivial_representation] * out_dim)
 
     def forward(self, x: GeometricTensor) -> GeometricTensor:
@@ -61,19 +71,35 @@ class IMLP(EquivariantModule):
         self.inv_feature_extractor.check_equivariance(atol=atol, rtol=rtol)
         return super(IMLP, self).check_equivariance(atol=atol, rtol=rtol)
 
-# G-Equivariant Multi-Layer Perceptron.
+
 class EMLP(EquivariantModule):
+    """
+    G-Equivariant Multi-Layer Perceptron.
+
+    This module is a G-equivariant MLP that extracts G-equivariant features from the input tensor.
+    """
 
     def __init__(
-            self,
-            in_type: FieldType,
-            out_type: FieldType,
-            hidden_layers: int = 1,
-            hidden_units: int = 128,
-            activation: str = "ReLU",
-            bias: bool = True,
-            hidden_irreps: list | tuple = None
-            ):
+        self,
+        in_type: FieldType,
+        out_type: FieldType,
+        hidden_layers: int = 1,
+        hidden_units: int = 128,
+        activation: str = "ReLU",
+        bias: bool = True,
+        hidden_irreps: list | tuple = None,
+    ):
+        """EMLP constructor.
+        Args:
+            in_type: Input field type.
+            out_type: Output field type.
+            hidden_layers: Number of hidden layers.
+            hidden_units: Number of units in the hidden layers.
+            activation: Name of the class of activation function.
+            bias: Whether to include a bias term in the linear layers.
+            hidden_irreps: (Optional) List of irreps to use in the hidden layers. If None, the latent representation
+            is constructed from multiplicities of the regular representation.
+        """
         super(EMLP, self).__init__()
         assert hidden_layers > 0, "A MLP with 0 hidden layers is equivalent to a linear layer"
         self.G = in_type.fibergroup
@@ -95,7 +121,7 @@ class EMLP(EquivariantModule):
             channels = int(ceil(units // signal_dim))
             layer = FourierBlock(
                 in_type=layer_in_type, irreps=hidden_irreps, channels=channels, activation=activation, bias=bias
-                )
+            )
             layer_in_type = layer.out_type
             layers.append(layer)
 
@@ -112,32 +138,35 @@ class EMLP(EquivariantModule):
     def extra_repr(self) -> str:
         return f"{self.G}-equivariant MLP: in={self.in_type}, out={self.out_type}"
 
-class FourierBlock(EquivariantModule):
 
-    def __init__(self,
-                 in_type: FieldType,
-                 irreps: tuple | list,
-                 channels: int,
-                 activation: str,
-                 bias: bool = True,
-                 grid_kwargs: dict=None):
+class FourierBlock(EquivariantModule):
+    def __init__(
+        self,
+        in_type: FieldType,
+        irreps: tuple | list,
+        channels: int,
+        activation: str,
+        bias: bool = True,
+        grid_kwargs: dict = None,
+    ):
         super(FourierBlock, self).__init__()
         self.G = in_type.fibergroup
         self._activation = activation
         gspace = in_type.gspace
         grid_kwargs = grid_kwargs or self.get_group_kwargs(self.G)
 
-        self.act = FourierPointwise(gspace,
-                               channels=channels,
-                               irreps=list(irreps),
-                               function=f"p_{activation.lower()}",
-                               inplace=True,
-                               **grid_kwargs)
+        self.act = FourierPointwise(
+            gspace,
+            channels=channels,
+            irreps=list(irreps),
+            function=f"p_{activation.lower()}",
+            inplace=True,
+            **grid_kwargs,
+        )
 
         self.in_type = in_type
         self.out_type = self.act.in_type
         self.linear = escnn.nn.Linear(in_type=in_type, out_type=self.act.in_type, bias=bias)
-
 
     def forward(self, *input):
         return self.act(self.linear(*input))
@@ -147,10 +176,8 @@ class FourierBlock(EquivariantModule):
 
     @staticmethod
     def get_group_kwargs(group: escnn.group.Group):
-        """
-        Configuration for sampling elements of the group to achieve equivariance.
-        """
-        grid_type = 'regular' if not group.continuous else 'rand'
+        """Configuration for sampling elements of the group to achieve equivariance."""
+        grid_type = "regular" if not group.continuous else "rand"
         N = group.order() if not group.continuous else 10
         kwargs = dict()
 
@@ -167,7 +194,9 @@ class FourierBlock(EquivariantModule):
     def extra_repr(self) -> str:
         return f"{self.G}-FourierBlock {self._activation}: in={self.in_type.size}, out={self.out_type.size}"
 
+
 class Change2IsotypicBasis(EquivariantModule):
+    """Module that changes the basis of the input tensor to the isotypic basis of the input representation."""
 
     def __init__(self, in_type: FieldType):
         super(Change2IsotypicBasis, self).__init__()
@@ -175,7 +204,7 @@ class Change2IsotypicBasis(EquivariantModule):
         # Compute the isotypic decomposition of the input representation
         in_rep_iso_basis = isotypic_decomp_rep(in_type.representation)
         # Get the representation per isotypic subspace
-        iso_subspaces_reps = in_rep_iso_basis.attributes['isotypic_reps']
+        iso_subspaces_reps = in_rep_iso_basis.attributes["isotypic_reps"]
         self.out_type = FieldType(gspace=in_type.gspace, representations=list(iso_subspaces_reps.values()))
         # Change of basis required to move from input basis to isotypic basis
         self.Qin2iso = torch.tensor(in_rep_iso_basis.change_of_basis_inv)
@@ -189,7 +218,7 @@ class Change2IsotypicBasis(EquivariantModule):
         else:
             # Change of basis
             self.Qin2iso = self.Qin2iso.to(device=x.tensor.device, dtype=x.tensor.dtype)
-            x_iso = torch.einsum('ij,...j->...i', self.Qin2iso, x.tensor)
+            x_iso = torch.einsum("ij,...j->...i", self.Qin2iso, x.tensor)
             return self.out_type(x_iso)
 
     def evaluate_output_shape(self, input_shape: Tuple[int, ...]) -> Tuple[int, ...]:
@@ -198,8 +227,8 @@ class Change2IsotypicBasis(EquivariantModule):
     def extra_repr(self) -> str:
         return f"Change of basis: {not self._is_in_iso_basis}"
 
-class IrrepSubspaceNormPooling(EquivariantModule):
 
+class IrrepSubspaceNormPooling(EquivariantModule):
     def __init__(self, in_type: FieldType):
         super(IrrepSubspaceNormPooling, self).__init__()
         self.G = in_type.fibergroup
@@ -210,7 +239,7 @@ class IrrepSubspaceNormPooling(EquivariantModule):
         n_inv_features = sum(len(rep.irreps) for rep in self.in_type_iso.representations)
         self.out_type = FieldType(
             gspace=in_type.gspace, representations=[self.G.trivial_representation] * n_inv_features
-            )
+        )
 
     def forward(self, x: GeometricTensor) -> GeometricTensor:
         x_ = self.in2iso(x)
@@ -228,8 +257,9 @@ class IrrepSubspaceNormPooling(EquivariantModule):
             inv_features_iso.append(inv_field_features)
 
         inv_features = torch.cat(inv_features_iso, dim=-1)
-        assert inv_features.shape[-1] == self.out_type.size, \
-            f"Expected {self.out_type.size} features, got {inv_features.shape[-1]}"
+        assert (
+            inv_features.shape[-1] == self.out_type.size
+        ), f"Expected {self.out_type.size} features, got {inv_features.shape[-1]}"
         return self.out_type(inv_features)
 
     def _orth_proj_isotypic_subspaces(self, z: GeometricTensor) -> [torch.Tensor]:
@@ -245,9 +275,8 @@ class IrrepSubspaceNormPooling(EquivariantModule):
         return f"{self.G}-Irrep Norm Pooling: in={self.in_type} -> out={self.out_type}"
 
 
-
 class EquivResidualEncoder(EquivariantModule):
-    """Residual encoder for NCP. This encoder processes batches of shape (batch_size, dim_y) and
+    """Residual encoder for symm_rep_learn. This encoder processes batches of shape (batch_size, dim_y) and
     returns (batch_size, embedding_dim + dim_y).
     """
 
@@ -255,8 +284,9 @@ class EquivResidualEncoder(EquivariantModule):
         super(EquivResidualEncoder, self).__init__()
         self.encoder = encoder
         self.in_type = in_type
-        self.out_type = FieldType(gspace=encoder.out_type.gspace,
-                                  representations=in_type.representations + encoder.out_type.representations)
+        self.out_type = FieldType(
+            gspace=encoder.out_type.gspace, representations=in_type.representations + encoder.out_type.representations
+        )
 
     def forward(self, input: GeometricTensor):
         embedding = self.encoder(input)
@@ -276,12 +306,11 @@ class EquivResidualEncoder(EquivariantModule):
 
 
 if __name__ == "__main__":
-
     G = escnn.group.DihedralGroup(6)
-    x_rep = G.regular_representation             # ρ_Χ
+    x_rep = G.regular_representation  # ρ_Χ
 
-    y_rep = isotypic_decomp_rep(G.regular_representation)     # ρ_Y
-    y_iso_reps = tuple(y_rep.attributes['isotypic_reps'].values())
+    y_rep = isotypic_decomp_rep(G.regular_representation)  # ρ_Y
+    y_iso_reps = tuple(y_rep.attributes["isotypic_reps"].values())
 
     type_X = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=[x_rep])
     type_Y = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=y_iso_reps)
@@ -297,12 +326,10 @@ if __name__ == "__main__":
 
     y_iso = [y.tensor[..., s:e] for s, e in zip(y.type.fields_start, y.type.fields_end)]
 
-    for irrep_id, y_p in zip(y_rep.attributes['isotypic_reps'].keys(), y_iso):
+    for irrep_id, y_p in zip(y_rep.attributes["isotypic_reps"].keys(), y_iso):
         print(f"{irrep_id}: \n{torch.linalg.norm(y_p)}")
 
     # Tests for IMLP
     imlp = IMLP(in_type=type_X, out_dim=2, hidden_layers=5, hidden_units=128, bias=False)
     imlp.check_equivariance(atol=1e-6, rtol=1e-6)
     print(imlp)
-
-

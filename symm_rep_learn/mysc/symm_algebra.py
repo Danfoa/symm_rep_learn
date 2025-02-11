@@ -1,18 +1,19 @@
 # Created by danfoa at 19/12/24
 from __future__ import annotations
+
 import escnn
 import numpy as np
 import torch
-from escnn.group import change_basis, directsum, IrreducibleRepresentation, Representation
+from escnn.group import IrreducibleRepresentation, Representation, change_basis, directsum
+
 
 def invariant_orthogonal_projector(rep_X: Representation) -> torch.Tensor:
-    """
-    Computes the orthogonal projection to the invariant subspace.
+    r"""Computes the orthogonal projection to the invariant subspace.
 
     The representation `rep_X` is transformed to the spectral basis using the change of basis matrix `Q`:
 
     .. math::
-        rep_X = Q (\bigoplus_i^n \hat{\rho}_i) Q^T
+        rep_X = Q (\bigoplus_i^n \\hat{\rho}_i) Q^T
 
     The projection is performed by:
         1. Change basis to representation spectral basis (exposing signals per irrep).
@@ -45,7 +46,7 @@ def invariant_orthogonal_projector(rep_X: Representation) -> torch.Tensor:
 
 
 def symmetric_moments(x: torch.Tensor | np.numpy, rep_X: Representation) -> [torch.Tensor, torch.Tensor]:
-    """Compute the mean and standard deviation of observations with known symmetry representations """
+    """Compute the mean and standard deviation of observations with known symmetry representations."""
     assert len(x.shape) == 2, f"Expected x to have shape (n_samples, n_features), got {x.shape}"
     x = torch.Tensor(x) if isinstance(x, np.ndarray) else x
     G = rep_X.group
@@ -75,22 +76,21 @@ def symmetric_moments(x: torch.Tensor | np.numpy, rep_X: Representation) -> [tor
         # Compute the mean in a single vectorized operation
         mean_empirical = torch.mean(x, dim=0)
         # Project to the inv-subspace and map back to the original basis
-        mean = torch.einsum('...ij,...j->...i', avg_projector, mean_empirical)
+        mean = torch.einsum("...ij,...j->...i", avg_projector, mean_empirical)
 
     # Compute the variance of the observable by computing a single variance per irrep G-stable subspace.
     # To do this, we project the observations to the basis exposing the irreps, compute the variance per
     # G-stable subspace, and map the variance back to the original basis.
-    x_iso_centered = torch.einsum('...ij,...j->...i', Qx_T, x - mean)
+    x_iso_centered = torch.einsum("...ij,...j->...i", Qx_T, x - mean)
     var_irrep_basis = torch.ones_like(var)
     for irrep_id, irrep_dims in zip(rep_X.irreps, irreps_dimension):
         irrep = G.irrep(*irrep_id)
         x_irrep_centered = x_iso_centered[..., irrep_dims]
-        assert x_irrep_centered.shape[-1] == irrep.size, \
-            f"Obs irrep shape {x_irrep_centered.shape} != {irrep.size}"
+        assert x_irrep_centered.shape[-1] == irrep.size, f"Obs irrep shape {x_irrep_centered.shape} != {irrep.size}"
         # Since the irreps are unitary/orthogonal transformations, we are constrained compute a unique variance
         # for all dimensions of the irrep G-stable subspace, as scaling the dimensions independently would break
         # the symmetry of the rv. As a centered rv the variance is the expectation of the squared rv.
-        var_irrep = torch.mean(x_irrep_centered ** 2)  # Single scalar variance per G-stable subspace
+        var_irrep = torch.mean(x_irrep_centered**2)  # Single scalar variance per G-stable subspace
         # Ensure the multipliticy of the variance is equal to the dimension of the irrep.
         var_irrep_basis[irrep_dims] = var_irrep
     # Convert the variance from the irrep/spectral basis to the original basis
@@ -112,13 +112,14 @@ def symmetric_moments(x: torch.Tensor | np.numpy, rep_X: Representation) -> [tor
     # assert np.allclose(var, var_emp, rtol=1e-2, atol=1e-2), f"Var {var} != {var_emp}"
     return mean, var
 
+
 def isotypic_cross_cov(
-        X: torch.Tensor, 
-        Y: torch.Tensor, 
-        rep_X: Representation, 
-        rep_Y: Representation, 
-        centered=True,
-        ):
+    X: torch.Tensor,
+    Y: torch.Tensor,
+    rep_X: Representation,
+    rep_Y: Representation,
+    centered=True,
+):
     """Cross covariance of signals between isotypic subspaces of the same type.
 
     This function exploits the fact that the cross-covariance of signals between isotypic subspaces of the same type
@@ -138,28 +139,31 @@ def isotypic_cross_cov(
         rep_X: escnn.nn.Representation, composed of mx copies of an irrep of type k. rep_X = ⊕_i^mx ρ_k
         rep_Y: escnn.nn.Representation, composed of my copies of an irrep of type k. rep_Y = ⊕_i^my ρ_k
         centered: bool, whether to center the signals before computing the cross-covariance.
+
     Returns:
         Cxy: torch.Tensor, (mx * d, my * d) the cross-covariance matrix between the isotypic subspaces of X and Y.
         Dxy: torch.Tensor, (mx, my) free parameters of the cross-covariance matrix in the isotypic basis.
     """
-    assert len(rep_X._irreps_multiplicities) == len(rep_Y._irreps_multiplicities) == 1, \
-        f"Expected group representation of an isotypic subspace.I.e., with only one type of irrep. \nFound: " \
+    assert len(rep_X._irreps_multiplicities) == len(rep_Y._irreps_multiplicities) == 1, (
+        f"Expected group representation of an isotypic subspace.I.e., with only one type of irrep. \nFound: "
         f"{list(rep_X._irreps_multiplicities.keys())} in rep_X, {list(rep_Y._irreps_multiplicities.keys())} in rep_Y."
+    )
     assert rep_X.group == rep_Y.group, f"{rep_X.group} != {rep_Y.group}"
-    irrep_id  = rep_X.irreps[0]  # Irrep id of the isotypic subspace
-    assert irrep_id == rep_Y.irreps[0], \
-        f"Irreps {irrep_id} != {rep_Y.irreps[0]}. Hence signals are orthogonal and Cxy=0."
+    irrep_id = rep_X.irreps[0]  # Irrep id of the isotypic subspace
+    assert (
+        irrep_id == rep_Y.irreps[0]
+    ), f"Irreps {irrep_id} != {rep_Y.irreps[0]}. Hence signals are orthogonal and Cxy=0."
     assert rep_X.size == X.shape[-1], f"Expected signal shape to be (..., {rep_X.size}) got {X.shape}"
     assert rep_Y.size == Y.shape[-1], f"Expected signal shape to be (..., {rep_Y.size}) got {Y.shape}"
 
     # Get information about the irreducible representation present in the isotypic subspace
     irrep_dim = rep_X.group.irrep(*irrep_id).size
-    mk_X = rep_X._irreps_multiplicities[irrep_id]   # Multiplicity of the irrep in X
-    mk_Y = rep_Y._irreps_multiplicities[irrep_id]   # Multiplicity of the irrep in Y
+    mk_X = rep_X._irreps_multiplicities[irrep_id]  # Multiplicity of the irrep in X
+    mk_Y = rep_Y._irreps_multiplicities[irrep_id]  # Multiplicity of the irrep in Y
 
     # If required we must change bases to the isotypic bases.
     Qx_T, Qx = rep_X.change_of_basis_inv, rep_X.change_of_basis
-    Qy_T, Qy = rep_Y.change_of_basis_inv, rep_Y.change_of_basis
+    Qy_T, _Qy = rep_Y.change_of_basis_inv, rep_Y.change_of_basis
     x_in_iso_basis = np.allclose(Qx_T, np.eye(Qx_T.shape[0]), atol=1e-6, rtol=1e-4)
     y_in_iso_basis = np.allclose(Qy_T, np.eye(Qy_T.shape[0]), atol=1e-6, rtol=1e-4)
     if x_in_iso_basis:
@@ -167,13 +171,13 @@ def isotypic_cross_cov(
     else:
         Qx_T = torch.Tensor(Qx_T).to(device=X.device, dtype=X.dtype)
         Qx = torch.Tensor(Qx).to(device=X.device, dtype=X.dtype)
-        X_iso = torch.einsum('...ij,...j->...i', Qx_T, X)   # x_iso = Q_x2iso @ x
+        X_iso = torch.einsum("...ij,...j->...i", Qx_T, X)  # x_iso = Q_x2iso @ x
     if np.allclose(Qy_T, np.eye(Qy_T.shape[0]), atol=1e-6, rtol=1e-4):
         Y_iso = Y
     else:
         Qy_T = torch.Tensor(Qy_T).to(device=Y.device, dtype=Y.dtype)
         # Qy = torch.Tensor(Qy).to(device=Y.device, dtype=Y.dtype)
-        Y_iso = torch.einsum('...ij,...j->...i', Qy_T, Y)   # y_iso = Q_y2iso @ y
+        Y_iso = torch.einsum("...ij,...j->...i", Qy_T, Y)  # y_iso = Q_y2iso @ y
 
     if irrep_dim > 1:
         # Since Cxy = Dxy ⊗ I_d  , d = dim(irrep) and D_χy ∈ R^{mχ x my}
@@ -182,7 +186,7 @@ def isotypic_cross_cov(
         # Ensuring all samples from dimensions of a single irrep are flattened into a row of X_sing and Y_sing
         X_sing = X_iso.view(-1, mk_X, irrep_dim).permute(0, 2, 1).reshape(-1, mk_X)
         Y_sing = Y_iso.view(-1, mk_Y, irrep_dim).permute(0, 2, 1).reshape(-1, mk_Y)
-    else: # For one dimensional (real) irreps, this defaults to the standard cross-covariance
+    else:  # For one dimensional (real) irreps, this defaults to the standard cross-covariance
         X_sing, Y_sing = X_iso, Y_iso
 
     is_inv_subspace = irrep_id == rep_X.group.trivial_representation.id
@@ -194,10 +198,10 @@ def isotypic_cross_cov(
     assert n_samples == X.shape[0] * irrep_dim
 
     c = 1 if centered and is_inv_subspace else 0
-    Dxy = torch.einsum('...i,...j->ij', X_sing, Y_sing) / (n_samples - c)
+    Dxy = torch.einsum("...i,...j->ij", X_sing, Y_sing) / (n_samples - c)
     if irrep_dim > 1:  # Broadcast the estimates according to Cxy = Dxy ⊗ I_d.
         I_d = torch.eye(irrep_dim, device=Dxy.device, dtype=Dxy.dtype)
-        Cxy_iso = torch.kron(Dxy, I_d)          
+        Cxy_iso = torch.kron(Dxy, I_d)
     else:
         Cxy_iso = Dxy
 
@@ -212,8 +216,9 @@ def isotypic_cross_cov(
 
     return Cxy, Dxy
 
+
 def isotypic_signal2irreducible_subspaces(X: torch.Tensor, repX: Representation):
-    """ Flatten a signal to the isotypic subspaces.
+    """Flatten a signal to the isotypic subspaces.
 
     Given a signal of shape (n, mx * d) where n is the number of samples and mx the multiplicity of the irrep in X, and d the dimension of the irrep.
     X  = [x_1, ... x_n] and x_i = [x_i_11, ..., x_i_1d, x_i_21, ..., x_i_2d, ..., x_i_mx1, ..., x_i_mxd]
@@ -231,16 +236,16 @@ def isotypic_signal2irreducible_subspaces(X: torch.Tensor, repX: Representation)
     assert len(repX._irreps_multiplicities) == 1
     irrep_id = repX.irreps[0]
     irrep_dim = repX.group.irrep(*irrep_id).size
-    mk = repX._irreps_multiplicities[irrep_id]   # Multiplicity of the irrep in X
+    mk = repX._irreps_multiplicities[irrep_id]  # Multiplicity of the irrep in X
 
     Z = X.view(-1, mk, irrep_dim).permute(0, 2, 1).reshape(-1, mk)
 
     assert Z.shape == (X.shape[0] * irrep_dim, mk)
     return Z
 
+
 # TODO: Make this appropriate tests.
 if __name__ == "__main__":
-
     G = escnn.group.Icosahedral()
 
     for irrep in G.representations.values():
@@ -250,7 +255,7 @@ if __name__ == "__main__":
         #     continue
         # if irrep.size == 1:
         #     continue
-        x_rep_iso = directsum([irrep] * 2)                   # ρ_Χ
+        x_rep_iso = directsum([irrep] * 2)  # ρ_Χ
         y_rep_iso = directsum([irrep] * 4)  # ρ_Y
 
         batch_size = 500
@@ -262,23 +267,24 @@ if __name__ == "__main__":
         # Testy change of basis is handled appropriately, using random change of basis.
         Qx, _ = np.linalg.qr(np.random.randn(x_rep_iso.size, x_rep_iso.size))
         Qy, _ = np.linalg.qr(np.random.randn(y_rep_iso.size, y_rep_iso.size))
-        x_rep = change_basis(x_rep_iso, Qx, name=f"{x_rep_iso.name}_p")      # ρ_Χ_p = Q_Χ ρ_Χ Q_Χ^T
-        y_rep = change_basis(y_rep_iso, Qy, name=f"{y_rep_iso.name}_p")      # ρ_Y_p = Q_Y ρ_Y Q_Y^T
+        x_rep = change_basis(x_rep_iso, Qx, name=f"{x_rep_iso.name}_p")  # ρ_Χ_p = Q_Χ ρ_Χ Q_Χ^T
+        y_rep = change_basis(y_rep_iso, Qy, name=f"{y_rep_iso.name}_p")  # ρ_Y_p = Q_Y ρ_Y Q_Y^T
         Qx_T, Qy_T = x_rep.change_of_basis_inv, y_rep.change_of_basis_inv
-        X = torch.Tensor(np.einsum('...ij,...j->...i', Qx, X_iso.numpy()))                   # X_p = Q_x X
-        Y = torch.Tensor(np.einsum('...ij,...j->...i', Qy, Y_iso.numpy()))                   # Y_p = Q_y Y
+        X = torch.Tensor(np.einsum("...ij,...j->...i", Qx, X_iso.numpy()))  # X_p = Q_x X
+        Y = torch.Tensor(np.einsum("...ij,...j->...i", Qy, Y_iso.numpy()))  # Y_p = Q_y Y
         Cxy_p, Dxy = isotypic_cross_cov(X, Y, x_rep, y_rep)
         Cxy_p = Cxy_p.numpy()
 
-        assert np.allclose(Cxy_p, Qx @ Cxy_iso @ Qy.T, atol=1e-6, rtol=1e-4), \
-            f"Expected Cxy_p - Q_x Cxy_iso Q_y^T = 0. Got \n {Cxy_p - Qx @ Cxy_iso @ Qy.T}"
+        assert np.allclose(
+            Cxy_p, Qx @ Cxy_iso @ Qy.T, atol=1e-6, rtol=1e-4
+        ), f"Expected Cxy_p - Q_x Cxy_iso Q_y^T = 0. Got \n {Cxy_p - Qx @ Cxy_iso @ Qy.T}"
 
         # Test that computing Cxy_iso is equivalent to computing the cross covariance on the G orbit of the data
         # using data augmentation
         GX_iso, GY_iso = [X_iso], [Y_iso]
         for g in G.elements[1:]:
-            X_g = torch.Tensor(np.einsum('...ij,...j->...i', x_rep(g), X_iso.numpy()))
-            Y_g = torch.Tensor(np.einsum('...ij,...j->...i', y_rep(g), Y_iso.numpy()))
+            X_g = torch.Tensor(np.einsum("...ij,...j->...i", x_rep(g), X_iso.numpy()))
+            Y_g = torch.Tensor(np.einsum("...ij,...j->...i", y_rep(g), Y_iso.numpy()))
             GX_iso.append(X_g)
             GY_iso.append(Y_g)
         GX_iso = torch.cat(GX_iso, dim=0)
@@ -287,14 +293,18 @@ if __name__ == "__main__":
         Cx_iso, _ = isotypic_cross_cov(X=GX_iso, Y=GX_iso, rep_X=x_rep_iso, rep_Y=x_rep_iso)
         Cx_iso = Cx_iso.numpy()
         Cx_iso_orbit = (GX_iso.T @ GX_iso / (GX_iso.shape[0])).numpy()
-        Cx_iso_orbit = np.mean([np.einsum('ij,jk,kl->il', x_rep_iso(g), Cx_iso_orbit, x_rep_iso(~g)) for g in G.elements], axis=0)
-        assert np.allclose(Cx_iso, Cx_iso_orbit, atol=1e-2, rtol=1e-2) # Numerical error occurs for small sample sizes
+        Cx_iso_orbit = np.mean(
+            [np.einsum("ij,jk,kl->il", x_rep_iso(g), Cx_iso_orbit, x_rep_iso(~g)) for g in G.elements], axis=0
+        )
+        assert np.allclose(Cx_iso, Cx_iso_orbit, atol=1e-2, rtol=1e-2)  # Numerical error occurs for small sample sizes
 
         Cy_iso, _ = isotypic_cross_cov(X=GY_iso, Y=GY_iso, rep_X=y_rep_iso, rep_Y=y_rep_iso)
         Cy_iso = Cy_iso.numpy()
         Cy_iso_orbit = (GY_iso.T @ GY_iso / (GY_iso.shape[0])).numpy()
-        Cy_iso_orbit = np.mean([np.einsum('ij,jk,kl->il', y_rep_iso(g), Cy_iso_orbit, y_rep_iso(~g)) for g in G.elements], axis=0)
-        assert np.allclose(Cy_iso, Cy_iso_orbit, atol=1e-2, rtol=1e-2) # Numerical error occurs for small sample sizes
+        Cy_iso_orbit = np.mean(
+            [np.einsum("ij,jk,kl->il", y_rep_iso(g), Cy_iso_orbit, y_rep_iso(~g)) for g in G.elements], axis=0
+        )
+        assert np.allclose(Cy_iso, Cy_iso_orbit, atol=1e-2, rtol=1e-2)  # Numerical error occurs for small sample sizes
 
         # Test Inv Projector work for computing the mean of the data
         emp_mean = np.mean(X_iso.numpy(), axis=0)

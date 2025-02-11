@@ -7,19 +7,19 @@ from copy import deepcopy
 import lightning
 import torch
 
-from NCP.mysc.utils import flatten_dict
+from symm_rep_learn.mysc.utils import flatten_dict
 
 
 class TrainingModule(lightning.LightningModule):
     def __init__(
-            self,
-            model: torch.nn.Module,
-            optimizer_fn: torch.optim.Optimizer,
-            optimizer_kwargs: dict,
-            loss_fn: torch.nn.Module | callable,
-            test_metrics: callable = None,  # Callable at the end of testing
-            val_metrics: callable = None,  # Callable at the end of validation
-            ):
+        self,
+        model: torch.nn.Module,
+        optimizer_fn: torch.optim.Optimizer,
+        optimizer_kwargs: dict,
+        loss_fn: torch.nn.Module | callable,
+        test_metrics: callable = None,  # Callable at the end of testing
+        val_metrics: callable = None,  # Callable at the end of validation
+    ):
         super(TrainingModule, self).__init__()
         self._test_metrics = test_metrics
         self._val_metrics = val_metrics
@@ -35,7 +35,7 @@ class TrainingModule(lightning.LightningModule):
             raise Warning(
                 "No learning rate specified. Using default value of 1e-3. You can specify the learning rate by passing "
                 "it to the optimizer_kwargs argument."
-                )
+            )
         assert loss_fn is not None, "Loss function must be specified."
         self.loss_fn = loss_fn
         self.train_loss = []
@@ -96,7 +96,7 @@ class TrainingModule(lightning.LightningModule):
 
     def on_train_epoch_end(self) -> None:
         if hasattr(self, "_time"):
-            epoch_time = (time.time() - self._time)
+            epoch_time = time.time() - self._time
             self.log("epoch_time", epoch_time, on_epoch=True)
 
     def on_validation_start(self) -> None:
@@ -117,7 +117,7 @@ class TrainingModule(lightning.LightningModule):
             self.log_metrics(metrics, suffix="test", batch_size=None)
 
     @torch.no_grad()
-    def log_metrics(self, metrics: dict, suffix='', batch_size=None, **kwargs):
+    def log_metrics(self, metrics: dict, suffix="", batch_size=None, **kwargs):
         flat_metrics = flatten_dict(metrics)
         for k, v in flat_metrics.items():
             name = f"{k}/{suffix}"
@@ -131,23 +131,23 @@ class TrainingModule(lightning.LightningModule):
 
 
 class SupervisedTrainingModule(TrainingModule):
-
-    def __init__(self,
-                 model: torch.nn.Module,
-                 optimizer_fn: torch.optim.Optimizer,
-                 optimizer_kwargs: dict,
-                 loss_fn: torch.nn.Module | callable,
-                 test_metrics: callable = None,  # Callable at the end of testing
-                 val_metrics: callable = None,  # Callable at the end of validation
-                 ):
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        optimizer_fn: torch.optim.Optimizer,
+        optimizer_kwargs: dict,
+        loss_fn: torch.nn.Module | callable,
+        test_metrics: callable = None,  # Callable at the end of testing
+        val_metrics: callable = None,  # Callable at the end of validation
+    ):
         super(SupervisedTrainingModule, self).__init__(
             model=model,
             optimizer_fn=optimizer_fn,
             optimizer_kwargs=optimizer_kwargs,
-            loss_fn=torch.nn.MSELoss(reduce=True, reduction='mean') if loss_fn is None else loss_fn,
+            loss_fn=torch.nn.MSELoss(reduce=True, reduction="mean") if loss_fn is None else loss_fn,
             test_metrics=test_metrics,
             val_metrics=val_metrics,
-            )
+        )
 
     def training_step(self, batch, batch_idx):
         x, y = batch

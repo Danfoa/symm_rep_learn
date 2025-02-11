@@ -1,4 +1,5 @@
 # Created by danfoa at 18/12/24
+import logging
 import pathlib
 from math import ceil
 
@@ -8,142 +9,154 @@ import lightning
 import numpy as np
 import pandas as pd
 import torch
-from escnn.group import directsum, Representation
+from escnn.group import Representation, directsum
 from escnn.nn import FieldType, GeometricTensor
-from hydra.core.hydra_config import HydraConfig
 from lightning import seed_everything
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
-from plotly.subplots import make_subplots
-import plotly.io as pio
-
 from omegaconf import DictConfig, OmegaConf
-from torch.utils.data import DataLoader, default_collate, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, default_collate
 
-from NCP.experiments.symmetricGMM.symmGMM import SymmGaussianMixture
-from NCP.experiments.symmetricGMM.plot_utils import (plot_analytic_joint_2D, plot_analytic_npmi_2D, plot_analytic_pmd_2D,
-                                             plot_analytic_prod_2D, plot_pmd_err_2D, plot_pmd_error_distribution)
-from NCP.models.lightning_modules import TrainingModule
-
-import logging
-
-from NCP.nn.equiv_layers import IMLP
+from paper.experiments.symmetricGMM.plot_utils import (
+    plot_analytic_joint_2D,
+    plot_analytic_npmi_2D,
+    plot_analytic_pmd_2D,
+    plot_analytic_prod_2D,
+    plot_pmd_err_2D,
+    plot_pmd_error_distribution,
+)
+from paper.experiments.symmetricGMM.symmGMM import SymmGaussianMixture
+from symm_rep_learn.models.lightning_modules import TrainingModule
+from symm_rep_learn.nn.equiv_layers import IMLP
 
 log = logging.getLogger(__name__)
 DPI = 180
 X_LIMS = [None, None]
 Y_LIMS = [None, None]
 
+
 def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
     embedding_dim = lat_type.size
     if cfg.model.lower() == "encp":  # Equivariant NCP
-        from NCP.models.equiv_ncp import ENCP
-        from NCP.nn.equiv_layers import EMLP
+        from symm_rep_learn.models.equiv_ncp import ENCP
+        from symm_rep_learn.nn.equiv_layers import EMLP
 
-        kwargs = dict(out_type=lat_type,
-                      hidden_layers=cfg.embedding.hidden_layers,
-                      activation=cfg.embedding.activation,
-                      hidden_units=cfg.embedding.hidden_units,
-                      bias=False)
+        kwargs = dict(
+            out_type=lat_type,
+            hidden_layers=cfg.embedding.hidden_layers,
+            activation=cfg.embedding.activation,
+            hidden_units=cfg.embedding.hidden_units,
+            bias=False,
+        )
         χ_embedding = EMLP(in_type=x_type, **kwargs)
         y_embedding = EMLP(in_type=y_type, **kwargs)
-        eNCPop = ENCP(embedding_x=χ_embedding,
-                      embedding_y=y_embedding,
-                      gamma=cfg.gamma,
-                      truncated_op_bias=cfg.truncated_op_bias,
-                      )
+        eNCPop = ENCP(
+            embedding_x=χ_embedding,
+            embedding_y=y_embedding,
+            gamma=cfg.gamma,
+            truncated_op_bias=cfg.truncated_op_bias,
+        )
 
         return eNCPop
     elif cfg.model.lower() == "ncp":  # NCP
-        from NCP.mysc.utils import class_from_name
-        from NCP.models.ncp import NCP
-        from NCP.nn.layers import MLP
+        from symm_rep_learn.models.ncp import NCP
+        from symm_rep_learn.mysc.utils import class_from_name
+        from symm_rep_learn.nn.layers import MLP
 
-        activation = class_from_name('torch.nn', cfg.embedding.activation)
-        kwargs = dict(output_shape=embedding_dim,
-                      n_hidden=cfg.embedding.hidden_layers,
-                      layer_size=cfg.embedding.hidden_units,
-                      activation=activation,
-                      bias=False)
+        activation = class_from_name("torch.nn", cfg.embedding.activation)
+        kwargs = dict(
+            output_shape=embedding_dim,
+            n_hidden=cfg.embedding.hidden_layers,
+            layer_size=cfg.embedding.hidden_units,
+            activation=activation,
+            bias=False,
+        )
         fx = MLP(input_shape=x_type.size, **kwargs)
         fy = MLP(input_shape=y_type.size, **kwargs)
-        ncp = NCP(embedding_x=fx,
-                  embedding_y=fy,
-                  embedding_dim=embedding_dim,
-                  gamma=cfg.gamma,
-                  truncated_op_bias=cfg.truncated_op_bias,
-                  )
+        ncp = NCP(
+            embedding_x=fx,
+            embedding_y=fy,
+            embedding_dim=embedding_dim,
+            gamma=cfg.gamma,
+            truncated_op_bias=cfg.truncated_op_bias,
+        )
         return ncp
     elif cfg.model.lower() == "drf":  # Density Ratio Fitting
-        from NCP.models.density_ratio_fitting import DRF
-        from NCP.nn.layers import MLP
-        from NCP.mysc.utils import class_from_name
+        from symm_rep_learn.models.density_ratio_fitting import DRF
+        from symm_rep_learn.mysc.utils import class_from_name
+        from symm_rep_learn.nn.layers import MLP
 
-        activation = class_from_name('torch.nn', cfg.embedding.activation)
+        activation = class_from_name("torch.nn", cfg.embedding.activation)
         n_layers = cfg.embedding.hidden_layers
         n_hidden_units = int(cfg.embedding.hidden_units * 2)
-        embedding = MLP(input_shape=x_type.size + y_type.size,  # z = (x,y)
-                        output_shape=1,
-                        n_hidden=n_layers,
-                        # Ensure NCP model and DRF have approximately equal number of parameters.
-                        layer_size=[n_hidden_units] * (n_layers - 1) + [cfg.embedding.embedding_dim],
-                        activation=activation,
-                        bias=False)
+        embedding = MLP(
+            input_shape=x_type.size + y_type.size,  # z = (x,y)
+            output_shape=1,
+            n_hidden=n_layers,
+            # Ensure NCP model and DRF have approximately equal number of parameters.
+            layer_size=[n_hidden_units] * (n_layers - 1) + [cfg.embedding.embedding_dim],
+            activation=activation,
+            bias=False,
+        )
         drf = DRF(embedding=embedding, gamma=cfg.gamma)
 
         return drf
     elif cfg.model.lower() == "idrf":  # Density Ratio Fitting
-        from NCP.models.inv_density_ratio_fitting import InvDRF
-        from NCP.mysc.utils import class_from_name
+        from symm_rep_learn.models.inv_density_ratio_fitting import InvDRF
+        from symm_rep_learn.mysc.utils import class_from_name
 
         xy_reps = x_type.representations + y_type.representations
         in_type = FieldType(x_type.gspace, xy_reps)
-        imlp = IMLP(in_type=in_type,
-                    out_dim=1,  # Scalar PMD value
-                    hidden_layers=cfg.embedding.hidden_layers,
-                    activation=cfg.embedding.activation,
-                    hidden_units=cfg.embedding.hidden_units,
-                    bias=False)
+        imlp = IMLP(
+            in_type=in_type,
+            out_dim=1,  # Scalar PMD value
+            hidden_layers=cfg.embedding.hidden_layers,
+            activation=cfg.embedding.activation,
+            hidden_units=cfg.embedding.hidden_units,
+            bias=False,
+        )
         idrf = InvDRF(embedding=imlp, gamma=cfg.gamma)
         return idrf
     else:
         raise ValueError(f"Model {cfg.model} not recognized")
 
 
-def gmm_dataset(cfg: DictConfig, gmm: SymmGaussianMixture, rep_X: Representation, rep_Y: Representation, device='cpu'):
-    from NCP.mysc.symm_algebra import symmetric_moments
+def gmm_dataset(cfg: DictConfig, gmm: SymmGaussianMixture, rep_X: Representation, rep_Y: Representation, device="cpu"):
+    from symm_rep_learn.mysc.symm_algebra import symmetric_moments
 
     total_samples = cfg.gmm.n_total_samples
     x_samples, y_samples = gmm.simulate(n_samples=total_samples)
-    MI = gmm.MI(x_samples, y_samples),
+    MI = (gmm.MI(x_samples, y_samples),)
     log.info(f"\n\n MI estimation: {MI}  with {total_samples} samples\n\n")
 
     # Hack to standardize the 2D plots
     if gmm.ndim_x == 1 and gmm.ndim_y == 1:
-        X_LIMS =  [np.min(x_samples), np.max(x_samples)]
-        Y_LIMS =  [np.min(y_samples), np.max(y_samples)]
+        [np.min(x_samples), np.max(x_samples)]
+        [np.min(y_samples), np.max(y_samples)]
 
     x_mean, x_var = symmetric_moments(x_samples, rep_X)
     y_mean, y_var = symmetric_moments(y_samples, rep_Y)
     # Train, val, test splitting
-    assert 0.0 < cfg.train_samples_ratio <= 0.7, f'Invalid train_samples_ratio: {cfg.train_samples_ratio}'
+    assert 0.0 < cfg.train_samples_ratio <= 0.7, f"Invalid train_samples_ratio: {cfg.train_samples_ratio}"
     train_ratio, val_ratio, test_ratio = cfg.train_samples_ratio, 0.15, 0.15
 
     log.info(f"Train: {train_ratio} Val: {val_ratio} Test: {test_ratio}")
-    log.info(f"Train samples: {train_ratio * total_samples} Val samples: {val_ratio * total_samples} "
-             f"Test samples: {test_ratio * total_samples}")
+    log.info(
+        f"Train samples: {train_ratio * total_samples} Val samples: {val_ratio * total_samples} "
+        f"Test samples: {test_ratio * total_samples}"
+    )
     n_samples = len(x_samples)
     n_train, n_val, n_test = np.asarray(np.array([train_ratio, val_ratio, test_ratio]) * n_samples, dtype=int)
     # Take the train samples from the front of the array
     train_samples = x_samples[:n_train], y_samples[:n_train]
     # Take the Val and test sampeles from the back of the array
-    val_samples = x_samples[-(n_val + n_test):-n_test], y_samples[-(n_val + n_test):-n_test]
+    val_samples = x_samples[-(n_val + n_test) : -n_test], y_samples[-(n_val + n_test) : -n_test]
     test_samples = x_samples[-n_test:], y_samples[-n_test:]
 
     X_c = (x_samples - x_mean.numpy()) / np.sqrt(x_var.numpy())
     Y_c = (y_samples - y_mean.numpy()) / np.sqrt(y_var.numpy())
-    x_train, x_val, x_test = X_c[:n_train], X_c[n_train:n_train + n_val], X_c[n_train + n_val:]
-    y_train, y_val, y_test = Y_c[:n_train], Y_c[n_train:n_train + n_val], Y_c[n_train + n_val:]
+    x_train, x_val, x_test = X_c[:n_train], X_c[n_train : n_train + n_val], X_c[n_train + n_val :]
+    y_train, y_val, y_test = Y_c[:n_train], Y_c[n_train : n_train + n_val], Y_c[n_train + n_val :]
 
     X_train = torch.atleast_2d(torch.from_numpy(x_train).float()).to(device=device)
     Y_train = torch.atleast_2d(torch.from_numpy(y_train).float()).to(device=device)
@@ -156,25 +169,42 @@ def gmm_dataset(cfg: DictConfig, gmm: SymmGaussianMixture, rep_X: Representation
     val_dataset = TensorDataset(X_val, Y_val)
     test_dataset = TensorDataset(X_test, Y_test)
 
-    return (train_samples, val_samples, test_samples), (x_mean, y_mean), (x_var, y_var), (
-        train_dataset, val_dataset, test_dataset)
+    return (
+        (train_samples, val_samples, test_samples),
+        (x_mean, y_mean),
+        (x_var, y_var),
+        (train_dataset, val_dataset, test_dataset),
+    )
 
 
 @torch.no_grad()
-def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples,
-                               x_type, y_type, x_mean, y_mean, x_var, y_var,
-                               plot=False, samples=1000, save_data_path=None, debug=False):
-    from NCP.models.equiv_ncp import ENCP
+def measure_analytic_pmi_error(
+    gmm,
+    nn_model,
+    x_samples,
+    y_samples,
+    x_type,
+    y_type,
+    x_mean,
+    y_mean,
+    x_var,
+    y_var,
+    plot=False,
+    samples=1000,
+    save_data_path=None,
+    debug=False,
+):
+    from symm_rep_learn.models.equiv_ncp import ENCP
 
     prev_device = next(nn_model.parameters()).device
-    dtype = next(nn_model.parameters()).dtype
+    next(nn_model.parameters()).dtype
 
     G = x_type.fibergroup
-    if samples == 'all':
+    if samples == "all":
         n_total_samples = len(x_samples)
-        device = 'cpu'
+        device = "cpu"
     else:
-        n_total_samples = samples if samples != 'all' else len(x_samples)
+        n_total_samples = samples if samples != "all" else len(x_samples)
         device = prev_device
 
     n_samples_per_g = int(n_total_samples // G.order())
@@ -195,12 +225,14 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples,
     P_joint_XY_pairs_mat = P_joint_XY_pairs.reshape(X_idx.shape)  # P_joint_XY_pairs_mat_ij = p(x_i, y_j)
     # Diagonal P_XY_pairs_mat is the p(x,y) of samples from the joint.
     if debug:
-        assert np.allclose(np.diag(P_joint_XY_pairs_mat), gmm.joint_pdf(X, Y), rtol=1e-5,
-                           atol=1e-5), "Error in joint PDF computation"
+        assert np.allclose(
+            np.diag(P_joint_XY_pairs_mat), gmm.joint_pdf(X, Y), rtol=1e-5, atol=1e-5
+        ), "Error in joint PDF computation"
         x_0, y_1 = X[[0], :], Y[[1], :]
-        p_x0y1 = gmm.joint_pdf(x_0, y_1)
-        assert np.allclose(P_joint_XY_pairs_mat[1, 0], gmm.joint_pdf(x_0, y_1), rtol=1e-5, atol=1e-5), \
-            f"{P_joint_XY_pairs_mat[1, 0]} != {gmm.joint_pdf(x_0, y_1)}"
+        gmm.joint_pdf(x_0, y_1)
+        assert np.allclose(
+            P_joint_XY_pairs_mat[1, 0], gmm.joint_pdf(x_0, y_1), rtol=1e-5, atol=1e-5
+        ), f"{P_joint_XY_pairs_mat[1, 0]} != {gmm.joint_pdf(x_0, y_1)}"
 
     # ==============================================================================================================
     # Compute the NN estimate of the PMD for the entire group orbit in a single pass ______
@@ -222,8 +254,8 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples,
     pmd_xy_pred = nn_model.pointwise_mutual_dependency(_x, _y).cpu().numpy()  # k_r(x,y) ≈ p(x,y) / p(x)p(y)
     G_pmd_xy_pred_mat = {}  # g : k_r(g.x, g.y)  for all pairs of x and y  (N x N)
     for i, g in enumerate(G_elements):
-        start, end = i * n_samples_per_g ** 2, (i + 1) * n_samples_per_g ** 2
-        G_pmd_xy_pred_mat[g] = pmd_xy_pred[start: end].reshape(X_idx.shape)
+        start, end = i * n_samples_per_g**2, (i + 1) * n_samples_per_g**2
+        G_pmd_xy_pred_mat[g] = pmd_xy_pred[start:end].reshape(X_idx.shape)
 
     # ==============================================================================================================
     # Compute the analytic PMD k(x,y) = p(x,y) / p(x)p(y)
@@ -237,16 +269,17 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples,
         # Check reshaping is not breaking ordering
         pmd_xy_err = pmd_xy_gt2 - G_pmd_xy_pred_mat[G.identity].flatten()
         pmd_xy_err_mat2 = pmd_xy_err.reshape(X_idx.shape)
-        assert np.allclose(G_pmd_xy_err_mat[G.identity], pmd_xy_err_mat2, rtol=1e-5, atol=1e-5), \
-            f"Max error: {np.max(G_pmd_xy_err_mat[G.identity] - pmd_xy_err_mat2)}"
+        assert np.allclose(
+            G_pmd_xy_err_mat[G.identity], pmd_xy_err_mat2, rtol=1e-5, atol=1e-5
+        ), f"Max error: {np.max(G_pmd_xy_err_mat[G.identity] - pmd_xy_err_mat2)}"
 
     # ==============================================================================================================
     #  Approximate the operator norm from the Gram matrix of errors.
     #  | E - Er |_op = sup_||f||_2 [ (E - Er) f ] ≈ max_sval( k_mat - k_pred_mat )
     G_pmd_xy_err_tensor = np.stack([G_pmd_xy_err_mat[g] for g in G_elements], axis=0)  # (|G|, N, N)
     # PMD_mse = E_p(x)p(y) (k(x,y) - k_r(x,y))^2 = (Σ_ij (k(x_i, y_j) - k_r(x_i, y_j))^2 * p(x)p(y))/ Σ_ij p(x_i)p(y_j)
-    G_pmd_err_mat = np.einsum('gij,i,j->gij', G_pmd_xy_err_tensor, np.sqrt(p_Y / p_Y.sum()), np.sqrt(p_X / p_Y.sum()))
-    pmd_mse = (G_pmd_err_mat ** 2).sum()
+    G_pmd_err_mat = np.einsum("gij,i,j->gij", G_pmd_xy_err_tensor, np.sqrt(p_Y / p_Y.sum()), np.sqrt(p_X / p_Y.sum()))
+    pmd_mse = (G_pmd_err_mat**2).sum()
     Op_norms = np.linalg.norm(G_pmd_xy_err_tensor, ord=2, axis=(1, 2))
     Op_norm = np.max(Op_norms)  # Largest singular value. Spectral norm
     # Since k(x, y) = k(g.x, g.y) for all g in G, we want to compute the variance of the estimate under g-action
@@ -263,10 +296,10 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples,
 
     G_pmi = {g: np.log(np.clip(G_pmd_xy_pred_mat[g], a_min=1e-5, a_max=None)) for g in G_elements}
     G_pmi_err_tensor = np.stack([pmi_gt_mat - G_pmi[g] for g in G_elements], axis=0)
-    pmi_mse = np.einsum('gij,i,j->', G_pmi_err_tensor ** 2, p_Y / p_Y.sum(), p_X / p_Y.sum())
+    pmi_mse = np.einsum("gij,i,j->", G_pmi_err_tensor**2, p_Y / p_Y.sum(), p_X / p_Y.sum())
     G_npmi = {g: G_pmi[g] / (-1 * np.log(P_joint_XY_pairs_mat)) for g in G_elements}
     G_npmi_err_tensor = np.stack([npmi_gt_mat - G_npmi[g] for g in G_elements], axis=0)
-    npmi_mse = np.einsum('gij,i,j->', G_npmi_err_tensor ** 2, p_Y / p_Y.sum(), p_X / p_Y.sum())
+    npmi_mse = np.einsum("gij,i,j->", G_npmi_err_tensor**2, p_Y / p_Y.sum(), p_X / p_Y.sum())
 
     # Compute estimate of the Mutual information from the samples.
     _P_xy_norm = P_joint_XY_pairs_mat / P_joint_XY_pairs_mat.sum()
@@ -274,33 +307,33 @@ def measure_analytic_pmi_error(gmm, nn_model, x_samples, y_samples,
     MI = np.mean(G_MI)
     MI_gt = np.sum(_P_xy_norm * pmi_gt_mat)
     if debug:
-        assert pmi_gt_mat.max() > MI, f"Expectation cannot be larger than the maximum value of the PMI"
-    metrics = {"PMD/mse":            pmd_mse,
-               "PMD/invariance_err": pmd_G_var,
-               "PMD/spectral_norm":  Op_norm,
-               "PMI/NPMI/mse":       npmi_mse,  # Numerically unstable.
-               "PMI/mse":            pmi_mse,
-               "MI/gt":              MI_gt,
-               "MI/err":             MI_gt - MI,
-               }
+        assert pmi_gt_mat.max() > MI, "Expectation cannot be larger than the maximum value of the PMI"
+    metrics = {
+        "PMD/mse": pmd_mse,
+        "PMD/invariance_err": pmd_G_var,
+        "PMD/spectral_norm": Op_norm,
+        "PMI/NPMI/mse": npmi_mse,  # Numerically unstable.
+        "PMI/mse": pmi_mse,
+        "MI/gt": MI_gt,
+        "MI/err": MI_gt - MI,
+    }
     # Sample 4 random conditioning values of x
-    range_n_samples = 100
     n_cond_points = 4
     cond_idx = np.random.choice(len(X_pairs), n_cond_points, replace=False)
-    X_cond_np = X_pairs[cond_idx]
-    X_c_cond = X_c[cond_idx]
+    X_pairs[cond_idx]
+    X_c[cond_idx]
 
     # X_range_np = np.linspace(x_max, x_max, range_n_samples)
     fig_err, fig_pmd = None, None
     if y_samples.shape[-1] == 1:
-        g = plot_pmd_err_2D(gmm, nn_model, G, x_samples, y_samples, x_mean, x_var, x_type, y_mean, y_var, y_type,
-                            X_LIMS, Y_LIMS)
+        g = plot_pmd_err_2D(
+            gmm, nn_model, G, x_samples, y_samples, x_mean, x_var, x_type, y_mean, y_var, y_type, X_LIMS, Y_LIMS
+        )
         fig_err = g.fig
     # Return to original device.
     nn_model.to(device=prev_device)
 
     if plot:
-
         # Take the n_total_samples from the joint sampling, in the digagonal of the matrix of pairwise pairings.
         G_pmd_gt, G_pmd_pred = [], []
         for g in G_elements:
@@ -342,8 +375,8 @@ def get_symmetry_group(cfg: DictConfig):
             rep_X = directsum([G.regular_representation] * cfg.regular_multiplicity)  # ρ_Χ
             rep_Y = directsum([G.regular_representation] * cfg.regular_multiplicity)  # ρ_Y
         else:
-            rep_X = G.representations['irrep_1']  # ρ_Χ
-            rep_Y = G.representations['irrep_1']  # ρ_Y
+            rep_X = G.representations["irrep_1"]  # ρ_Χ
+            rep_Y = G.representations["irrep_1"]  # ρ_Y
 
     elif group_label[0] == "D" and group_label[1:].isdigit():
         N = int(group_label[1:])
@@ -377,16 +410,17 @@ def get_symmetry_group(cfg: DictConfig):
             rep_X = directsum([G.regular_representation] * cfg.regular_multiplicity)  # ρ_Χ
             rep_Y = directsum([G.regular_representation] * cfg.regular_multiplicity)  # ρ_Y
         elif isinstance(G, escnn.group.CyclicGroup) and G.order() == 2 and cfg.regular_multiplicity == 0:
-            rep_X = G.representations['irrep_1']  # ρ_Χ
-            rep_Y = G.representations['irrep_1']  # ρ_Y
+            rep_X = G.representations["irrep_1"]  # ρ_Χ
+            rep_Y = G.representations["irrep_1"]  # ρ_Y
         elif rep_Y is None or rep_X is None:
             raise ValueError(
-                f"G={G} Hx={cfg.x_symm_subgroup_id} Hy={cfg.y_symm_subgroup_id} {cfg.regular_multiplicity}")
+                f"G={G} Hx={cfg.x_symm_subgroup_id} Hy={cfg.y_symm_subgroup_id} {cfg.regular_multiplicity}"
+            )
 
     return G, rep_X, rep_Y
 
 
-@hydra.main(config_path='cfg', config_name='config', version_base='1.3')
+@hydra.main(config_path="cfg", config_name="symm_GMM", version_base="1.3")
 def main(cfg: DictConfig):
     seed = cfg.seed if cfg.seed >= 0 else np.random.randint(0, 1000)
 
@@ -404,11 +438,11 @@ def main(cfg: DictConfig):
         gmm_seed=cfg.gmm.seed,  # Same GMM model for all seeds.
         x_subgroup_id=cfg.x_symm_subgroup_id,
         y_subgroup_id=cfg.y_symm_subgroup_id,
-        )
+    )
     seed_everything(seed)  # Random/Selected seed for weight initialization and training.
     (train_samples, val_samples, test_samples), (x_mean, y_mean), (x_var, y_var), datasets = gmm_dataset(
-        cfg, gmm, rep_X, rep_Y, device=cfg.device if cfg.data_on_device else 'cpu'
-        )
+        cfg, gmm, rep_X, rep_Y, device=cfg.device if cfg.data_on_device else "cpu"
+    )
 
     # x_train, y_train = train_samples
     x_val, y_val = val_samples
@@ -429,11 +463,11 @@ def main(cfg: DictConfig):
         lat_rep = G.spectral_regular_representation(*hidden_irreps, name=None)
     else:
         lat_rep = G.regular_representation
-        
+
     lat_type = FieldType(
         gspace=escnn.gspaces.no_base_space(G),
-        representations=[lat_rep] * max(1, ceil(cfg.embedding['embedding_dim'] // lat_rep.size))
-        )
+        representations=[lat_rep] * max(1, ceil(cfg.embedding["embedding_dim"] // lat_rep.size)),
+    )
 
     # Get the model ______________________________________________________________________
     nnPME = get_model(cfg, x_type, y_type, lat_type)
@@ -452,7 +486,8 @@ def main(cfg: DictConfig):
         return GeometricTensor(x_batch, x_type), GeometricTensor(y_batch, y_type)
 
     # Define the dataloaders
-    from NCP.models.equiv_ncp import ENCP
+    from symm_rep_learn.models.equiv_ncp import ENCP
+
     collate_fn = geom_tensor_collate_fn if isinstance(nnPME, ENCP) else default_collate
     train_dataloader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_fn)
     val_dataloader = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=collate_fn)
@@ -460,19 +495,25 @@ def main(cfg: DictConfig):
 
     # Plot the GT joint PDF and MI _______________________________________________________
     run_path = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
-    gmm_plot_path = pathlib.Path(run_path).parent.parent / f"joint_pdf.png"
+    gmm_plot_path = pathlib.Path(run_path).parent.parent / "joint_pdf.png"
 
     if not gmm_plot_path.exists():
         if x_type.size == 1 and y_type.size == 1:
             x_samples, y_samples = gmm.simulate(n_samples=5000)
             grid = plot_analytic_joint_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"joint_pdf.png", dpi=DPI, bbox_inches='tight')
+            grid.fig.savefig(pathlib.Path(run_path).parent.parent / "joint_pdf.png", dpi=DPI, bbox_inches="tight")
             grid = plot_analytic_prod_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"prod_pdf.png", dpi=DPI, bbox_inches='tight')
+            grid.fig.savefig(pathlib.Path(run_path).parent.parent / "prod_pdf.png", dpi=DPI, bbox_inches="tight")
             grid = plot_analytic_npmi_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"normalized_mutual_information.png", dpi=DPI, bbox_inches='tight')
+            grid.fig.savefig(
+                pathlib.Path(run_path).parent.parent / "normalized_mutual_information.png",
+                dpi=DPI,
+                bbox_inches="tight",
+            )
             grid = plot_analytic_pmd_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"pointwise_mutual_dependency.png", dpi=DPI, bbox_inches='tight')
+            grid.fig.savefig(
+                pathlib.Path(run_path).parent.parent / "pointwise_mutual_dependency.png", dpi=DPI, bbox_inches="tight"
+            )
 
     # Define the Lightning module ________________________________________________________
     ncp_lightning_module = TrainingModule(
@@ -482,11 +523,11 @@ def main(cfg: DictConfig):
         loss_fn=nnPME.loss,
         val_metrics=lambda x: measure_analytic_pmi_error(
             gmm, nnPME, x_val, y_val, x_type, y_type, x_mean, y_mean, x_var, y_var, debug=cfg.debug
-            ),
+        ),
         test_metrics=lambda x: measure_analytic_pmi_error(
             gmm, nnPME, x_test, y_test, x_type, y_type, x_mean, y_mean, x_var, y_var
-            ),
-        )
+        ),
+    )
 
     # Define the logger and callbacks
     log.info(f"Run path: {run_path}")
@@ -497,42 +538,47 @@ def main(cfg: DictConfig):
     ckpt_call = ModelCheckpoint(
         dirpath=run_path,
         filename=BEST_CKPT_NAME,
-        monitor='loss/val', save_top_k=1,
-        save_last=True, mode='min',
+        monitor="loss/val",
+        save_top_k=1,
+        save_last=True,
+        mode="min",
         every_n_epochs=scaled_saved_freq,
-        )
+    )
 
     # Fix for all runs independent on the train_ratio chosen. This way we compare on effective number of "epochs"
     max_steps = int(cfg.gmm.n_total_samples * cfg.max_epochs // cfg.batch_size)
     scaled_patience = int(cfg.patience * cfg.gmm.n_total_samples // cfg.batch_size)
-    early_call = EarlyStopping(monitor='||k(x,y) - k_r(x,y)||/val', patience=scaled_patience, mode='min')
+    early_call = EarlyStopping(monitor="||k(x,y) - k_r(x,y)||/val", patience=scaled_patience, mode="min")
 
-    trainer = lightning.Trainer(accelerator='gpu',
-                                devices=[cfg.device] if cfg.device != -1 else cfg.device,  # -1 for all available GPUs
-                                max_steps=max_steps,
-                                logger=logger,
-                                enable_progress_bar=True,
-                                log_every_n_steps=25,
-                                check_val_every_n_epoch=50,
-                                callbacks=[ckpt_call, early_call],
-                                fast_dev_run=10 if cfg.debug else False,
-                                )
+    trainer = lightning.Trainer(
+        accelerator="gpu",
+        devices=[cfg.device] if cfg.device != -1 else cfg.device,  # -1 for all available GPUs
+        max_steps=max_steps,
+        logger=logger,
+        enable_progress_bar=True,
+        log_every_n_steps=25,
+        check_val_every_n_epoch=50,
+        callbacks=[ckpt_call, early_call],
+        fast_dev_run=10 if cfg.debug else False,
+    )
 
-    torch.set_float32_matmul_precision('medium')
+    torch.set_float32_matmul_precision("medium")
     last_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / LAST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
-    trainer.fit(ncp_lightning_module,
-                train_dataloaders=train_dataloader,
-                val_dataloaders=val_dataloader,
-                ckpt_path=last_ckpt_path if last_ckpt_path.exists() else None,
-                )
+    trainer.fit(
+        ncp_lightning_module,
+        train_dataloaders=train_dataloader,
+        val_dataloaders=val_dataloader,
+        ckpt_path=last_ckpt_path if last_ckpt_path.exists() else None,
+    )
 
     ncp_lightning_module.to(device="cpu")  # Do testing in CPU as the testing rutine is memory intensive
     # Loads the best model.
     best_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / BEST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
-    test_logs = trainer.test(ncp_lightning_module,
-                             dataloaders=test_dataloader,
-                             ckpt_path=best_ckpt_path if best_ckpt_path.exists() else None,
-                             )
+    test_logs = trainer.test(
+        ncp_lightning_module,
+        dataloaders=test_dataloader,
+        ckpt_path=best_ckpt_path if best_ckpt_path.exists() else None,
+    )
     test_metrics = test_logs[0]  # dict: metric_name -> value
     # Save the testing matrics in a csv file using pandas.
     test_metrics_path = pathlib.Path(run_path) / "test_metrics.csv"
@@ -543,24 +589,35 @@ def main(cfg: DictConfig):
     # Wand sync
     logger.experiment.finish()
 
-    log.info(f"Logging test metrics ... ")
+    log.info("Logging test metrics ... ")
     m, fig_pmd, fig_cde = measure_analytic_pmi_error(
-        gmm, nnPME, x_test, y_test, x_type, y_type, x_mean, y_mean, x_var, y_var,
-        plot=True, samples='all', save_data_path=run_path,
-        )
-    run_desc = f"{pathlib.Path(run_path).parent.name}/{pathlib.Path(run_path).name}"
+        gmm,
+        nnPME,
+        x_test,
+        y_test,
+        x_type,
+        y_type,
+        x_mean,
+        y_mean,
+        x_var,
+        y_var,
+        plot=True,
+        samples="all",
+        save_data_path=run_path,
+    )
+    f"{pathlib.Path(run_path).parent.name}/{pathlib.Path(run_path).name}"
     if fig_cde is not None:  # Plot
         # fig_cde.suptitle(run_desc)
         # fig_cde.tight_layout()
-        fig_cde.savefig(pathlib.Path(run_path) / f"PMD_err_pdf.png", dpi=DPI)
+        fig_cde.savefig(pathlib.Path(run_path) / "PMD_err_pdf.png", dpi=DPI)
     if fig_pmd is not None:
         print("Plotting NPMI")
         # set title PLT fig
         # fig_pmd.suptitle(run_desc)
         fig_pmd.tight_layout()
-        fig_pmd.savefig(pathlib.Path(run_path) / f"NPMI_pdf.png", dpi=DPI)
+        fig_pmd.savefig(pathlib.Path(run_path) / "NPMI_pdf.png", dpi=DPI)
         print()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
