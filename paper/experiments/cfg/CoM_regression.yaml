@@ -1,0 +1,83 @@
+proj_name: "eNCP_regression"
+exp_name: "test"
+debug: False
+seed: -1
+device: 0                 # gpu number to use
+
+# EXPERIMENT CONFIG
+robot_name: solo
+path_ds: NCP/experiments/com_momentum/dataset/${robot_name}/n_samples_100000.pkl # Path to dataset relative project root.
+x_obs_names: ["qjs","vjs"] # Joint position and velocity configuration
+y_obs_names: ["com_lin_momentum","com_ang_momentum"] # Joint position and velocity configuration
+
+# Symmetry subgroups assumed by the model.
+x_symm_subgroup_id: null                 # ACTUAL/EMPIRICAL symmetry subgroup used for equiv models
+y_symm_subgroup_id: null                 # ACTUA/EMPIRICAL symmetry subgroup used for equiv models
+
+# MODEL CONFIG
+model: NCP
+truncated_op_bias: 'full_rank'  # 'Cxy' or 'diag' or 'svals'
+gamma: 10                       # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
+
+architecture:
+  hidden_layers: 4
+  hidden_units: 512
+  embedding_dim: 128
+  activation: ELU           # Any torch activation
+  iter_whitening: false     # BatchNorm that also decorrelates the features. See Algorithm 1 of https://arxiv.org/abs/1904.03441
+  residual_encoder: false   # Introduce target regression variables in L2(Y)
+  residual_encoder_x: false   # Introduce target regression variables in L2(Y)
+
+
+# OPTIMIZATION CONFIG
+optim:
+  train_sample_ratio: 0.7   # Between 0.7 and 0.1 of n_total_samples samples
+  lr: 5e-4                  # Learning rate NCP train best at low lr values < 1e-3
+  batch_size: 4096          # The higher the best
+  max_epochs: 100           # Number of passes over dataset before stop training. Early stopping is used.
+  patience: 15              # Epochs to wait for improvement before early stopping
+
+defaults:
+- override hydra/launcher: joblib  # Parallel runs
+
+embedding_desc: "hu${architecture.hidden_units}_hl${architecture.hidden_layers}_ed${architecture.embedding_dim}_act${architecture.activation}"
+experiment_desc: ""
+model_desc: "${model}_${truncated_op_bias}_gamma${gamma}_lr${optim.lr}_bs${optim.batch_size}_me${optim.max_epochs}"
+
+hydra:
+  run:
+    dir: "../experiments/${proj_name}/${exp_name}/${experiment_desc}/${model_desc}--${embedding_desc}/${hydra.job.override_dirname} seed=${seed}"
+
+  sweep:
+    dir: ./experiments/${proj_name}/${exp_name}/${experiment_desc}/
+    subdir: ${model_desc}--${embedding_desc}/${hydra.job.override_dirname} seed=${seed}
+
+  job:
+    name: ${proj_name}
+    num: ${seed}
+    env_set:
+      HYDRA_FULL_ERROR: '1'
+      WANDB_START_METHOD: 'thread'
+    config:
+      override_dirname:
+        kv_sep: "="
+        item_sep: " "
+        exclude_keys:
+          - debug
+          - device
+          - seed
+          - exp_name
+          - embedding.hidden_units
+          - embedding.hidden_layers
+          - embedding.embedding_dim
+          - embedding.activation
+          - model
+          - gmm.n_kernels
+          - model
+          - gamma
+          - lr
+          - batch_size
+          - max_epochs
+          - symm_group
+          - x_symm_subgroup_id
+          - y_symm_subgroup_id

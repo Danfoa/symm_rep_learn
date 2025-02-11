@@ -1,1 +1,0 @@
-Part of the codes are adapted from [here](https://github.com/ermongroup/smile-mi-estimator) and [here](https://colab.research.google.com/github/google-research/google-research/blob/master/vbmi/vbmi_demo.ipynb)
