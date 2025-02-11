@@ -21,41 +21,66 @@ PLOT_STYLE = {
         "legend": r"$p(y | g \;\triangleright_{\mathcal{X}}\; x)$",
         "expect": r"$E[y|g \;\triangleright_{\mathcal{X}}\; x]$",
         },
-    "pdf":    {
+    "pdf_y":    {
         "color":  "lightblue",
         "fill":   "lightblue",
         "legend": r"$p(y)$",
         },
-    "mi_x": {
+    "pdf_x":    {
+        "color":  "lightblue",
+        "fill":   "lightblue",
+        "legend": r"$p(x)$",
+        "legend": r"$p(x)$",
+        },
+    "npmi_x": {
         "color":  "red",
         "legend": r"$NPMI(x, y)$",
         },
-    "mi_gx": {
+    "npmi_gx": {
         "color":  "green",
         "legend": r"$NPMI(g \;\triangleright_{\mathcal{X}}\; x, y)$",
         },
-    "mi_y": {
+    "npmi_y": {
         "color":  "red",
         "legend": r"$NPMI(x, y)$",
         },
-    "mi_gy": {
+    "npmi_gy": {
         "color":  "green",
         "legend": r"$NPMI(x, g \;\triangleright_{\mathcal{Y}}\; y)$",
-        }
+        },
+    "pmd_x": {
+        "color":  "red",
+        "legend": r"$\kappa(x, y)$",
+        },
+    "pmd_gx": {
+        "color":  "green",
+        "legend": r"$\kappa(g \;\triangleright_{\mathcal{X}}\; x, y)$",
+        },
+    "pmd_y": {
+        "color":  "red",
+        "legend": r"$\kappa(x, y)$",
+        },
+    "pmd_gy": {
+        "color":  "green",
+        "legend": r"$\kappa(x, g \;\triangleright_{\mathcal{Y}}\; y)$",
+        },
 }
 
-PLOT_SIZE = 5
+PLOT_SIZE = 3
 PLOT_LEVELS = 15
 PLOT_CMAP = "Blues"
 PLOT_LINEWIDTH = 1
 PLOT_MARKERSIZE = 8
 PLOT_ALPHA = 0.7
 PLOT_FONT_SIZE = 7
+LEGEND_FONT_SIZE = 5
+LEGEND_BORDER_PAD = 1
 EXPECTATION_MARKER = "D"
+LEGEND_FRAME_ALPHA = 0.8
 
 def plot_analytic_joint_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representation, rep_Y: Representation, x_samples,
                            y_samples):
-    grid = sns.JointGrid(space=0.0, height=PLOT_SIZE)
+    grid = sns.JointGrid(space=0.1, height=PLOT_SIZE)
     x_samples = x_samples.squeeze()
     y_samples = y_samples.squeeze()
     x_max, y_max = np.max(np.abs(x_samples)), np.max(np.abs(y_samples))
@@ -74,7 +99,7 @@ def plot_analytic_joint_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representa
     joint_contour = grid.ax_joint.contourf(X_grid, Y_grid, Z, cmap=PLOT_CMAP, levels=PLOT_LEVELS)
 
     # Select a random sample to test the conditional expectation
-    x_t, y_t = x_samples[0], y_samples[0]
+    x_t, y_t = -1, 1
     g = G.elements[-1]
     rep_X = gmm.rep_X
     rep_Y = gmm.rep_Y
@@ -87,11 +112,6 @@ def plot_analytic_joint_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representa
     # Set limits
     grid.ax_joint.set_xlim([-x_max, x_max])
     grid.ax_joint.set_ylim([-y_max, y_max])
-    # Customizing labels
-    grid.ax_joint.set_xlabel(r"$\mathcal{X}$")
-    grid.ax_joint.set_ylabel(r"$\mathcal{Y}$")
-    grid.ax_marg_x.set_xlabel(r"$p(\textnormal{x})$")
-    grid.ax_marg_y.set_ylabel(r"$p(\textnormal{y})$")
 
     # Do plot of conditional probability density on the test conditions x and gx
     n_samples_cpd = len(y_range)
@@ -112,13 +132,18 @@ def plot_analytic_joint_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representa
 
     # Plot marginal x
     pdf_x = gmm.pdf_x(X=x_range)
-    grid.ax_marg_x.fill_between(x_range, 0, pdf_x, color=PLOT_STYLE["pdf"]["fill"], alpha=0.6, label=PLOT_STYLE["pdf"]["legend"])
+    grid.ax_marg_x.fill_between(x_range, 0, pdf_x, color=PLOT_STYLE["pdf_x"]["fill"], alpha=0.6, label=PLOT_STYLE["pdf_x"]["legend"])
     grid.ax_marg_x.set_ylim([0, None])
     # Plot marginal y
     pdf_y = gmm.pdf_y(Y=y_range)
-    grid.ax_marg_y.fill_betweenx(y_range, 0, pdf_y, color=PLOT_STYLE["pdf"]["fill"], alpha=0.6, label=PLOT_STYLE["pdf"]["legend"])
+    grid.ax_marg_y.fill_betweenx(y_range, 0, pdf_y, color=PLOT_STYLE["pdf_y"]["fill"], alpha=0.6, label=PLOT_STYLE["pdf_y"]["legend"])
     grid.ax_marg_y.set_xlim([0, None])
 
+    # Customizing labels
+    grid.ax_joint.set_xlabel(r"$\mathcal{X}$")
+    grid.ax_joint.set_ylabel(r"$\mathcal{Y}$")
+    # grid.ax_marg_x.set_xlabel(r"$p(\textnormal{x})$")
+    # grid.ax_marg_y.set_ylabel(r"$p(\textnormal{y})$")
     # Remove ticks from joint x and y axes
     grid.ax_joint.set_xticks([])
     grid.ax_joint.set_yticks([])
@@ -126,10 +151,8 @@ def plot_analytic_joint_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representa
     grid.ax_joint.spines['bottom'].set_visible(False)
     grid.ax_joint.spines['left'].set_visible(False)
     # Add legend
-    grid.ax_marg_y.legend(loc="upper left", fontsize=PLOT_FONT_SIZE,  borderaxespad=0)
-    grid.ax_marg_x.legend(loc="upper left", fontsize=PLOT_FONT_SIZE,  borderaxespad=0)
-    grid.fig.suptitle(r"$p(x,y)$, $p(y | x)$, $p(x)$, $p(y)$")
-    grid.fig.tight_layout()
+    grid.ax_marg_y.legend(loc="upper left", fontsize=LEGEND_FONT_SIZE, bbox_to_anchor=(0.0, 1.2), borderaxespad=0, framealpha=LEGEND_FRAME_ALPHA, borderpad=LEGEND_BORDER_PAD)
+    grid.ax_marg_x.legend(loc="upper left", fontsize=LEGEND_FONT_SIZE, bbox_to_anchor=(0.0, 1.1), borderaxespad=0, framealpha=LEGEND_FRAME_ALPHA, borderpad=LEGEND_BORDER_PAD)
     return grid
 
 def plot_analytic_prod_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representation, rep_Y: Representation, x_samples,
@@ -154,7 +177,7 @@ def plot_analytic_prod_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representat
 
     # Select a random sample to test the conditional expectation
     sample_idx = np.random.choice(len(x_samples))
-    x_t, y_t = x_samples[sample_idx], y_samples[sample_idx]
+    x_t, y_t = -1, 1
     P_x_t = gmm.pdf_x(X=np.repeat(x_t, 2))[0]
     P_y_t = gmm.pdf_y(Y=np.repeat(y_t, 2))[0]
 
@@ -182,9 +205,9 @@ def plot_analytic_prod_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representat
     n_samples_cpd = len(y_range)
     # Plot marginal x
     pdf_x = gmm.pdf_x(X=x_range)
-    grid.ax_marg_x.fill_between(x_range, 0, pdf_x, color=PLOT_STYLE["pdf"]["fill"], alpha=0.4)
-    grid.ax_marg_x.plot(x_range, pdf_x, color=PLOT_STYLE["pdf"]["color"], linestyle="-", alpha=1.0, linewidth=PLOT_LINEWIDTH,
-                        label=PLOT_STYLE["pdf"]["legend"])
+    grid.ax_marg_x.fill_between(x_range, 0, pdf_x, color=PLOT_STYLE["pdf_x"]["fill"], alpha=0.4)
+    grid.ax_marg_x.plot(x_range, pdf_x, color=PLOT_STYLE["pdf_x"]["color"], linestyle="-", alpha=1.0, linewidth=PLOT_LINEWIDTH,
+                        label=PLOT_STYLE["pdf_x"]["legend"])
     # Print a marker at the expected position using the color of the conditional distribution
     grid.ax_marg_x.plot(x_t, 0, 'ro', markersize=5, alpha=0.5)
     grid.ax_marg_x.plot(gx_t, 0, 'go', markersize=5, alpha=0.5)
@@ -195,9 +218,9 @@ def plot_analytic_prod_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representat
     grid.ax_marg_x.set_ylim([0, None])
     # Plot marginal y
     pdf_y = gmm.pdf_y(Y=y_range)
-    grid.ax_marg_y.fill_betweenx(y_range, 0, pdf_y, color=PLOT_STYLE["pdf"]["fill"], alpha=0.4)
-    grid.ax_marg_y.plot(pdf_y, y_range, color=PLOT_STYLE["pdf"]["color"], linestyle="-", alpha=1.0, linewidth=PLOT_LINEWIDTH,
-                        label=PLOT_STYLE["pdf"]["legend"])
+    grid.ax_marg_y.fill_betweenx(y_range, 0, pdf_y, color=PLOT_STYLE["pdf_y"]["fill"], alpha=0.4)
+    grid.ax_marg_y.plot(pdf_y, y_range, color=PLOT_STYLE["pdf_y"]["color"], linestyle="-", alpha=1.0, linewidth=PLOT_LINEWIDTH,
+                        label=PLOT_STYLE["pdf_y"]["legend"])
     # Print a marker at the expected position using the color of the conditional distribution
     grid.ax_marg_y.plot(0, y_t, 'ro', markersize=5, alpha=0.5)
     grid.ax_marg_y.plot(0, gy_t, 'go', markersize=5, alpha=0.5)
@@ -207,6 +230,11 @@ def plot_analytic_prod_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representat
 
     grid.ax_marg_y.set_xlim([0, None])
 
+    # Customizing labels
+    grid.ax_joint.set_xlabel(r"$\mathcal{X}$")
+    grid.ax_joint.set_ylabel(r"$\mathcal{Y}$")
+    # grid.ax_marg_x.set_xlabel(r"$p(\textnormal{x})$")
+    # grid.ax_marg_y.set_ylabel(r"$p(\textnormal{y})$")
     # Remove ticks from joint x and y axes
     grid.ax_joint.set_xticks([])
     grid.ax_joint.set_yticks([])
@@ -214,11 +242,12 @@ def plot_analytic_prod_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representat
     grid.ax_joint.spines['bottom'].set_visible(False)
     grid.ax_joint.spines['left'].set_visible(False)
     # Add legend
-    grid.ax_marg_y.legend(loc="upper left", fontsize=PLOT_FONT_SIZE,  borderaxespad=0)
-    grid.ax_marg_x.legend(loc="upper left", fontsize=PLOT_FONT_SIZE,  borderaxespad=0)
-    grid.fig.suptitle(r"Analytic $p(x)p(y)$, and $p(y | x)$")
-    grid.fig.tight_layout()
+    grid.ax_marg_y.legend(loc="upper left", fontsize=LEGEND_FONT_SIZE, bbox_to_anchor=(0.0, 1.2), borderaxespad=0,
+                          framealpha=LEGEND_FRAME_ALPHA, borderpad=LEGEND_BORDER_PAD)
+    grid.ax_marg_x.legend(loc="upper left", fontsize=LEGEND_FONT_SIZE, bbox_to_anchor=(0.0, 1.1), borderaxespad=0,
+                          framealpha=LEGEND_FRAME_ALPHA, borderpad=LEGEND_BORDER_PAD)
     return grid
+
 def plot_analytic_npmi_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representation, rep_Y: Representation, x_samples,
                           y_samples):
     grid = sns.JointGrid(space=0.0, height=PLOT_SIZE)
@@ -237,7 +266,7 @@ def plot_analytic_npmi_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representat
     Z = npmi_flat.reshape(X_grid.shape)
     grid.ax_joint.contourf(X_grid, Y_grid, Z, cmap=sns.color_palette("magma", as_cmap=True), levels=PLOT_LEVELS)
 
-    x_t, y_t = x_samples[0], y_samples[0]
+    x_t, y_t = -1, 1
     g = G.elements[-1]
     rep_X = gmm.rep_X
     rep_Y = gmm.rep_Y
@@ -256,23 +285,35 @@ def plot_analytic_npmi_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representat
     grid.ax_marg_y.set_ylabel(r"$p(\textnormal{y})$")
 
     n_samples_cpd = len(y_range)
-    mi_x_vals = gmm.normalized_pointwise_mutual_information(X=np.repeat(x_t, n_samples_cpd), Y=y_range)
-    mi_gx_vals = gmm.normalized_pointwise_mutual_information(X=np.repeat(gx_t, n_samples_cpd), Y=y_range)
-    mi_y_vals = gmm.normalized_pointwise_mutual_information(X=x_range, Y=np.repeat(y_t, len(x_range)))
-    mi_gy_vals = gmm.normalized_pointwise_mutual_information(X=x_range, Y=np.repeat(gy_t, len(x_range)))
+    npmi_x_vals = gmm.normalized_pointwise_mutual_information(X=np.repeat(x_t, n_samples_cpd), Y=y_range)
+    npmi_gx_vals = gmm.normalized_pointwise_mutual_information(X=np.repeat(gx_t, n_samples_cpd), Y=y_range)
+    npmi_y_vals = gmm.normalized_pointwise_mutual_information(X=x_range, Y=np.repeat(y_t, len(x_range)))
+    npmi_gy_vals = gmm.normalized_pointwise_mutual_information(X=x_range, Y=np.repeat(gy_t, len(x_range)))
 
-    for key, mi_vals in zip(["mi_x", "mi_gx"], [mi_x_vals, mi_gx_vals]):
+    for key, mi_vals in zip(["npmi_x", "npmi_gx"], [npmi_x_vals, npmi_gx_vals]):
         grid.ax_marg_y.plot(mi_vals, y_range, color=PLOT_STYLE[key]["color"], linestyle="-", alpha=0.9, linewidth=PLOT_LINEWIDTH,
                             label=PLOT_STYLE[key]["legend"])
 
-    for key, mi_vals in zip(["mi_y", "mi_gy"], [mi_y_vals, mi_gy_vals]):
+    for key, mi_vals in zip(["npmi_y", "npmi_gy"], [npmi_y_vals, npmi_gy_vals]):
         grid.ax_marg_x.plot(x_range, mi_vals, color=PLOT_STYLE[key]["color"], linestyle="-", alpha=0.9, linewidth=PLOT_LINEWIDTH,
                             label=PLOT_STYLE[key]["legend"])
 
-    grid.ax_marg_y.legend(loc="upper left", fontsize=PLOT_FONT_SIZE, borderaxespad=0)
-    grid.ax_marg_x.legend(loc="upper left", fontsize=PLOT_FONT_SIZE, borderaxespad=0)
-    grid.fig.suptitle(r"Analytic Normalized MI $ln\left(\frac{p(x,y)}{p(y)p(x)}\right)$")
-    grid.fig.tight_layout()
+    # Customizing labels
+    grid.ax_joint.set_xlabel(r"$\mathcal{X}$")
+    grid.ax_joint.set_ylabel(r"$\mathcal{Y}$")
+    # grid.ax_marg_x.set_xlabel(r"$p(\textnormal{x})$")
+    # grid.ax_marg_y.set_ylabel(r"$p(\textnormal{y})$")
+    # Remove ticks from joint x and y axes
+    grid.ax_joint.set_xticks([])
+    grid.ax_joint.set_yticks([])
+    # Remove borders from lower and left margins of the joint plot
+    grid.ax_joint.spines['bottom'].set_visible(False)
+    grid.ax_joint.spines['left'].set_visible(False)
+    # Add legend
+    grid.ax_marg_y.legend(loc="upper left", fontsize=LEGEND_FONT_SIZE, bbox_to_anchor=(0.0, 1.2), borderaxespad=0,
+                          framealpha=LEGEND_FRAME_ALPHA, borderpad=LEGEND_BORDER_PAD)
+    grid.ax_marg_x.legend(loc="upper left", fontsize=LEGEND_FONT_SIZE, bbox_to_anchor=(0.0, 1.1), borderaxespad=0,
+                          framealpha=LEGEND_FRAME_ALPHA, borderpad=LEGEND_BORDER_PAD)
     return grid
 
 def plot_analytic_pmd_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representation, rep_Y: Representation, x_samples,
@@ -291,10 +332,10 @@ def plot_analytic_pmd_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representati
     # Pxy = gmm.joint_pdf(X=X_input, Y=Y_input)
     pmd = gmm.pointwise_mutual_dependency(X=X_input, Y=Y_input)
     Z = pmd.reshape(X_grid.shape)
-    grid.ax_joint.contourf(X_grid, Y_grid, Z, cmap=sns.color_palette("magma", as_cmap=True), levels=PLOT_LEVELS)
+    grid.ax_joint.contourf(X_grid, Y_grid, Z, cmap=sns.color_palette("magma", as_cmap=True), levels=PLOT_LEVELS * 2)
 
     
-    x_t, y_t = x_samples[0], y_samples[0]
+    x_t, y_t = -1, 1
     g = G.elements[-1]
     rep_X = gmm.rep_X
     rep_Y = gmm.rep_Y
@@ -313,16 +354,16 @@ def plot_analytic_pmd_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representati
     grid.ax_marg_y.set_ylabel(r"$p(\textnormal{y})$")
 
     n_samples_cpd = len(y_range)
-    mi_x_vals = gmm.pointwise_mutual_dependency(X=np.repeat(x_t, n_samples_cpd), Y=y_range)
-    mi_gx_vals = gmm.pointwise_mutual_dependency(X=np.repeat(gx_t, n_samples_cpd), Y=y_range)
-    mi_y_vals = gmm.pointwise_mutual_dependency(X=x_range, Y=np.repeat(y_t, len(x_range)))
-    mi_gy_vals = gmm.pointwise_mutual_dependency(X=x_range, Y=np.repeat(gy_t, len(x_range)))
+    pmd_x_vals = gmm.pointwise_mutual_dependency(X=np.repeat(x_t, n_samples_cpd), Y=y_range)
+    pmd_gx_vals = gmm.pointwise_mutual_dependency(X=np.repeat(gx_t, n_samples_cpd), Y=y_range)
+    pmd_y_vals = gmm.pointwise_mutual_dependency(X=x_range, Y=np.repeat(y_t, len(x_range)))
+    pmd_gy_vals = gmm.pointwise_mutual_dependency(X=x_range, Y=np.repeat(gy_t, len(x_range)))
 
-    for key, mi_vals in zip(["mi_x", "mi_gx"], [mi_x_vals, mi_gx_vals]):
+    for key, mi_vals in zip(["pmd_x", "pmd_gx"], [pmd_x_vals, pmd_gx_vals]):
         grid.ax_marg_y.plot(mi_vals, y_range, color=PLOT_STYLE[key]["color"], linestyle="-", alpha=0.9, linewidth=PLOT_LINEWIDTH,
                             label=PLOT_STYLE[key]["legend"])
 
-    for key, mi_vals in zip(["mi_y", "mi_gy"], [mi_y_vals, mi_gy_vals]):
+    for key, mi_vals in zip(["pmd_y", "pmd_gy"], [pmd_y_vals, pmd_gy_vals]):
         grid.ax_marg_x.plot(x_range, mi_vals, color=PLOT_STYLE[key]["color"], linestyle="-", alpha=0.9, linewidth=PLOT_LINEWIDTH,
                             label=PLOT_STYLE[key]["legend"])
 
@@ -330,10 +371,22 @@ def plot_analytic_pmd_2D(gmm: SymmGaussianMixture, G: Group, rep_X: Representati
     grid.ax_marg_y.axvline(1, color='k', linestyle='-', alpha=0.3)
     grid.ax_marg_x.axhline(1, color='k', linestyle='-', alpha=0.3)
 
-    grid.ax_marg_y.legend(loc="upper left", fontsize=PLOT_FONT_SIZE, borderaxespad=0)
-    grid.ax_marg_x.legend(loc="upper left", fontsize=PLOT_FONT_SIZE, borderaxespad=0)
-    grid.fig.suptitle(r"Analytic Normalized PMD $\frac{p(x,y)}{p(y)p(x)}$")
-    grid.fig.tight_layout()
+    # Customizing labels
+    grid.ax_joint.set_xlabel(r"$\mathcal{X}$")
+    grid.ax_joint.set_ylabel(r"$\mathcal{Y}$")
+    # grid.ax_marg_x.set_xlabel(r"$p(\textnormal{x})$")
+    # grid.ax_marg_y.set_ylabel(r"$p(\textnormal{y})$")
+    # Remove ticks from joint x and y axes
+    grid.ax_joint.set_xticks([])
+    grid.ax_joint.set_yticks([])
+    # Remove borders from lower and left margins of the joint plot
+    grid.ax_joint.spines['bottom'].set_visible(False)
+    grid.ax_joint.spines['left'].set_visible(False)
+    # Add legend
+    grid.ax_marg_y.legend(loc="upper left", fontsize=LEGEND_FONT_SIZE, bbox_to_anchor=(0.0, 1.2), borderaxespad=0,
+                          framealpha=LEGEND_FRAME_ALPHA, borderpad=LEGEND_BORDER_PAD)
+    grid.ax_marg_x.legend(loc="upper left", fontsize=LEGEND_FONT_SIZE, bbox_to_anchor=(0.0, 1.1), borderaxespad=0,
+                          framealpha=LEGEND_FRAME_ALPHA, borderpad=LEGEND_BORDER_PAD)
     return grid
 
 def plot_pmd_err_2D(gmm: SymmGaussianMixture,
@@ -407,7 +460,7 @@ def plot_pmd_err_2D(gmm: SymmGaussianMixture,
     #     bottom_axis_height  # Height
     #     ])
 
-    x_t, y_t = x_samples[0], y_samples[0]
+    x_t, y_t = -1, 1
     g = G.elements[-1]
     rep_X = gmm.rep_X
     rep_Y = gmm.rep_Y
@@ -435,7 +488,7 @@ def plot_pmd_err_2D(gmm: SymmGaussianMixture,
     pmf_gy_vals = gmm.pointwise_mutual_dependency(X=x_range, Y=np.repeat(gy_t, len(x_range)))
     pmf_gy_vals_pred = get_pmd_pred(x_range[:, None], np.repeat(gy_t, len(x_range))[:, None])
 
-    for key, pmd_x, pmd_x_pred in zip(["mi_x", "mi_gx"], [pmd_x_vals, pmd_gx_vals], [pmd_x_vals_pred, pmd_gx_vals_pred]):
+    for key, pmd_x, pmd_x_pred in zip(["npmi_x", "npmi_gx"], [pmd_x_vals, pmd_gx_vals], [pmd_x_vals_pred, pmd_gx_vals_pred]):
         grid.ax_marg_y.plot(pmd_x, y_range, color=PLOT_STYLE[key]["color"], linestyle="-", alpha=0.9,
                             linewidth=PLOT_LINEWIDTH,
                             label=PLOT_STYLE[key]["legend"])
@@ -443,7 +496,7 @@ def plot_pmd_err_2D(gmm: SymmGaussianMixture,
                             linewidth=PLOT_LINEWIDTH,
                             label=PLOT_STYLE[key]["legend"] + " pred")
 
-    for key, pmd_y, pmd_y_pred in zip(["mi_y", "mi_gy"], [pmd_y_vals, pmf_gy_vals], [pmd_y_vals_pred, pmf_gy_vals_pred]):
+    for key, pmd_y, pmd_y_pred in zip(["npmi_y", "npmi_gy"], [pmd_y_vals, pmf_gy_vals], [pmd_y_vals_pred, pmf_gy_vals_pred]):
         grid.ax_marg_x.plot(x_range, pmd_y, color=PLOT_STYLE[key]["color"], linestyle="-", alpha=0.9,
                             linewidth=PLOT_LINEWIDTH,
                             label=PLOT_STYLE[key]["legend"])
@@ -452,10 +505,22 @@ def plot_pmd_err_2D(gmm: SymmGaussianMixture,
                             label=PLOT_STYLE[key]["legend"] + " pred")
 
 
-    # grid.ax_marg_y.legend(loc="upper left", fontsize=PLOT_FONT_SIZE, borderaxespad=0)
-    # grid.ax_marg_x.legend(loc="upper left", fontsize=PLOT_FONT_SIZE, borderaxespad=0)
-    # grid.fig.suptitle(r"Error PMD $\frac{p(x,y)}{p(y)p(x)}$")
-    # grid.fig.tight_layout()
+    # Customizing labels
+    grid.ax_joint.set_xlabel(r"$\mathcal{X}$")
+    grid.ax_joint.set_ylabel(r"$\mathcal{Y}$")
+    # grid.ax_marg_x.set_xlabel(r"$p(\textnormal{x})$")
+    # grid.ax_marg_y.set_ylabel(r"$p(\textnormal{y})$")
+    # Remove ticks from joint x and y axes
+    grid.ax_joint.set_xticks([])
+    grid.ax_joint.set_yticks([])
+    # Remove borders from lower and left margins of the joint plot
+    grid.ax_joint.spines['bottom'].set_visible(False)
+    grid.ax_joint.spines['left'].set_visible(False)
+    # Add legend
+    grid.ax_marg_y.legend(loc="upper left", fontsize=LEGEND_FONT_SIZE, bbox_to_anchor=(0.0, 1.2), borderaxespad=0,
+                          framealpha=LEGEND_FRAME_ALPHA, borderpad=LEGEND_BORDER_PAD)
+    grid.ax_marg_x.legend(loc="upper left", fontsize=LEGEND_FONT_SIZE, bbox_to_anchor=(0.0, 1.1), borderaxespad=0,
+                          framealpha=LEGEND_FRAME_ALPHA, borderpad=LEGEND_BORDER_PAD)
     return grid
 
 def plot_pmd_error_distribution(pmd_gt, pmd):

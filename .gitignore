@@ -1,4 +1,7 @@
 /NCP/experiments
+NCP/models/lightning_logs/
+/NCP/examples/com_momentum/
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -172,4 +175,3 @@ cython_debug/
 #.idea/
 
 
-NCP/models/lightning_logs/

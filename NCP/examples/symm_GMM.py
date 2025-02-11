@@ -471,13 +471,13 @@ def main(cfg: DictConfig):
         if x_type.size == 1 and y_type.size == 1:
             x_samples, y_samples = gmm.simulate(n_samples=5000)
             grid = plot_analytic_joint_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"joint_pdf.png", dpi=DPI)
+            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"joint_pdf.png", dpi=DPI, bbox_inches='tight')
             grid = plot_analytic_prod_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"prod_pdf.png", dpi=DPI)
+            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"prod_pdf.png", dpi=DPI, bbox_inches='tight')
             grid = plot_analytic_npmi_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"normalized_mutual_information.png", dpi=DPI)
+            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"normalized_mutual_information.png", dpi=DPI, bbox_inches='tight')
             grid = plot_analytic_pmd_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"pointwise_mutual_dependency.png", dpi=DPI)
+            grid.fig.savefig(pathlib.Path(run_path).parent.parent / f"pointwise_mutual_dependency.png", dpi=DPI, bbox_inches='tight')
 
     # Define the Lightning module ________________________________________________________
     ncp_lightning_module = TrainingModule(

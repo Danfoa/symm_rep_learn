@@ -35,7 +35,7 @@ optim:
   lr: 5e-4                  # Learning rate NCP train best at low lr values < 1e-3
   batch_size: 4096          # The higher the best
   max_epochs: 100           # Number of passes over dataset before stop training. Early stopping is used.
-  patience: 10              # Epochs to wait for improvement before early stopping
+  patience: 15              # Epochs to wait for improvement before early stopping
 
 defaults:
 - override hydra/launcher: joblib  # Parallel runs
