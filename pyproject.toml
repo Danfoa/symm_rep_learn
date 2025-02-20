@@ -28,7 +28,7 @@ select = [
   "F",    # pyflakes: general code quality checks
   "E",    # pycodestyle: PEP8 error checks
   "W",    # pycodestyle: PEP8 warning checks
-  "I", # isort: import sorting checks
+  "I",    # isort: import sorting checks
   "D"     # pydocstyle: docstring style checks
 ]
 

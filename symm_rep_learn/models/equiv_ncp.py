@@ -32,11 +32,16 @@ class ENCP(NCP):
         embedding_y: escnn.nn.EquivariantModule,
         gamma=1.0,
         truncated_op_bias: str = "full_rank",
+        learnable_change_of_basis: bool = False,
     ):
         self.G = embedding_x.out_type.fibergroup
         # Given any Field types of the embeddings of x and y, we need to change basis to the isotypic basis.
-        embedding_x_iso = escnn.nn.SequentialModule(embedding_x, Change2IsotypicBasis(in_type=embedding_x.out_type))
-        embedding_y_iso = escnn.nn.SequentialModule(embedding_y, Change2IsotypicBasis(in_type=embedding_y.out_type))
+        embedding_x_iso = escnn.nn.SequentialModule(
+            embedding_x, Change2IsotypicBasis(in_type=embedding_x.out_type, learnable=learnable_change_of_basis)
+        )
+        embedding_y_iso = escnn.nn.SequentialModule(
+            embedding_y, Change2IsotypicBasis(in_type=embedding_y.out_type, learnable=learnable_change_of_basis)
+        )
 
         # Isotypic subspace are identified by the irrep id associated with the subspace
         self.n_iso_subspaces = len(embedding_x_iso.out_type.representations)

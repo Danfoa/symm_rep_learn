@@ -29,8 +29,8 @@ from symm_rep_learn.models.equiv_ncp import ENCP
 from symm_rep_learn.models.lightning_modules import SupervisedTrainingModule, TrainingModule
 from symm_rep_learn.models.ncp import NCP
 from symm_rep_learn.mysc.symm_algebra import invariant_orthogonal_projector
-from symm_rep_learn.nn.equiv_layers import EMLP, EquivResidualEncoder
-from symm_rep_learn.nn.layers import MLP, ResidualEncoder
+from symm_rep_learn.nn.equiv_layers import EMLP
+from symm_rep_learn.nn.layers import MLP
 
 log = logging.getLogger(__name__)
 
@@ -453,15 +453,15 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             bias=False,
         )
         if cfg.architecture.residual_encoder:
+            from symm_rep_learn.nn.equiv_layers import EMLP, ResidualEncoder
+
             lat_rep = [reg_rep] * max(1, math.ceil(cfg.architecture.embedding_dim // reg_rep.size))
             lat_x_type = FieldType(
                 gspace=escnn.gspaces.no_base_space(G), representations=list(y_type.representations) + lat_rep
             )
             lat_y_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=lat_rep)
             x_embedding = EMLP(in_type=x_type, out_type=lat_x_type, **kwargs)
-            y_embedding = EquivResidualEncoder(
-                encoder=EMLP(in_type=y_type, out_type=lat_y_type, **kwargs), in_type=y_type
-            )
+            y_embedding = ResidualEncoder(encoder=EMLP(in_type=y_type, out_type=lat_y_type, **kwargs), in_type=y_type)
             assert (
                 y_embedding.out_type.size == x_embedding.out_type.size
             ), f"{y_embedding.out_type.size} != {x_embedding.out_type.size}"
@@ -473,7 +473,11 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             x_embedding = EMLP(in_type=x_type, out_type=lat_type, **kwargs)
             y_embedding = EMLP(in_type=y_type, out_type=lat_type, **kwargs)
         eNCPop = ENCP(
-            embedding_x=x_embedding, embedding_y=y_embedding, gamma=cfg.gamma, truncated_op_bias=cfg.truncated_op_bias
+            embedding_x=x_embedding,
+            embedding_y=y_embedding,
+            gamma=cfg.gamma,
+            truncated_op_bias=cfg.truncated_op_bias,
+            learnable_change_of_basis=cfg.learnable_change_basis,
         )
 
         return eNCPop
@@ -492,6 +496,8 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             iterative_whitening=cfg.architecture.iter_whitening,
         )
         if cfg.architecture.residual_encoder_x:
+            from symm_rep_learn.nn.layers import MLP, ResidualEncoder
+
             dim_free_embedding = embedding_dim - dim_x
             fx = ResidualEncoder(
                 encoder=MLP(input_shape=dim_x, **kwargs | {"output_shape": dim_free_embedding}), in_dim=dim_x
@@ -499,6 +505,8 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
         else:
             fx = MLP(input_shape=dim_x, **kwargs)
         if cfg.architecture.residual_encoder:
+            from symm_rep_learn.nn.layers import MLP, ResidualEncoder
+
             dim_free_embedding = embedding_dim - dim_y
             fy = ResidualEncoder(
                 encoder=MLP(input_shape=dim_y, **kwargs | {"output_shape": dim_free_embedding}), in_dim=dim_y
@@ -511,6 +519,7 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             embedding_dim=embedding_dim,
             gamma=cfg.gamma,
             truncated_op_bias=cfg.truncated_op_bias,
+            learnable_change_basis=cfg.learnable_change_basis,
         )
         return ncp
 
@@ -544,6 +553,23 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
         return emlp
     else:
         raise ValueError(f"Model {cfg.model} not recognized")
+
+
+def symmetric_collate(batch, split, x_type: FieldType, y_type: FieldType, geometric_tensor=False):
+    x_batch, y_batch = default_collate(batch)
+
+    if split == "test" or split == "val":
+        G = x_type.fibergroup
+        g = G.sample()  # Uniformly sample a group element.
+        if g != G.identity:
+            x_batch = x_type.transform_fibers(x_batch, g)
+            y_batch = y_type.transform_fibers(y_batch, g)
+
+    if geometric_tensor:
+        x_batch = GeometricTensor(x_batch, x_type)
+        y_batch = GeometricTensor(y_batch, y_type)
+
+    return x_batch, y_batch
 
 
 def com_momentum_dataset(cfg):
@@ -624,16 +650,68 @@ def com_momentum_dataset(cfg):
 
 
 @torch.no_grad()
-def regression_metrics(model, x, y, y_train, x_type, y_type, y_obs_dims, y_moments):
+def regression_metrics(
+    model, x, y, y_train, x_type, y_type, y_obs_dims, y_moments, lstsq=False, analytic_residual=False
+):
     """Predicts CoM Momenta from test sample (x_test, y_test)."""
     device = next(model.parameters()).device
     prev_data_device = x.device
 
     x = x.to(device)
     y = y.to(device)
-    # Introduce the entire group orbit of the testing set, to appropriately compute the equivariant error.
-    rep_X, rep_Y = x_type.representation, y_type.representation
+
+    rep_Y, rep_X = y_type.representation, x_type.representation
     G = rep_X.group
+
+    # Compute the expectation of the r.v `y` from the training dataset.
+    mean_y = y_train.mean(axis=0)
+    if rep_Y is not None:
+        inv_projector = invariant_orthogonal_projector(rep_Y).to(y_train.device)
+        mean_y = inv_projector @ mean_y  # Mean of symmetric RV lives in the invariant subspace.
+    y_train_c = y_train - mean_y
+
+    # Compute the embeddings of the entire y training dataset. And the linear regression between y and h(y)
+    Cyhy = torch.zeros((y_train.shape[-1], model.embedding_dim), device=device)
+    n_train = y_train.shape[0]
+    if isinstance(model.embedding_y, EquivariantModule):  # Symmetry aware models.
+        hy_train = model.embedding_y(y_type(y_train)).tensor  # shape: (n_train, embedding_dim)
+        from symm_rep_learn.nn.equiv_layers import ResidualEncoder
+
+        if analytic_residual and isinstance(model.embedding_y[0], ResidualEncoder):
+            # Y is embedded in the encoded vector h(y), we can get the prediction using indexing.
+            res_encoder = model.embedding_y[0]
+            change2iso_module = model.embedding_y[-1]
+            Qiso2y = change2iso_module.Qin2iso.T
+            Cyhy = Qiso2y[res_encoder.residual_dims, :]
+        else:  # Compute the symmetry aware linear regression from h(y) to y
+            if lstsq:  # TODO: symmetry aware lstsq
+                out = torch.linalg.lstsq(hy_train, y_train_c)
+                Cyhy = out.solution.T
+                assert Cyhy.shape == (y_train.shape[-1], hy_train.shape[-1]), f"Invalid shape {Cyhy.shape}"
+            else:
+                from linear_operator_learning.nn.symmetric.stats import covariance
+
+                rep_Hy = model.embedding_y.out_type.representation
+                # Symmetry aware basis expansion coefficients.
+                Cyhy = covariance(X=hy_train, Y=y_train_c, rep_X=rep_Hy, rep_Y=rep_Y)
+    else:  # Symmetry agnostic models.
+        hy_train = model.embedding_y(y_train)  # shape: (n_train, embedding_dim)
+        from symm_rep_learn.nn.layers import ResidualEncoder
+
+        if analytic_residual and isinstance(model.embedding_y, ResidualEncoder):
+            y_dims_in_hy = model.embedding_y.residual_dims
+            mask = torch.zeros(hy_train.shape[-1], device=device)
+            mask[y_dims_in_hy] = 1
+            for dim in range(y_dims_in_hy.start, y_dims_in_hy.stop):
+                Cyhy[dim, dim] = 1
+        else:  # Compute the linear regression from h(y) to y
+            if lstsq:
+                out = torch.linalg.lstsq(hy_train, y_train_c)
+                Cyhy = out.solution.T
+                assert Cyhy.shape == (y_train.shape[-1], hy_train.shape[-1]), f"Invalid shape {Cyhy.shape}"
+            else:
+                Cyhy = (1 / n_train) * torch.einsum("by,bh->yh", y_train_c, hy_train)
+    # Introduce the entire group orbit of the testing set, to appropriately compute the equivariant error.
     G_loss, G_metrics = [], []
     for g in G.elements:
         rep_X_g = torch.from_numpy(rep_X(g)).float().to(device)
@@ -646,43 +724,11 @@ def regression_metrics(model, x, y, y_train, x_type, y_type, y_obs_dims, y_momen
             fgx = model.embedding_x(x_type(gx)).tensor
         else:
             fgx = model.embedding_x(gx)  # shape: (n_test, embedding_dim)
-        if isinstance(model.embedding_y, EquivariantModule):
-            hy_train = model.embedding_y(y_type(y_train)).tensor  # shape: (n_train, embedding_dim)
-        else:
-            hy_train = model.embedding_y(y_train)  # shape: (n_train, embedding_dim)
-
-        n_train = y_train.shape[0]
-
-        if isinstance(model.embedding_y, ResidualEncoder):
-            y_dims_in_hy = model.embedding_y.residual_dims
-            mask = torch.zeros(hy_train.shape[-1], device=device)
-            mask[y_dims_in_hy] = 1
-            hy_train = hy_train * mask
-
-        if isinstance(model.embedding_y, escnn.nn.SequentialModule):
-            # Get last module of the sequetial mod
-            if isinstance(model.embedding_y[0], EquivResidualEncoder):
-                res_encoder = model.embedding_y[0]
-                y_dims_in_hy = res_encoder.residual_dims
-                change2iso_module = model.embedding_y[-1]
-                Qy2iso = change2iso_module.Qin2iso
-                mask = torch.zeros(hy_train.shape[-1], device=device)
-                mask[y_dims_in_hy] = 1
-                # mask_projector = Qy2iso @ mask @ Qy2iso.T
-                mask_projector = torch.einsum("ij,j,jk->ik", Qy2iso, mask, Qy2iso.T)
-                hy_train = hy_train * mask
-                hy_train = torch.einsum("ij,...j->...i", mask_projector, hy_train)
-            print("")
-
-        E_y = y_train.mean(axis=0)  # shape: (6,)
-        if rep_Y is not None:
-            inv_projector = invariant_orthogonal_projector(rep_Y).to(y_train.device)
-            E_y = inv_projector @ E_y  # Mean of symmetric RV lives in the invariant subspace.
 
         # shape: (n_test, 6). Check formula 12 from https://arxiv.org/pdf/2407.01171
         Dr = model.truncated_operator
-        gy_deflated_basis_expansion = (1 / n_train) * torch.einsum("ij,ki,lj,lm->km", Dr, fgx, hy_train, y_train)
-        gy_pred = E_y + gy_deflated_basis_expansion  # TODO: experiment with linear regression instead of einsums
+        gy_deflated_basis_expansion = torch.einsum("fh,bf,yh->by", Dr, fgx, Cyhy)
+        gy_pred = mean_y + gy_deflated_basis_expansion
 
         gy_mse, metrics = proprioceptive_regression_metrics(gy, gy_pred, y_obs_dims, y_moments)
         G_loss.append(gy_mse)
@@ -692,8 +738,8 @@ def regression_metrics(model, x, y, y_train, x_type, y_type, y_obs_dims, y_momen
     metrics_names = G_metrics[0].keys()
     metrics = {name: torch.stack([m[name] for m in G_metrics]).mean() for name in metrics_names}
 
-    x = x.to(prev_data_device)
-    y = y.to(prev_data_device)
+    x.to(prev_data_device)
+    y.to(prev_data_device)
     return metrics
 
 
@@ -721,7 +767,7 @@ def proprioceptive_regression_metrics(y, y_pred, y_obs_dims: dict, y_moments):
     return loss, metrics
 
 
-@hydra.main(config_path="cfg", config_name="eNCP_regression", version_base="1.3")
+@hydra.main(config_path="cfg", config_name="CoM_regression", version_base="1.3")
 def main(cfg: DictConfig):
     seed = cfg.seed if cfg.seed >= 0 else np.random.randint(0, 1000)
     seed_everything(seed)
@@ -752,15 +798,25 @@ def main(cfg: DictConfig):
 
     # Define the dataloaders_____________________________________________________________
     # ESCNN equivariant models expect GeometricTensors.
-    def geom_tensor_collate_fn(batch) -> [GeometricTensor, GeometricTensor]:
-        x_batch, y_batch = default_collate(batch)
-        return GeometricTensor(x_batch, x_type), GeometricTensor(y_batch, y_type)
-
     is_equiv_model = isinstance(model, ENCP) or isinstance(model, EMLP)
-    collate_fn = geom_tensor_collate_fn if is_equiv_model else default_collate
-    train_dataloader = DataLoader(train_ds, batch_size=cfg.optim.batch_size, shuffle=True, collate_fn=collate_fn)
-    val_dataloader = DataLoader(val_ds, batch_size=cfg.optim.batch_size, shuffle=False, collate_fn=collate_fn)
-    test_dataloader = DataLoader(test_ds, batch_size=cfg.optim.batch_size, shuffle=False, collate_fn=collate_fn)
+    train_dataloader = DataLoader(
+        train_ds,
+        batch_size=cfg.optim.batch_size,
+        shuffle=True,
+        collate_fn=lambda x: symmetric_collate(x, "train", x_type, y_type, geometric_tensor=is_equiv_model),
+    )
+    val_dataloader = DataLoader(
+        val_ds,
+        batch_size=cfg.optim.batch_size,
+        shuffle=False,
+        collate_fn=lambda x: symmetric_collate(x, "val", x_type, y_type, geometric_tensor=is_equiv_model),
+    )
+    test_dataloader = DataLoader(
+        test_ds,
+        batch_size=cfg.optim.batch_size,
+        shuffle=False,
+        collate_fn=lambda x: symmetric_collate(x, "test", x_type, y_type, geometric_tensor=is_equiv_model),
+    )
 
     # Define the Lightning module ______________________________________________________
     if isinstance(model, MLP) or isinstance(model, EMLP):
@@ -785,6 +841,8 @@ def main(cfg: DictConfig):
                 y_type=y_type,
                 y_obs_dims=y_obs_dims,
                 y_moments=y_moments,
+                lstsq=cfg.lstsq,
+                analytic_residual=cfg.analytic_residual,
             ),
             test_metrics=lambda _: regression_metrics(
                 model=model,
@@ -795,6 +853,8 @@ def main(cfg: DictConfig):
                 y_type=y_type,
                 y_obs_dims=y_obs_dims,
                 y_moments=y_moments,
+                lstsq=cfg.lstsq,
+                analytic_residual=cfg.analytic_residual,
             ),
         )
 
@@ -818,10 +878,10 @@ def main(cfg: DictConfig):
 
     # Fix for all runs independent on the train_ratio chosen. This way we compare on effective number of "epochs"
     max_steps = int(n_total_samples * cfg.optim.max_epochs // cfg.optim.batch_size)
-    scaled_patience = int(cfg.optim.patience * n_total_samples * 0.7 // cfg.optim.batch_size)
-
+    check_val_every_n_epochs = int(n_total_samples // cfg.optim.batch_size)
+    scaled_patience = int(cfg.optim.patience * n_total_samples * 0.7 // cfg.optim.batch_size / check_val_every_n_epochs)
     metric_to_monitor = "||k(x,y) - k_r(x,y)||/val" if isinstance(model, ENCP) or isinstance(model, NCP) else "loss/val"
-    early_call = EarlyStopping(monitor=metric_to_monitor, patience=scaled_patience, mode="min")
+    early_call = EarlyStopping(metric_to_monitor, patience=int(scaled_patience), mode="min")
 
     trainer = Trainer(
         accelerator="gpu",
@@ -830,7 +890,7 @@ def main(cfg: DictConfig):
         logger=logger,
         enable_progress_bar=True,
         log_every_n_steps=25,
-        check_val_every_n_epoch=5,
+        check_val_every_n_epoch=check_val_every_n_epochs,
         callbacks=[ckpt_call, early_call],
         fast_dev_run=25 if cfg.debug else False,
         num_sanity_val_steps=5,
@@ -856,6 +916,10 @@ def main(cfg: DictConfig):
     # Save the testing matrics in a csv file using pandas.
     test_metrics_path = pathlib.Path(run_path) / "test_metrics.csv"
     pd.DataFrame(test_metrics, index=[0]).to_csv(test_metrics_path, index=False)
+
+    # Put model in cpu
+    model.cpu()
+    lightning_module.cpu()
 
     # Flush the logger.
     logger.finalize(trainer.state)

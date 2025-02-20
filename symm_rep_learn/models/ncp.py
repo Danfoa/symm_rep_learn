@@ -22,14 +22,19 @@ class NCP(torch.nn.Module):
         embedding_dim: int,
         gamma=0.1,  # Will be multiplied by the embedding_dim
         gamma_centering=None,  # Penalizes probability mass distortion
-        truncated_op_bias: str = "full_rank",  # 'Cxy', 'diag', 'svals'
+        truncated_op_bias: str = "full_rank",  # 'Cxy', 'diag', 'svals'\
+        learnable_change_basis: bool = False,
     ):
         super(NCP, self).__init__()
         self.gamma = gamma
         self.gamma_centering = gamma_centering if gamma_centering is not None else gamma
         self.embedding_dim = embedding_dim
-        self.embedding_x = embedding_x
-        self.embedding_y = embedding_y
+        if learnable_change_basis:
+            self.embedding_x = torch.nn.Sequential(embedding_x, torch.nn.Linear(embedding_dim, embedding_dim))
+            self.embedding_y = torch.nn.Sequential(embedding_y, torch.nn.Linear(embedding_dim, embedding_dim))
+        else:
+            self.embedding_x = embedding_x
+            self.embedding_y = embedding_y
         self.truncated_op_bias = truncated_op_bias
 
         # Create parameters according to the chosen truncated operator bias

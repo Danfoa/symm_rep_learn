@@ -2,73 +2,50 @@
 import escnn
 import numpy as np
 from escnn.group import directsum
-from plotly.subplots import make_subplots
 
-from NCP.cde_fork.density_simulation.symmGMM import SymmGaussianMixture
+from symm_rep_learn.cde_fork.density_simulation.symmGMM import SymmGaussianMixture
+from symm_rep_learn.examples.symmGMM.plot_utils import plot_analytic_joint_2D
 
 if __name__ == "__main__":
-    from lightning import seed_everything
-    from matplotlib import pyplot as plt
-
-    n_gaussians = 2
+    n_gaussians = 10
     # G = escnn.group.octa_group()
-    G = escnn.group.ico_group()
-    print(G.order())
-    rep_X = directsum([G.standard_representation] * 1)
-    rep_Y = directsum([G.standard_representation] * 1)
-    # rep_X = G.standard_representation
-    # rep_Y = G.standard_representation
+    G = escnn.group.DihedralGroup(6)
+    # G = escnn.group.CyclicGroup(2)
+    m = 1
+    # rep_X = directsum([G.representations['irrep_1'] ] * m)
+    # rep_Y = directsum([G.representations['irrep_1'] ] * m)
+    rep_X = directsum([G.regular_representation] * m)
+    rep_Y = directsum([G.regular_representation] * m)
 
     for _ in range(10):
-        seed = gmm_seed = np.random.randint(0, 1000),
-        gmm = SymmGaussianMixture(n_kernels=n_gaussians,
-                                  rep_X=rep_X,
-                                  rep_Y=rep_Y,
-                                  mean_max_norm=6,
-                                  gmm_seed=seed,
-                                  )
-        n_sampels = 100000
+        seed = gmm_seed = (np.random.randint(0, 1000),)
+        gmm = SymmGaussianMixture(
+            n_kernels=n_gaussians,
+            rep_X=rep_X,
+            rep_Y=rep_Y,
+            mean_max_norm=1,
+            gmm_seed=seed,
+        )
+        n_sampels = 10000
         x, y = gmm.simulate(n_sampels)
-        pmi = gmm.pointwise_mutual_information(x, y)
-        p_xy = gmm.joint_pdf(x, y)
-        MI = (p_xy * pmi).sum()
-        print(f"- {seed}: Mutual information {n_sampels} Samples: {MI}")
+        prod_idx = np.arange(n_sampels)
+        # Get all pairs of samples
+        X_idx, Y_idx = np.meshgrid(prod_idx, prod_idx)
+        prod_samples = np.random.choice(n_sampels**2, n_sampels, replace=False)
+        X_idx_flat = X_idx.flatten()[prod_samples]
+        Y_idx_flat = Y_idx.flatten()[prod_samples]
+        x_prod = np.atleast_2d(x[X_idx_flat])
+        y_prod = np.atleast_2d(y[Y_idx_flat])
+
+        x_full = np.concatenate([x, x_prod], axis=0)
+        y_full = np.concatenate([y, y_prod], axis=0)
+        MI = gmm.MI(x_full, y_full)
+
+        print(f"- {seed}: Mutual information {n_sampels}~p(x,y) {n_sampels}~p(x)p(y) Samples: {MI}")
         # Garbage collect x and y
 
-        # Do a 3D plot for X using plotly interactive
-        import plotly.graph_objs as go
-        import numpy as np
-
-        x, y = x[:1000], y[:1000]
-        means_x = gmm.means_x
-        means_y = gmm.means_y
-
-        p_x = gmm.pdf_x(x)
-        p_y = gmm.pdf_y(y)
-
-        if gmm.ndim_x == 3:
-            # Create subplots
-            fig = make_subplots(rows=1, cols=2, specs=[[{'type': 'scatter3d'}, {'type': 'scatter3d'}]])
-            # Calculate the radius for each center
-            radius_x = np.linalg.norm(means_x, axis=1)
-            radius_y = np.linalg.norm(means_y, axis=1)
-            # Plot the means for X with color based on radius
-            fig.add_trace(go.Scatter3d(
-                x=means_x[:, 0], y=means_x[:, 1], z=means_x[:, 2], mode='markers',
-                marker=dict(size=5, color=radius_x, colorscale='Viridis', colorbar=dict(title='Radius')),
-                name='Means X'), row=1, col=1)  # Plot the samples in transparent blue for X
-            fig.add_trace(
-                go.Scatter3d(x=x[:, 0], y=x[:, 1], z=x[:, 2], mode='markers', marker=dict(size=3, opacity=0.5),
-                             name='Samples X'), row=1, col=1)
-            # Plot the means for Y
-            # Plot the means for Y with color based on radius
-            fig.add_trace(go.Scatter3d(
-                x=means_y[:, 0], y=means_y[:, 1], z=means_y[:, 2], mode='markers',
-                marker=dict(size=5, color=radius_y, colorscale='Viridis', colorbar=dict(title='Radius')),
-                name='Means Y'), row=1, col=2)
-            # Plot the samples in transparent blue for Y
-            fig.add_trace(
-                go.Scatter3d(x=y[:, 0], y=y[:, 1], z=y[:, 2], mode='markers', marker=dict(size=3, opacity=0.5),
-                             name='Samples Y'), row=1, col=2)  # Set MI as title
-            fig.update_layout(title=f"seed {seed} Mutual information {n_sampels} Samples: {MI}")
-            fig.show()
+        if gmm.ndim_x == 1 and gmm.ndim_y == 1:
+            print("d")
+            g = plot_analytic_joint_2D(gmm, G, rep_X, rep_Y, x, y)
+            g.fig.suptitle(f"Mutual information {MI:.3f} Seed {seed} Samples {n_sampels}")
+            g.fig.show()

@@ -84,15 +84,6 @@ class ProprioceptiveDataset(Dataset):
         if debug:
             self.plot_statistics()
 
-        # if isinstance(augment, str) and augment.lower() == "hard":
-        #     for g in self.G.elements[1:]:
-        #         rep_X = self.in_type.fiber_representation(g).to(self.X.device)
-        #         rep_Y = self.out_type.fiber_representation(g).to(self.Y.device)
-        #         gX = (rep_X @ self.X.T).T
-        #         gY = (rep_Y @ self.Y.T).T
-        #         self.X = torch.vstack([self.X, gX])
-        #         self.Y = torch.vstack([self.Y, gY])
-
         self.loss_fn = F.mse_loss
         log.info(str(self))
 
@@ -322,7 +313,7 @@ class ProprioceptiveDataset(Dataset):
                     "qjs": np.expand_dims(X[..., : self.robot.nq - 7], 1),
                     "vjs": np.expand_dims(X[..., self.robot.nq - 7 :], 1),
                 },
-                state_obs=("X"),
+                state_obs=("X",),
                 obs_representations={
                     "X": rep_Q + rep_TqQ,
                     "Y": com_rep,

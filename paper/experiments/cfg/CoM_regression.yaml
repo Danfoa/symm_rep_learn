@@ -6,7 +6,7 @@ device: 0                 # gpu number to use
 
 # EXPERIMENT CONFIG
 robot_name: solo
-path_ds: NCP/experiments/com_momentum/dataset/${robot_name}/n_samples_100000.pkl # Path to dataset relative project root.
+path_ds: paper/experiments/com_momentum/dataset/${robot_name}/n_samples_100000.pkl # Path to dataset relative project root.
 x_obs_names: ["qjs","vjs"] # Joint position and velocity configuration
 y_obs_names: ["com_lin_momentum","com_ang_momentum"] # Joint position and velocity configuration
 
@@ -18,6 +18,9 @@ y_symm_subgroup_id: null                 # ACTUA/EMPIRICAL symmetry subgroup use
 model: NCP
 truncated_op_bias: 'full_rank'  # 'Cxy' or 'diag' or 'svals'
 gamma: 10                       # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
+learnable_change_basis: false # Learnable change of basis to the Isotypic basis
+lstsq: false                  # Use analytic lstsq for regression of NCP models.
+analytic_residual: True
 
 architecture:
   hidden_layers: 4
@@ -58,6 +61,7 @@ hydra:
     env_set:
       HYDRA_FULL_ERROR: '1'
       WANDB_START_METHOD: 'thread'
+      PYTORCH_CUDA_ALLOC_CONF: 'expandable_segments:True'
     config:
       override_dirname:
         kv_sep: "="

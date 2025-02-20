@@ -73,8 +73,7 @@ class IMLP(EquivariantModule):
 
 
 class EMLP(EquivariantModule):
-    """
-    G-Equivariant Multi-Layer Perceptron.
+    """G-Equivariant Multi-Layer Perceptron.
 
     This module is a G-equivariant MLP that extracts G-equivariant features from the input tensor.
     """
@@ -90,6 +89,7 @@ class EMLP(EquivariantModule):
         hidden_irreps: list | tuple = None,
     ):
         """EMLP constructor.
+
         Args:
             in_type: Input field type.
             out_type: Output field type.
@@ -198,7 +198,7 @@ class FourierBlock(EquivariantModule):
 class Change2IsotypicBasis(EquivariantModule):
     """Module that changes the basis of the input tensor to the isotypic basis of the input representation."""
 
-    def __init__(self, in_type: FieldType):
+    def __init__(self, in_type: FieldType, learnable: bool = False):
         super(Change2IsotypicBasis, self).__init__()
         self.in_type = in_type
         # Compute the isotypic decomposition of the input representation
@@ -207,9 +207,15 @@ class Change2IsotypicBasis(EquivariantModule):
         iso_subspaces_reps = in_rep_iso_basis.attributes["isotypic_reps"]
         self.out_type = FieldType(gspace=in_type.gspace, representations=list(iso_subspaces_reps.values()))
         # Change of basis required to move from input basis to isotypic basis
-        self.Qin2iso = torch.tensor(in_rep_iso_basis.change_of_basis_inv)
-        I = torch.eye(self.Qin2iso.shape[-1]).to(device=self.Qin2iso.device, dtype=self.Qin2iso.dtype)
-        self._is_in_iso_basis = torch.allclose(self.Qin2iso, I, atol=1e-5, rtol=1e-5)
+        Qin2iso = torch.tensor(in_rep_iso_basis.change_of_basis_inv)
+        I = torch.eye(Qin2iso.shape[-1]).to(device=Qin2iso.device, dtype=Qin2iso.dtype)
+        self._is_in_iso_basis = torch.allclose(Qin2iso, I, atol=1e-5, rtol=1e-5)
+
+        self._learnable = learnable
+        if self._learnable:
+            self.Qin2iso = escnn.nn.Linear(in_type=in_type, out_type=self.out_type, bias=False)
+        else:
+            self.Qin2iso = Qin2iso
 
     def forward(self, x: GeometricTensor):
         assert x.type == self.in_type, f"Expected input tensor of type {self.in_type}, got {x.type}"
@@ -217,9 +223,13 @@ class Change2IsotypicBasis(EquivariantModule):
             return self.out_type(x.tensor)
         else:
             # Change of basis
-            self.Qin2iso = self.Qin2iso.to(device=x.tensor.device, dtype=x.tensor.dtype)
-            x_iso = torch.einsum("ij,...j->...i", self.Qin2iso, x.tensor)
-            return self.out_type(x_iso)
+            if self._learnable:
+                x_iso = self.Qin2iso(x)
+            else:
+                self.Qin2iso = self.Qin2iso.to(device=x.tensor.device, dtype=x.tensor.dtype)
+                x_iso = torch.einsum("ij,...j->...i", self.Qin2iso, x.tensor)
+                x_iso = self.out_type(x_iso)
+            return x_iso
 
     def evaluate_output_shape(self, input_shape: Tuple[int, ...]) -> Tuple[int, ...]:
         return input_shape
@@ -275,13 +285,13 @@ class IrrepSubspaceNormPooling(EquivariantModule):
         return f"{self.G}-Irrep Norm Pooling: in={self.in_type} -> out={self.out_type}"
 
 
-class EquivResidualEncoder(EquivariantModule):
+class ResidualEncoder(EquivariantModule):
     """Residual encoder for symm_rep_learn. This encoder processes batches of shape (batch_size, dim_y) and
     returns (batch_size, embedding_dim + dim_y).
     """
 
-    def __init__(self, encoder: EquivariantModule, in_type):
-        super(EquivResidualEncoder, self).__init__()
+    def __init__(self, encoder: EquivariantModule, in_type: FieldType):
+        super(ResidualEncoder, self).__init__()
         self.encoder = encoder
         self.in_type = in_type
         self.out_type = FieldType(
