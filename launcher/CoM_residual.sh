@@ -25,7 +25,7 @@ python ${exec_file} ${hydra_kwargs} ${exp_params} device=2 model=ENCP  lstsq=Tru
 python ${exec_file} ${hydra_kwargs} ${exp_params} device=3 model=ENCP  lstsq=False  gamma=10 architecture.residual_encoder=True,False seed=1 &
 python ${exec_file} ${hydra_kwargs} ${exp_params} device=4 model=ENCP  lstsq=True   gamma=25 architecture.residual_encoder=True,False seed=0 &
 python ${exec_file} ${hydra_kwargs} ${exp_params} device=5 model=ENCP  lstsq=False  gamma=25 architecture.residual_encoder=True,False seed=1 &
-#python ${exec_file} ${hydra_kwargs} ${exp_params} device=6 model=EMLP                         seed=0,1 &
-#python ${exec_file} ${hydra_kwargs} ${exp_params} device=7 model=MLP                          seed=0,1 &
+python ${exec_file} ${hydra_kwargs} ${exp_params} device=6 model=EMLP                         seed=0,1 &
+python ${exec_file} ${hydra_kwargs} ${exp_params} device=7 model=MLP                          seed=0,1 &
 #python ${exec_file} ${hydra_kwargs
 wait

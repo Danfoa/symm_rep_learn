@@ -17,11 +17,11 @@ from escnn.nn import EquivariantModule, FieldType, GeometricTensor
 from lightning import Trainer, seed_everything
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
+from morpho_symm.data.DynamicsRecording import DynamicsRecording
 from omegaconf import DictConfig, OmegaConf
 from torch.optim import Adam
 from torch.utils.data import DataLoader, TensorDataset, default_collate
 
-from paper.experiments.com_momentum.dynamics_recording import DynamicsRecording
 from symm_rep_learn.models.equiv_ncp import ENCP
 from symm_rep_learn.models.lightning_modules import SupervisedTrainingModule, TrainingModule
 from symm_rep_learn.models.ncp import NCP
@@ -295,7 +295,6 @@ def regression_metrics(
                     rep_Y=rep_Y)
             else:  # Symmetry aware basis expansion coefficients.
                 import linear_operator_learning as lol
-
                 Cyhy = lol.nn.symmetric.stats.covariance(X=hy_train, Y=y_train_c, rep_X=rep_Hy, rep_Y=rep_Y)
     else:  # Symmetry agnostic models.
         hy_train = model.embedding_y(y_train)  # shape: (n_train, embedding_dim)
@@ -361,12 +360,11 @@ def proprioceptive_regression_metrics(y, y_pred, y_obs_dims: dict, y_moments):
     with torch.no_grad():
         # Unstandardie data and compute MSE in the original data scale
         y_mean, y_var = y_moments
-        y_mse_un = y_mse * y_var
+        y_err_un = (y - y_mean) / torch.sqrt(y_var)
 
-        metrics["hg_mse"] = y_mse_un.mean()
         for obs_name, dims in y_obs_dims.items():
-            obs_mse = y_mse_un[..., dims]
-            metrics[obs_name] = obs_mse.mean()
+            obs_err_in = y_err_un[..., dims]
+            metrics[obs_name] = (obs_err_in**2).mean()
 
     return loss, metrics
 

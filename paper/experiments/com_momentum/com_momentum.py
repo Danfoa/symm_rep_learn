@@ -11,9 +11,8 @@ from escnn.nn import FieldType
 from morpho_symm.data.DynamicsRecording import DynamicsRecording
 from morpho_symm.robots.PinBulletWrapper import PinBulletWrapper
 
-# from morpho_symm.utils.algebra_utils import dense
 from morpho_symm.utils.robot_utils import load_symmetric_system
-from pinocchio import pinocchio_pywrap as pin
+import pinocchio as pin
 from torch.utils.data import Dataset
 from torch.utils.data._utils.collate import default_collate
 
