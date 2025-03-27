@@ -42,9 +42,9 @@ class ProprioceptiveDataset(Dataset):
         # Load the Gym Quadruped dataset.
         self.h5file = H5Reader(data_file)
         for obs_name in x_obs_names + y_obs_names:
-            assert obs_name in self.h5file.recordings.keys(), (
-                f"Observation {obs_name} not in {self.h5file.recordings.keys()}"
-            )
+            assert (
+                obs_name in self.h5file.recordings.keys()
+            ), f"Observation {obs_name} not in {self.h5file.recordings.keys()}"
 
         self.x_obs_names, self.y_obs_names = x_obs_names, y_obs_names
         self.device = device  # Device to load the dataset to
@@ -84,9 +84,9 @@ class ProprioceptiveDataset(Dataset):
             self._traj_lengths[traj_id] = traj_len
 
             for obs_name in self.x_obs_names + self.y_obs_names:
-                assert self.h5file.recordings[obs_name][traj_id].shape[0] == traj_len, (
-                    f"Obs {tmp_obs_name} and {obs_name} have different time dimensions for trajectory {traj_id}."
-                )
+                assert (
+                    self.h5file.recordings[obs_name][traj_id].shape[0] == traj_len
+                ), f"Obs {tmp_obs_name} and {obs_name} have different time dimensions for trajectory {traj_id}."
 
     @property
     def n_trajectories(self):
@@ -100,6 +100,18 @@ class ProprioceptiveDataset(Dataset):
             return self._memory_data
         else:
             return self.h5file.recordings
+
+    @property
+    def numpy_arrays(self):
+        """Returns the raw data contained in the dataset."""
+        if self._load_to_memory:
+            all_data = self._memory_data
+            np_data = {}
+            for obs_name, traj_list in all_data.items():
+                np_data[obs_name] = [traj for id, traj in enumerate(traj_list) if id in self._traj_lengths]
+            return np_data
+        else:
+            raise ValueError("Raw data is not loaded to memory. Use `load_to_memory=True` to access the raw data.")
 
     def _load_dataset_to_memory(self):
         """Loads the dataset to memory for faster access."""
@@ -136,11 +148,17 @@ class ProprioceptiveDataset(Dataset):
             y_slice = slice(-self.y_frames, None)
 
         x_obs, y_obs = {}, {}
-        for obs_name in self.x_obs_names:  # X is composed of the first x_frames observations
-            x_obs[obs_name] = self.raw_data[obs_name][traj_idx][window_slice][x_slice]
-        for obs_name in self.y_obs_names:  # Y is composed of the last y_frames observations
-            y_obs[obs_name] = self.raw_data[obs_name][traj_idx][window_slice][y_slice]
 
+        try:
+            for obs_name in self.x_obs_names:  # X is composed of the first x_frames observations
+                x_obs[obs_name] = self.raw_data[obs_name][traj_idx][window_slice][x_slice]
+            for obs_name in self.y_obs_names:  # Y is composed of the last y_frames observations
+                y_obs[obs_name] = self.raw_data[obs_name][traj_idx][window_slice][y_slice]
+        except Exception as e:
+            raise Exception(
+                f"Error fetching {obs_name} from traj={traj_idx} slice={window_slice}. "
+                f"This traj has shape {self.raw_data[obs_name][traj_idx].shape}"
+            ) from e
         return x_obs, y_obs
 
     def compute_obs_moments(self, obs_reps: dict = None):
@@ -150,6 +168,7 @@ class ProprioceptiveDataset(Dataset):
             obs_data = np.concatenate(trajs, axis=0)
             if obs_reps is not None:
                 from linear_operator_learning.nn.symmetric.stats import var_mean
+
                 obs_var, obs_mean = var_mean(torch.tensor(obs_data), obs_reps[obs_name])
             else:
                 obs_mean = np.mean(obs_data, axis=0)

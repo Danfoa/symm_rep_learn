@@ -52,25 +52,25 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             activation=cfg.architecture.activation,
             hidden_units=cfg.architecture.hidden_units,
             bias=False,
-            )
+        )
         if cfg.architecture.residual_encoder:
             from symm_rep_learn.nn.equiv_layers import EMLP, ResidualEncoder
 
             lat_rep = [reg_rep] * max(1, math.ceil(cfg.architecture.embedding_dim // reg_rep.size))
             lat_x_type = FieldType(
                 gspace=escnn.gspaces.no_base_space(G), representations=list(y_type.representations) + lat_rep
-                )
+            )
             lat_y_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=lat_rep)
             x_embedding = EMLP(in_type=x_type, out_type=lat_x_type, **kwargs)
             y_embedding = ResidualEncoder(encoder=EMLP(in_type=y_type, out_type=lat_y_type, **kwargs), in_type=y_type)
             assert (
-                    y_embedding.out_type.size == x_embedding.out_type.size
+                y_embedding.out_type.size == x_embedding.out_type.size
             ), f"{y_embedding.out_type.size} != {x_embedding.out_type.size}"
         else:
             lat_type = FieldType(
                 gspace=escnn.gspaces.no_base_space(G),
                 representations=[reg_rep] * max(1, math.ceil(cfg.architecture.embedding_dim // reg_rep.size)),
-                )
+            )
             x_embedding = EMLP(in_type=x_type, out_type=lat_type, **kwargs)
             y_embedding = EMLP(in_type=y_type, out_type=lat_type, **kwargs)
         eNCPop = ENCP(
@@ -79,7 +79,7 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             gamma=cfg.gamma,
             truncated_op_bias=cfg.truncated_op_bias,
             learnable_change_of_basis=cfg.learnable_change_basis,
-            )
+        )
 
         return eNCPop
     elif cfg.model.lower() == "ncp":  # NCP
@@ -95,14 +95,14 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             activation=activation,
             bias=False,
             iterative_whitening=cfg.architecture.iter_whitening,
-            )
+        )
         if cfg.architecture.residual_encoder_x:
             from symm_rep_learn.nn.layers import MLP, ResidualEncoder
 
             dim_free_embedding = embedding_dim - dim_x
             fx = ResidualEncoder(
                 encoder=MLP(input_shape=dim_x, **kwargs | {"output_shape": dim_free_embedding}), in_dim=dim_x
-                )
+            )
         else:
             fx = MLP(input_shape=dim_x, **kwargs)
         if cfg.architecture.residual_encoder:
@@ -111,7 +111,7 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             dim_free_embedding = embedding_dim - dim_y
             fy = ResidualEncoder(
                 encoder=MLP(input_shape=dim_y, **kwargs | {"output_shape": dim_free_embedding}), in_dim=dim_y
-                )
+            )
         else:
             fy = MLP(input_shape=dim_y, **kwargs)
         ncp = NCP(
@@ -121,7 +121,7 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             gamma=cfg.gamma,
             truncated_op_bias=cfg.truncated_op_bias,
             learnable_change_basis=cfg.learnable_change_basis,
-            )
+        )
         return ncp
 
     elif cfg.model.lower() == "mlp":
@@ -137,7 +137,7 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             layer_size=[cfg.architecture.hidden_units] * (n_h_layers - 1) + [cfg.architecture.embedding_dim],
             activation=activation,
             bias=False,
-            )
+        )
         return mlp
     elif cfg.model.lower() == "emlp":
         from symm_rep_learn.nn.equiv_layers import EMLP
@@ -150,7 +150,7 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             activation=cfg.architecture.activation,
             hidden_units=[cfg.architecture.hidden_units] * (n_h_layers - 1) + [cfg.architecture.embedding_dim],
             bias=False,
-            )
+        )
         return emlp
     else:
         raise ValueError(f"Model {cfg.model} not recognized")
@@ -183,7 +183,7 @@ def com_momentum_dataset(cfg):
     X = np.concatenate(X_obs, axis=-1)
     Y = np.concatenate(Y_obs, axis=-1)
 
-    # Compute the symmetry aware meand and variance of each observable
+    # Compute the symmetry aware mean and variance of each observable
     X_mean_obs, X_var_obs = [], []
     for obs_name in cfg.x_obs_names:
         dr.compute_obs_moments(obs_name)
@@ -218,8 +218,8 @@ def com_momentum_dataset(cfg):
 
     X_c = (X - X_mean) / np.sqrt(X_var)
     Y_c = (Y - Y_mean) / np.sqrt(Y_var)
-    x_train, x_val, x_test = (X_c[:n_train], X_c[n_train: n_train + n_val], X_c[n_train + n_val:])
-    y_train, y_val, y_test = (Y_c[:n_train], Y_c[n_train: n_train + n_val], Y_c[n_train + n_val:])
+    x_train, x_val, x_test = (X_c[:n_train], X_c[n_train : n_train + n_val], X_c[n_train + n_val :])
+    y_train, y_val, y_test = (Y_c[:n_train], Y_c[n_train : n_train + n_val], Y_c[n_train + n_val :])
 
     # Moving data to gpu
     X_train = torch.atleast_2d(torch.from_numpy(x_train).float()).to(device)
@@ -247,19 +247,20 @@ def com_momentum_dataset(cfg):
         rep_Y,
         y_obs_dims,
         y_moments,
-        )
+    )
 
 
 @torch.no_grad()
 def regression_metrics(
-        model, x, y, y_train, x_type, y_type, y_obs_dims, y_moments, lstsq=False, analytic_residual=False
-        ):
+    model, x, y, y_train, x_type, y_type, y_obs_dims, y_moments, lstsq=False, analytic_residual=False
+):
     """Predicts CoM Momenta from test sample (x_test, y_test)."""
     device = next(model.parameters()).device
     prev_data_device = x.device
 
     x = x.to(device)
     y = y.to(device)
+    y_train = y_train.to(device)
 
     rep_Y, rep_X = y_type.representation, x_type.representation
     G = rep_X.group
@@ -288,11 +289,7 @@ def regression_metrics(
             rep_Hy = model.embedding_y.out_type.representation
             if lstsq:  # TODO: symmetry aware lstsq
                 import linear_operator_learning as lol
-                Cyhy = lol.nn.symmetric.linalg.lstsq(
-                    X=hy_train,
-                    Y=y_train_c,
-                    rep_X=rep_Hy,
-                    rep_Y=rep_Y)
+                Cyhy = lol.nn.symmetric.linalg.lstsq(X=hy_train, Y=y_train_c, rep_X=rep_Hy, rep_Y=rep_Y)
             else:  # Symmetry aware basis expansion coefficients.
                 import linear_operator_learning as lol
                 Cyhy = lol.nn.symmetric.stats.covariance(X=hy_train, Y=y_train_c, rep_X=rep_Hy, rep_Y=rep_Y)
@@ -341,26 +338,27 @@ def regression_metrics(
     metrics_names = G_metrics[0].keys()
     metrics = {name: torch.stack([m[name] for m in G_metrics]).mean() for name in metrics_names}
 
-    x.to(prev_data_device)
-    y.to(prev_data_device)
+    x = x.to(prev_data_device)
+    y = y.to(prev_data_device)
+    y_train = y_train.to(prev_data_device)
     return metrics
 
 
-def proprioceptive_regression_metrics(y, y_pred, y_obs_dims: dict, y_moments):
+def proprioceptive_regression_metrics(y, y_pred, y_obs_dims: dict, y_moments: tuple):
     # Compute MSE with standarized data
     if isinstance(y, GeometricTensor):
         assert y.type == y_pred.type
         y = y.tensor
         y_pred = y_pred.tensor
 
-    mse = torch.nn.MSELoss(reduce=False)
+    mse = torch.nn.MSELoss(reduce=True)
     y_mse = mse(y_pred, y)
-    loss = y_mse.mean()
+    loss = y_mse
     metrics = {"y_mse": loss}
     with torch.no_grad():
-        # Unstandardie data and compute MSE in the original data scale
+        # Un-standardize data and compute MSE in the original data scale
         y_mean, y_var = y_moments
-        y_err_un = (y - y_mean) / torch.sqrt(y_var)
+        y_err_un = (y - y_pred.to(y.device)) * torch.sqrt(y_var.to(y.device))
 
         for obs_name, dims in y_obs_dims.items():
             obs_err_in = y_err_un[..., dims]
@@ -406,19 +404,19 @@ def main(cfg: DictConfig):
         batch_size=cfg.optim.batch_size,
         shuffle=True,
         collate_fn=lambda x: symmetric_collate(x, "train", x_type, y_type, geometric_tensor=is_equiv_model),
-        )
+    )
     val_dataloader = DataLoader(
         val_ds,
         batch_size=cfg.optim.batch_size,
         shuffle=False,
         collate_fn=lambda x: symmetric_collate(x, "val", x_type, y_type, geometric_tensor=is_equiv_model),
-        )
+    )
     test_dataloader = DataLoader(
         test_ds,
         batch_size=cfg.optim.batch_size,
         shuffle=False,
         collate_fn=lambda x: symmetric_collate(x, "test", x_type, y_type, geometric_tensor=is_equiv_model),
-        )
+    )
 
     # Define the Lightning module ______________________________________________________
     if isinstance(model, MLP) or isinstance(model, EMLP):
@@ -427,7 +425,7 @@ def main(cfg: DictConfig):
             optimizer_fn=Adam,
             optimizer_kwargs={"lr": cfg.optim.lr},
             loss_fn=lambda x, y: proprioceptive_regression_metrics(x, y, y_obs_dims, y_moments),
-            )
+        )
     else:  # NCP / ENCP models
         lightning_module = TrainingModule(
             model=model,
@@ -445,7 +443,7 @@ def main(cfg: DictConfig):
                 y_moments=y_moments,
                 lstsq=cfg.lstsq,
                 analytic_residual=cfg.analytic_residual,
-                ),
+            ),
             test_metrics=lambda _: regression_metrics(
                 model=model,
                 x=x_test,
@@ -457,8 +455,8 @@ def main(cfg: DictConfig):
                 y_moments=y_moments,
                 lstsq=cfg.lstsq,
                 analytic_residual=cfg.analytic_residual,
-                ),
-            )
+            ),
+        )
 
     # Define the logger and callbacks
     run_path = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
@@ -476,7 +474,7 @@ def main(cfg: DictConfig):
         save_last=True,
         mode="min",
         every_n_epochs=scaled_saved_freq,
-        )
+    )
 
     # Fix for all runs independent on the train_ratio chosen. This way we compare on effective number of "epochs"
     max_steps = int(n_total_samples * cfg.optim.max_epochs // cfg.optim.batch_size)
@@ -496,7 +494,7 @@ def main(cfg: DictConfig):
         callbacks=[ckpt_call, early_call],
         fast_dev_run=25 if cfg.debug else False,
         num_sanity_val_steps=5,
-        )
+    )
 
     torch.set_float32_matmul_precision("medium")
     last_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / LAST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
@@ -505,7 +503,7 @@ def main(cfg: DictConfig):
         train_dataloaders=train_dataloader,
         val_dataloaders=val_dataloader,
         ckpt_path=last_ckpt_path if last_ckpt_path.exists() else None,
-        )
+    )
 
     # Loads the best model.
     best_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / BEST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
@@ -513,7 +511,7 @@ def main(cfg: DictConfig):
         lightning_module,
         dataloaders=test_dataloader,
         ckpt_path=best_ckpt_path if best_ckpt_path.exists() else None,
-        )
+    )
     test_metrics = test_logs[0]  # dict: metric_name -> value
     # Save the testing matrics in a csv file using pandas.
     test_metrics_path = pathlib.Path(run_path) / "test_metrics.csv"
