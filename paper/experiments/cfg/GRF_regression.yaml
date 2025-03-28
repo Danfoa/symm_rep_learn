@@ -11,27 +11,28 @@ device: 0  # -1 for all GPUs [0, ..., gpu_id] for a specific GPU
 profile: False
 
 # EXPERIMENT CONFIG
-robot_name: mini_cheetah  # aliengo / mini_cheetah / a1 / anymal_c
+robot_name: go1  # aliengo / mini_cheetah / a1 / anymal_c
 # MODEL CONFIG
 model: NCP
 truncated_op_bias: 'full_rank'  # 'Cxy' or 'diag' or 'svals'
 gamma: 10                       # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
 learnable_change_basis: false   # Learnable change of basis to the Isotypic basis
 lstsq: true                     # Use analytic lstsq for regression of NCP models.
-analytic_residual: True
+analytic_residual: False
 
 dataset:
-  path: "paper/experiments/grf_regression/datasets/forward+rotate/${robot_name}/terrain=perlin/lin_vel=(0.0, 3.0) ang_vel=(-0.5, 0.5) friction=(0.9, 1.0)/ep=50_steps=1249.h5"
+#  path: "paper/experiments/grf_regression/datasets/forward+rotate/${robot_name}/terrain=perlin/lin_vel=(0.0, 3.0) ang_vel=(-0.5, 0.5) friction=(0.9, 1.0)/ep=50_steps=1249.h5"
+  path: "paper/experiments/grf_regression/datasets/forward/${robot_name}/terrain=flat/lin_vel=(0.0, 0.0) ang_vel=(-0.0, 0.0) friction=(0.9, 1.0)/ep=10_steps=1249.h5"
   # Observations that will be concatenated to compose y and x, given y = NN(x)
-  x_obs: ['qpos_js', 'qvel_js', 'base_lin_acc:base', 'base_lin_vel:base', 'base_lin_vel_err:base', 'base_ang_vel:base', 'base_ang_vel_err:base', 'gravity_vector:base', 'feet_vel:base']
+  x_obs: ['qpos_js', 'qvel_js', 'base_lin_acc:base', 'base_lin_vel:base', 'base_lin_vel_err:base', 'base_ang_vel:base', 'base_ang_vel_err:base', 'gravity_vector:base', 'feet_vel:base', 'tau_ctrl_setpoint']
   y_obs: ['contact_forces:base', 'contact_state']
   mode: 'static'    # 'static' | 'time_series'. See ProprioceptiveDataset for more details.
   x_frames: 1       # Number of time-frames of observations for x -> (x_frames, x_obs_dim)
   y_frames: 1       # Number of time-frames to consider for y -> (y_frames, y_obs_dim)
   #  Data-augmentation
-  augment_train: False      # Augment training data using symmetry transformations. Not useful for equiv models.
-  augment_test: True        # This better emulates the real-world scenario in which symmetry related points have equal probability of being observed.
-  augment_val: False        # This better emulates the real-world scenario in which symmetry related points have equal probability of being observed.
+  augment_train: False       # Augment training data using symmetry transformations. Not useful for equiv models.
+  augment_test: False        # This better emulates the real-world scenario in which symmetry related points have equal probability of being observed.
+  augment_val: False         # This better emulates the real-world scenario in which symmetry related points have equal probability of being observed.
   #  Dataset splitting
   train_ratio: 0.7
   val_ratio: 0.15
@@ -46,12 +47,12 @@ architecture:
   embedding_dim: 128
   activation: ELU           # Any torch activation
   iter_whitening: false     # BatchNorm that also decorrelates the features. See Algorithm 1 of https://arxiv.org/abs/1904.03441
-  residual_encoder: false   # Introduce target regression variables in L2(Y)
+  residual_encoder: False   # Introduce target regression variables in L2(Y)
   residual_encoder_x: false   # Introduce target regression variables in L2(Y)
 
 # OPTIMIZATION CONFIG
 optim:
-  lr: 1e-3                    # Learning rate NCP train best at low lr values < 1e-3
+  lr: 5e-3                    # Learning rate NCP train best at low lr values < 1e-3
   patience: 25                # Epochs to wait for improvement before early stopping
   batch_size: 2048            # The higher the best
   max_epochs: 500             # Number of passes before stop training. Early stopping is used.
@@ -60,7 +61,7 @@ optim:
 
 exp_desc: "robot=${robot_name}"
 opt_desc: "lr=${optim.lr}_bs=${optim.batch_size}_max_epochs=${optim.max_epochs}_pat=${optim.patience}"
-model_desc: "${model}_hu=${architecture.hidden_units}_hl=${architecture.hidden_layers}_act=${architecture.activation}"
+model_desc: "${model}_hu=${architecture.hidden_units}_hl=${architecture.hidden_layers}_act=${architecture.activation}_resY=${architecture.residual_encoder}_lstsq=${lstsq}"
 run_desc: "${exp_desc}_${opt_desc}_${model_desc}"
 
 hydra:

@@ -251,9 +251,7 @@ def com_momentum_dataset(cfg):
 
 
 @torch.no_grad()
-def regression_metrics(
-    model, x, y, y_train, x_type, y_type, y_obs_dims, y_moments, lstsq=False, analytic_residual=False
-):
+def ncp_regression(model: NCP, x, y, y_train, x_type, y_type, lstsq=False, analytic_residual=False):
     """Predicts CoM Momenta from test sample (x_test, y_test)."""
     device = next(model.parameters()).device
     prev_data_device = x.device
@@ -269,7 +267,7 @@ def regression_metrics(
     mean_y = y_train.mean(axis=0)
     if rep_Y is not None:
         inv_projector = invariant_orthogonal_projector(rep_Y).to(y_train.device)
-        mean_y = inv_projector @ mean_y  # Mean of symmetric RV lives in the invariant subspace.
+        mean_y = inv_projector @ mean_y
     y_train_c = y_train - mean_y
 
     # Compute the embeddings of the entire y training dataset. And the linear regression between y and h(y)
@@ -289,9 +287,11 @@ def regression_metrics(
             rep_Hy = model.embedding_y.out_type.representation
             if lstsq:  # TODO: symmetry aware lstsq
                 import linear_operator_learning as lol
+
                 Cyhy = lol.nn.symmetric.linalg.lstsq(X=hy_train, Y=y_train_c, rep_X=rep_Hy, rep_Y=rep_Y)
             else:  # Symmetry aware basis expansion coefficients.
                 import linear_operator_learning as lol
+
                 Cyhy = lol.nn.symmetric.stats.covariance(X=hy_train, Y=y_train_c, rep_X=rep_Hy, rep_Y=rep_Y)
     else:  # Symmetry agnostic models.
         hy_train = model.embedding_y(y_train)  # shape: (n_train, embedding_dim)
@@ -312,36 +312,58 @@ def regression_metrics(
                 Cyhy = (1 / n_train) * torch.einsum("by,bh->yh", y_train_c, hy_train)
 
     # Introduce the entire group orbit of the testing set, to appropriately compute the equivariant error.
-    G_loss, G_metrics = [], []
-    for g in G.elements:
-        rep_X_g = torch.from_numpy(rep_X(g)).float().to(device)
-        rep_Y_g = torch.from_numpy(rep_Y(g)).float().to(device)
+    if isinstance(model.embedding_x, EquivariantModule):
+        fx = model.embedding_x(x_type(x)).tensor
+    else:
+        fx = model.embedding_x(x)  # shape: (n_test, embedding_dim)
 
-        gx = torch.einsum("ij,kj->ki", rep_X_g, x)
-        gy = torch.einsum("ij,kj->ki", rep_Y_g, y)
+    # Check formula 12 from https://arxiv.org/pdf/2407.01171
+    Dr = model.truncated_operator
+    y_deflated_basis_expansion = torch.einsum("bf,fh,yh->by", fx, Dr, Cyhy)
+    y_pred = mean_y + y_deflated_basis_expansion
 
-        if isinstance(model.embedding_x, EquivariantModule):
-            fgx = model.embedding_x(x_type(gx)).tensor
-        else:
-            fgx = model.embedding_x(gx)  # shape: (n_test, embedding_dim)
+    return y_pred
 
-        # shape: (n_test, 6). Check formula 12 from https://arxiv.org/pdf/2407.01171
-        Dr = model.truncated_operator
-        gy_deflated_basis_expansion = torch.einsum("bf,fh,yh->by", fgx, Dr, Cyhy)
-        gy_pred = mean_y + gy_deflated_basis_expansion
 
-        gy_mse, metrics = proprioceptive_regression_metrics(gy, gy_pred, y_obs_dims, y_moments)
-        G_loss.append(gy_mse)
-        G_metrics.append(metrics)
+@torch.no_grad()
+def regression_metrics(
+    model, x, y, y_train, x_type, y_type, y_obs_dims, y_moments, lstsq=False, analytic_residual=False
+):
+    """Predicts CoM Momenta from test sample (x_test, y_test)."""
+    y_pred = ncp_regression(model, x, y, y_train, x_type, y_type, lstsq, analytic_residual)
+    gy_mse, metrics = proprioceptive_regression_metrics(y, y_pred.to(y.device), y_obs_dims, y_moments)
+    return metrics
+    # Introduce the entire group orbit of the testing set, to appropriately compute the equivariant error.
+    # G_loss, G_metrics = [], []
+    # for g in G.elements[:1]:
+    #     rep_X_g = torch.from_numpy(rep_X(g)).float().to(device)
+    #     rep_Y_g = torch.from_numpy(rep_Y(g)).float().to(device)
+    #
+    #     gx = torch.einsum("ij,kj->ki", rep_X_g, x)
+    #     gy = torch.einsum("ij,kj->ki", rep_Y_g, y)
+    #
+    #     if isinstance(model.embedding_x, EquivariantModule):
+    #         fgx = model.embedding_x(x_type(gx)).tensor
+    #     else:
+    #         fgx = model.embedding_x(gx)  # shape: (n_test, embedding_dim)
+    #
+    #     # shape: (n_test, 6). Check formula 12 from https://arxiv.org/pdf/2407.01171
+    #     Dr = model.truncated_operator
+    #     gy_deflated_basis_expansion = torch.einsum("bf,fh,yh->by", fgx, Dr, Cyhy)
+    #     gy_pred = mean_y + gy_deflated_basis_expansion
+    #
+    #     gy_mse, metrics = proprioceptive_regression_metrics(gy, gy_pred, y_obs_dims, y_moments)
+    #     G_loss.append(gy_mse)
+    #     G_metrics.append(metrics)
 
     # Compute average over the orbit for all metrics
-    metrics_names = G_metrics[0].keys()
-    metrics = {name: torch.stack([m[name] for m in G_metrics]).mean() for name in metrics_names}
+    # metrics_names = G_metrics[0].keys()
+    # metrics = {name: torch.stack([m[name] for m in G_metrics]).mean() for name in metrics_names}
 
-    x = x.to(prev_data_device)
-    y = y.to(prev_data_device)
-    y_train = y_train.to(prev_data_device)
-    return metrics
+    # x = x.to(prev_data_device)
+    # y = y.to(prev_data_device)
+    # y_train = y_train.to(prev_data_device)
+    # return metrics
 
 
 def proprioceptive_regression_metrics(y, y_pred, y_obs_dims: dict, y_moments: tuple):

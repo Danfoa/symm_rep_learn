@@ -3,7 +3,6 @@
 from __future__ import annotations  # Support new typing structure in 3.8 and 3.9
 
 import logging
-import math
 import pathlib
 from pathlib import Path
 
@@ -11,19 +10,25 @@ import escnn
 import hydra
 import numpy as np
 import pandas as pd
+import plotly.graph_objs as go
 import torch
 from escnn.group import directsum
-from escnn.nn import EquivariantModule, FieldType, GeometricTensor
+from escnn.nn import FieldType, GeometricTensor
 from gym_quadruped.utils.quadruped_utils import configure_observation_space_representations
 from lightning import Trainer, seed_everything
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
-from morpho_symm.data.DynamicsRecording import DynamicsRecording
 from omegaconf import DictConfig, OmegaConf
+from plotly.subplots import make_subplots
 from torch.optim import Adam
-from torch.utils.data import DataLoader, TensorDataset, default_collate
+from torch.utils.data import DataLoader, default_collate
 
-from paper.experiments.CoM_regression import get_model, proprioceptive_regression_metrics, regression_metrics
+from paper.experiments.CoM_regression import (
+    get_model,
+    ncp_regression,
+    proprioceptive_regression_metrics,
+    regression_metrics,
+)
 from paper.experiments.grf_regression.proprioceptive_datasets import ProprioceptiveDataset
 from symm_rep_learn.models.equiv_ncp import ENCP
 from symm_rep_learn.models.lightning_modules import SupervisedTrainingModule, TrainingModule
@@ -34,10 +39,72 @@ from symm_rep_learn.nn.layers import MLP
 log = logging.getLogger(__name__)
 
 
+def plot_predictions_vs_gt(gt, pred, title_prefix="Dim", subtitles=None, title="Observables"):
+    """Plots predictions vs ground truth per dimension with shared legend group using Plotly.
+
+    Args:
+        gt (torch.Tensor or np.ndarray): Ground truth (time, dim)
+        pred (torch.Tensor or np.ndarray): Predictions (time, dim)
+        title_prefix (str): Fallback prefix for subplot titles.
+        subtitles (list of str): Optional list of titles per dimension.
+        title (str): Title of the entire figure.
+    """
+    gt = gt.cpu().numpy() if hasattr(gt, "cpu") else gt
+    pred = pred.cpu().numpy() if hasattr(pred, "cpu") else pred
+
+    time = np.arange(gt.shape[0])
+    dim = gt.shape[1]
+    n_cols = min(3, dim)
+    n_rows = int(np.ceil(dim / n_cols))
+
+    fig = make_subplots(
+        rows=n_rows,
+        cols=n_cols,
+        shared_xaxes=True,
+        subplot_titles=[
+            subtitles[i] if subtitles and i < len(subtitles) else f"{title_prefix} {i}" for i in range(dim)
+        ],
+    )
+
+    for i in range(dim):
+        row = i // n_cols + 1
+        col = i % n_cols + 1
+
+        fig.add_trace(
+            go.Scatter(
+                x=time,
+                y=gt[:, i],
+                mode="lines",
+                name="GT",
+                legendgroup="GT",
+                showlegend=(i == 0),
+                line=dict(color="blue"),
+            ),
+            row=row,
+            col=col,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=time,
+                y=pred[:, i],
+                mode="lines",
+                name="Pred",
+                legendgroup="Pred",
+                showlegend=(i == 0),
+                line=dict(color="red"),
+            ),
+            row=row,
+            col=col,
+        )
+
+    fig.update_layout(height=300 * n_rows, width=350 * n_cols, title_text=title)
+    return fig
+
+
 def symmetric_collate(
     batch,
     split: str,
-    dataset_cfg: DictConfig,
+    ds_cfg: DictConfig,
     x_moments: tuple,
     y_moments: tuple,
     x_type: FieldType,
@@ -46,8 +113,8 @@ def symmetric_collate(
 ):
     batch = default_collate(batch)
     x_obs, y_obs = batch
-    x = torch.cat([x_obs[obs_name] for obs_name in dataset_cfg.x_obs], dim=-1).to(dtype=torch.float32)
-    y = torch.cat([y_obs[obs_name] for obs_name in dataset_cfg.y_obs], dim=-1).to(dtype=torch.float32)
+    x = torch.cat([x_obs[obs_name] for obs_name in ds_cfg.x_obs], dim=-1).to(dtype=torch.float32)
+    y = torch.cat([y_obs[obs_name] for obs_name in ds_cfg.y_obs], dim=-1).to(dtype=torch.float32)
 
     x_batch = torch.squeeze(x, dim=1)
     y_batch = torch.squeeze(y, dim=1)
@@ -59,7 +126,11 @@ def symmetric_collate(
     x_batch = (x_batch - x_mean) / torch.sqrt(x_var)
     y_batch = (y_batch - y_mean) / torch.sqrt(y_var)
 
-    if (split == "test" and dataset_cfg.augment_test) or (split == "val" and dataset_cfg.augment_val):
+    if (
+        (split == "train" and ds_cfg.augment_train)
+        or (split == "test" and ds_cfg.augment_test)
+        or (split == "val" and ds_cfg.augment_val)
+    ):
         G = x_type.fibergroup
         g = G.sample()  # Uniformly sample a group element.
         if g != G.identity:
@@ -73,7 +144,7 @@ def symmetric_collate(
     return x_batch, y_batch
 
 
-def get_grf_data(cfg: DictConfig):
+def get_proprioceptive_data(cfg: DictConfig):
     #
     data_path = Path(cfg.dataset.path)
     dataset = ProprioceptiveDataset(
@@ -89,8 +160,7 @@ def get_grf_data(cfg: DictConfig):
 
     # Split into train, validation and test datasets splitting on trajectories ----------------------------------------
     n_trajectories = dataset.n_trajectories
-    n_train = int(n_trajectories * cfg.dataset.train_ratio)
-    n_val = int(n_trajectories * cfg.dataset.val_ratio)
+    n_train, n_val = int(n_trajectories * cfg.dataset.train_ratio), int(n_trajectories * cfg.dataset.val_ratio)
     train_ds = dataset.subset_dataset(trajectory_ids=range(n_train))
     val_ds = dataset.subset_dataset(trajectory_ids=range(n_train, n_train + n_val))
     test_ds = dataset.subset_dataset(trajectory_ids=range(n_train + n_val, n_trajectories))
@@ -124,7 +194,6 @@ def get_grf_data(cfg: DictConfig):
     x_var = x_var.to(dtype=train_ds.dtype, device=train_ds.device)
     y_mean = y_mean.to(dtype=train_ds.dtype, device=train_ds.device)
     y_var = y_var.to(dtype=train_ds.dtype, device=train_ds.device)
-
 
     train_samples = train_ds.numpy_arrays
     val_samples = val_ds.numpy_arrays
@@ -165,9 +234,7 @@ def get_grf_data(cfg: DictConfig):
 
 @torch.no_grad()
 def uncertainty_metrics(model, x, y, y_train, x_type, y_type, y_obs_dims, y_moments):
-    """
-
-    Args:
+    """Args:
         model: NCP or ENCP model.
         x: (batch, x_dim) tensor of input data to evaluate.
         y: (batch, y_dim) tensor of target data to regress with uncertainty quantification.
@@ -176,6 +243,7 @@ def uncertainty_metrics(model, x, y, y_train, x_type, y_type, y_obs_dims, y_mome
         y_type: (FieldType) output field type.
         y_obs_dims: (dict[str, slice]) dictionary with names of observables in the Y vector (e.g., "force": slice(0, 3)).)
         y_moments: Mean and variance of the Y data, used to standardize the data.
+
     Returns:
 
     """
@@ -188,12 +256,9 @@ def main(cfg: DictConfig):
     seed_everything(seed)
 
     # Load dataset______________________________________________________________________
-    samples, datasets, (rep_x, rep_y), x_moments, y_moments, y_obs_dims = get_grf_data(cfg)
-    train_samples, val_samples, test_samples = samples
+    samples, datasets, (rep_x, rep_y), x_moments, y_moments, y_obs_dims = get_proprioceptive_data(cfg)
+    (x_train, y_train), (x_val, y_val), (x_test, y_test) = samples
     train_ds, val_ds, test_ds = datasets
-    x_train, y_train = train_samples
-    x_val, y_val = val_samples
-    x_test, y_test = test_samples
 
     G = rep_x.group
     # lat_rep = G.regular_representation
@@ -210,29 +275,31 @@ def main(cfg: DictConfig):
     # Define the dataloaders_____________________________________________________________
     # ESCNN equivariant models expect GeometricTensors.
     is_equiv_model = isinstance(model, ENCP) or isinstance(model, EMLP)
+    dl_kwargs = dict(
+        ds_cfg=cfg.dataset,
+        x_moments=x_moments,
+        y_moments=y_moments,
+        x_type=x_type,
+        y_type=y_type,
+        geometric_tensor=is_equiv_model,
+    )
     train_dataloader = DataLoader(
         train_ds,
         batch_size=cfg.optim.batch_size,
         shuffle=True,
-        collate_fn=lambda x: symmetric_collate(
-            x, "train", cfg.dataset, x_moments, y_moments, x_type, y_type, geometric_tensor=is_equiv_model
-        ),
+        collate_fn=lambda x: symmetric_collate(x, split="train", **dl_kwargs),
     )
     val_dataloader = DataLoader(
         val_ds,
         batch_size=cfg.optim.batch_size,
-        shuffle=False,
-        collate_fn=lambda x: symmetric_collate(
-            x, "val", cfg.dataset, x_moments, y_moments, x_type, y_type, geometric_tensor=is_equiv_model
-        ),
+        shuffle=True,
+        collate_fn=lambda x: symmetric_collate(x, split="val", **dl_kwargs),
     )
     test_dataloader = DataLoader(
         test_ds,
         batch_size=cfg.optim.batch_size,
         shuffle=False,
-        collate_fn=lambda x: symmetric_collate(
-            x, "test", cfg.dataset, x_moments, y_moments, x_type, y_type, geometric_tensor=is_equiv_model
-        ),
+        collate_fn=lambda x: symmetric_collate(x, split="test", **dl_kwargs),
     )
 
     # Define the Lightning module ______________________________________________________
@@ -244,35 +311,14 @@ def main(cfg: DictConfig):
             loss_fn=lambda x, y: proprioceptive_regression_metrics(x, y, y_obs_dims, y_moments),
         )
     else:  # NCP / ENCP models
+        metrics_args = (y_train, x_type, y_type, y_obs_dims, y_moments, cfg.lstsq, cfg.analytic_residual)
         lightning_module = TrainingModule(
             model=model,
             optimizer_fn=Adam,
             optimizer_kwargs={"lr": cfg.optim.lr},
             loss_fn=model.loss if hasattr(model, "loss") else None,
-            val_metrics=lambda _: regression_metrics(
-                model=model,
-                x=x_val,
-                y=y_val,
-                y_train=y_train,
-                x_type=x_type,
-                y_type=y_type,
-                y_obs_dims=y_obs_dims,
-                y_moments=y_moments,
-                lstsq=cfg.lstsq,
-                analytic_residual=cfg.analytic_residual,
-            ),
-            test_metrics=lambda _: regression_metrics(
-                model=model,
-                x=x_test,
-                y=y_test,
-                y_train=y_train,
-                x_type=x_type,
-                y_type=y_type,
-                y_obs_dims=y_obs_dims,
-                y_moments=y_moments,
-                lstsq=cfg.lstsq,
-                analytic_residual=cfg.analytic_residual,
-            ),
+            val_metrics=lambda _: regression_metrics(model, x_val, y_val, *metrics_args),
+            test_metrics=lambda _: regression_metrics(model, x_test, y_test, *metrics_args),
         )
 
     # Define the logger and callbacks
@@ -295,9 +341,9 @@ def main(cfg: DictConfig):
 
     # Fix for all runs independent on the train_ratio chosen. This way we compare on effective number of "epochs"
     max_steps = int(n_total_samples * cfg.optim.max_epochs // cfg.optim.batch_size)
-    check_val_every_n_epochs = int(n_total_samples // cfg.optim.batch_size / 8)
+    check_val_every_n_epochs = max(5, int(n_total_samples // cfg.optim.batch_size / 8))
     metric_to_monitor = "||k(x,y) - k_r(x,y)||/val" if isinstance(model, ENCP) or isinstance(model, NCP) else "loss/val"
-    early_call = EarlyStopping(metric_to_monitor, patience=10, mode="min")
+    early_call = EarlyStopping(metric_to_monitor, patience=50, mode="min")
 
     trainer = Trainer(
         accelerator="gpu",
@@ -329,13 +375,31 @@ def main(cfg: DictConfig):
         ckpt_path=best_ckpt_path if best_ckpt_path.exists() else None,
     )
     test_metrics = test_logs[0]  # dict: metric_name -> value
-    # Save the testing matrics in a csv file using pandas.
+    # Save the testing matrices in a csv file using pandas.
     test_metrics_path = pathlib.Path(run_path) / "test_metrics.csv"
     pd.DataFrame(test_metrics, index=[0]).to_csv(test_metrics_path, index=False)
 
     # Put model in cpu
     model.cpu()
     lightning_module.cpu()
+
+    x_mean, x_var, y_mean, y_var = x_moments[0], x_moments[1], y_moments[0], y_moments[1]
+    if isinstance(model, NCP):
+        y_test_pred = ncp_regression(model, x_test, y_test, y_train, x_type, y_type, cfg.lstsq, cfg.analytic_residual)
+    else:
+        y_test_pred = model(x_test)
+    y_test_un = y_test * torch.sqrt(y_var) + y_mean
+    y_test_pred = y_test_pred * torch.sqrt(y_var) + y_mean
+
+    grf = y_test_un[:, y_obs_dims["contact_forces:base"]].detach().cpu().numpy()  # (time, 12)
+    grf_pred = y_test_pred[:, y_obs_dims["contact_forces:base"]].detach().cpu().numpy()  # (time, 12)
+
+    fig = plot_predictions_vs_gt(grf[600:3000], grf_pred[600:3000], title_prefix="grf", title="Contact Forces")
+    # Save the figure in high resolution
+    # fig_path = pathlib.Path(run_path) / "grf_predictions.html"
+    # fig.write_html(str(fig_path))
+    fig_path = pathlib.Path(run_path) / "grf_predictions.png"
+    fig.write_image(str(fig_path))
 
     # Flush the logger.
     logger.finalize(trainer.state)
