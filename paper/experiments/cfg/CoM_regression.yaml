@@ -20,7 +20,7 @@ truncated_op_bias: 'full_rank'  # 'Cxy' or 'diag' or 'svals'
 gamma: 10                       # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
 learnable_change_basis: false   # Learnable change of basis to the Isotypic basis
 lstsq: true                     # Use analytic lstsq for regression of NCP models.
-analytic_residual: True
+analytic_residual: false        #
 
 architecture:
   hidden_layers: 4

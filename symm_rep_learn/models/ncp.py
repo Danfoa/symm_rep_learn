@@ -148,7 +148,7 @@ class NCP(torch.nn.Module):
         # Logging metrics _______________________________________________________________________________
         with torch.no_grad():
             metrics |= {
-                "||k(x,y) - k_r(x,y)||": truncation_err.detach(),
+                "||k(x,y) - k_r(x,y)||": truncation_err.detach().item(),
             }
         return loss, metrics
 
@@ -273,13 +273,12 @@ class NCP(torch.nn.Module):
         with torch.no_grad():
             # Divide by the embedding dimension to standardize metrics across experiments.
             metrics = {
-                "||Cx||_F^2": Cx_fro_2 / embedding_dim_x,
-                "||mu_x||": torch.sqrt(fx_centering_loss),
-                "||Vx - I||_F^2": orthonormality_fx / embedding_dim_x,
-                #
-                "||Cy||_F^2": Cy_fro_2 / embedding_dim_y,
-                "||mu_y||": torch.sqrt(hy_centering_loss),
-                "||Vy - I||_F^2": orthonormality_hy / embedding_dim_y,
+                "tr(Cx)": (tr_Cx / embedding_dim_x).item(),
+                "||mu_x||": torch.sqrt(fx_centering_loss).item(),
+                "||Vx - I||_F^2": (orthonormality_fx / embedding_dim_x).item(),
+                "tr(Cy)": (tr_Cy / embedding_dim_y).item(),
+                "||mu_y||": torch.sqrt(hy_centering_loss).item(),
+                "||Vy - I||_F^2": (orthonormality_hy / embedding_dim_y).item(),
             }
 
         return orthonormality_fx, orthonormality_hy, metrics

@@ -63,9 +63,7 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             lat_y_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=lat_rep)
             x_embedding = EMLP(in_type=x_type, out_type=lat_x_type, **kwargs)
             y_embedding = ResidualEncoder(encoder=EMLP(in_type=y_type, out_type=lat_y_type, **kwargs), in_type=y_type)
-            assert (
-                y_embedding.out_type.size == x_embedding.out_type.size
-            ), f"{y_embedding.out_type.size} != {x_embedding.out_type.size}"
+            assert y_embedding.out_type.size == x_embedding.out_type.size
         else:
             lat_type = FieldType(
                 gspace=escnn.gspaces.no_base_space(G),
@@ -261,7 +259,6 @@ def ncp_regression(model: NCP, x, y, y_train, x_type, y_type, lstsq=False, analy
     y_train = y_train.to(device)
 
     rep_Y, rep_X = y_type.representation, x_type.representation
-    G = rep_X.group
 
     # Compute the expectation of the r.v `y` from the training dataset.
     mean_y = y_train.mean(axis=0)
@@ -374,8 +371,7 @@ def proprioceptive_regression_metrics(y, y_pred, y_obs_dims: dict, y_moments: tu
         y_pred = y_pred.tensor
 
     mse = torch.nn.MSELoss(reduce=True)
-    y_mse = mse(y_pred, y)
-    loss = y_mse
+    loss = mse(y_pred, y)
     metrics = {"y_mse": loss}
     with torch.no_grad():
         # Un-standardize data and compute MSE in the original data scale
@@ -384,7 +380,7 @@ def proprioceptive_regression_metrics(y, y_pred, y_obs_dims: dict, y_moments: tu
 
         for obs_name, dims in y_obs_dims.items():
             obs_err_in = y_err_un[..., dims]
-            metrics[obs_name] = (obs_err_in**2).mean()
+            metrics[f"{obs_name}_mse"] = (obs_err_in**2).mean()
 
     return loss, metrics
 

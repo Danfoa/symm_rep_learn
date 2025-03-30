@@ -29,7 +29,7 @@ from paper.experiments.CoM_regression import (
     proprioceptive_regression_metrics,
     regression_metrics,
 )
-from paper.experiments.grf_regression.proprioceptive_datasets import ProprioceptiveDataset
+from paper.experiments.grf_regression_uc.proprioceptive_datasets import ProprioceptiveDataset
 from symm_rep_learn.models.equiv_ncp import ENCP
 from symm_rep_learn.models.lightning_modules import SupervisedTrainingModule, TrainingModule
 from symm_rep_learn.models.ncp import NCP
