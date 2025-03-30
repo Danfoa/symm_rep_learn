@@ -1,7 +1,6 @@
 # Created by Daniel Ordoñez (daniels.ordonez@gmail.com) at 29/03/25
 import numpy as np
 import torch
-from sklearn.isotonic import IsotonicRegression
 
 from symm_rep_learn.models.ncp import NCP
 from symm_rep_learn.nn.layers import ResidualEncoder
@@ -16,8 +15,10 @@ class NCPRegressor(torch.nn.Module):
         self.device = next(model.parameters()).device
         self.out_dim = zy_train.shape[-1]
 
-        assert zy_train.shape[0] == y_train.shape[0], "Y train and Z(Y) train must have the same number of samples"
-        assert y_train.ndim == 2, f"Y train must have shape (n_train, y_dim) {y_train.ndim}"
+        assert (
+            zy_train.shape[0] == y_train.shape[0]
+        ), "y_train and xy_train with same number of samples, got {zy_train.shape[0]} and {y_train.shape[0]}"
+        assert y_train.ndim == 2, f"Y train must have shape (n_train, y_dim) got {y_train.shape}"
         assert zy_train.ndim == 2, f"Z(Y) train must have shape (n_train, z(y)_dim) got {zy_train.ndim}"
 
         zy_train = zy_train.to(self.device)
@@ -106,6 +107,10 @@ class NCPConditionalCDF(torch.nn.Module):
             # ccdf_obs_ind_smooth = self.smooth_cdf(self.support_obs[..., dim], np.squeeze(ccdf_obs_ind_pred))
             # Filter out points below 0 from approximation of the NCP.
             ccdf.append(ccdf_obs_ind_pred)
+
+        ccdf = np.asarray(ccdf)
+        # bound predictions to [0, 1]
+        ccdf = np.clip(ccdf, 0, 1)
         return ccdf
 
     def conditional_quantiles(self, x_cond: torch.Tensor, alpha=0.05):
@@ -135,13 +140,13 @@ class NCPConditionalCDF(torch.nn.Module):
         # q_high = torch.tensor([q[1, ...] for q in quantiles])
         return q_low, q_high
 
-    @staticmethod
-    def smooth_cdf(values, cdf):  # Moved smooth_cdf here from NCP/utils.py
-        scdf = IsotonicRegression(y_min=0.0, y_max=cdf.max()).fit_transform(values, cdf)
-        if scdf.max() <= 0:
-            return np.zeros(values.shape)
-        scdf = scdf / scdf.max()
-        return scdf
+    # @staticmethod
+    # def smooth_cdf(values, cdf):  # Moved smooth_cdf here from NCP/utils.py
+    #     scdf = IsotonicRegression(y_min=0.0, y_max=cdf.max()).fit_transform(values, cdf)
+    #     if scdf.max() <= 0:
+    #         return np.zeros(values.shape)
+    #     scdf = scdf / scdf.max()
+    #     return scdf
 
     @staticmethod
     def find_best_quantile(x_support, cdf_x, alpha):
