@@ -25,32 +25,33 @@ from torch.utils.data import DataLoader, default_collate
 
 from paper.experiments.CoM_regression import (
     get_model,
-    ncp_regression,
-    proprioceptive_regression_metrics,
-    regression_metrics,
 )
 from paper.experiments.grf_regression_uc.proprioceptive_datasets import ProprioceptiveDataset
+from symm_rep_learn.inference.encp import ENCPConditionalCDF
+from symm_rep_learn.inference.ncp import NCPConditionalCDF
 from symm_rep_learn.models.equiv_ncp import ENCP
-from symm_rep_learn.models.lightning_modules import SupervisedTrainingModule, TrainingModule
+from symm_rep_learn.models.lightning_modules import CQRLightningModule, TrainingModule
+from symm_rep_learn.models.multivariateCQR import MultivariateCQR, get_coverage, get_relaxed_coverage, get_set_size
 from symm_rep_learn.models.ncp import NCP
 from symm_rep_learn.nn.equiv_layers import EMLP
-from symm_rep_learn.nn.layers import MLP
 
 log = logging.getLogger(__name__)
 
 
-def plot_predictions_vs_gt(gt, pred, title_prefix="Dim", subtitles=None, title="Observables"):
+def plot_gt_and_quantiles(gt, q_low, q_high, title_prefix="Dim", subtitles=None, title="Observables"):
     """Plots predictions vs ground truth per dimension with shared legend group using Plotly.
 
     Args:
         gt (torch.Tensor or np.ndarray): Ground truth (time, dim)
-        pred (torch.Tensor or np.ndarray): Predictions (time, dim)
+        q_low (torch.Tensor or np.ndarray): Lower quantile (time, dim)
+        q_high (torch.Tensor or np.ndarray): Upper quantile (time, dim)
         title_prefix (str): Fallback prefix for subplot titles.
         subtitles (list of str): Optional list of titles per dimension.
         title (str): Title of the entire figure.
     """
     gt = gt.cpu().numpy() if hasattr(gt, "cpu") else gt
-    pred = pred.cpu().numpy() if hasattr(pred, "cpu") else pred
+    q_low = q_low.cpu().numpy() if hasattr(q_low, "cpu") else q_low
+    q_high = q_high.cpu().numpy() if hasattr(q_high, "cpu") else q_high
 
     time = np.arange(gt.shape[0])
     dim = gt.shape[1]
@@ -83,15 +84,30 @@ def plot_predictions_vs_gt(gt, pred, title_prefix="Dim", subtitles=None, title="
             row=row,
             col=col,
         )
+
         fig.add_trace(
             go.Scatter(
-                x=time,
-                y=pred[:, i],
-                mode="lines",
-                name="Pred",
-                legendgroup="Pred",
+                x=np.concatenate([time, time[::-1]]),
+                y=np.concatenate([q_low[:, i], q_high[::-1, i]]),
+                fill="toself",
+                fillcolor="rgba(255, 0, 0, 0.2)",
+                line=dict(color="rgba(255, 0, 0, 0)"),
+                showlegend=False,
+            ),
+            row=row,
+            col=col,
+        )
+
+        outliers = (gt[:, i] < q_low[:, i]) | (gt[:, i] > q_high[:, i])
+        fig.add_trace(
+            go.Scatter(
+                x=time[outliers],
+                y=gt[outliers, i],
+                mode="markers",
+                name="Outliers",
+                legendgroup="Outliers",
                 showlegend=(i == 0),
-                line=dict(color="red"),
+                marker=dict(color="red"),
             ),
             row=row,
             col=col,
@@ -142,6 +158,30 @@ def symmetric_collate(
         y_batch = GeometricTensor(y_batch, y_type)
 
     return x_batch, y_batch
+
+
+def get_uc_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
+    dim_x = x_type.size
+    dim_y = y_type.size
+
+    if cfg.model.lower() == "cqr":  # Conditional Quantile Regression
+        from symm_rep_learn.models.multivariateCQR import MultivariateCQR
+        from symm_rep_learn.mysc.utils import class_from_name
+
+        activation = class_from_name("torch.nn", cfg.architecture.activation)
+        n_h_layers = cfg.architecture.hidden_layers
+        cqr = MultivariateCQR(
+            dim_x=dim_x,
+            dim_y=dim_y,
+            gamma=cfg.alpha,
+            n_hidden=cfg.architecture.hidden_layers,
+            layer_size=[cfg.architecture.hidden_units] * (n_h_layers - 1) + [cfg.architecture.embedding_dim],
+            activation=activation,
+            bias=False,
+        )
+        return cqr
+    else:
+        return get_model(cfg, x_type, y_type)
 
 
 def get_proprioceptive_data(cfg: DictConfig):
@@ -233,13 +273,12 @@ def get_proprioceptive_data(cfg: DictConfig):
 
 
 @torch.no_grad()
-def uncertainty_metrics(model, x, y, y_train, x_type, y_type, y_obs_dims, y_moments):
+def uncertainty_metrics(model, x_cond, y, y_train, x_type, y_type, alpha: float = 0.05, lstsq: bool = True):
     """Args:
         model: NCP or ENCP model.
-        x: (batch, x_dim) tensor of input data to evaluate.
+        x_cond: (batch, x_dim) tensor of the conditioning values.
         y: (batch, y_dim) tensor of target data to regress with uncertainty quantification.
         y_train: (n_train, y_dim) tensor of Y training data (standardized).
-        x_type: (FieldType) input field type.
         y_type: (FieldType) output field type.
         y_obs_dims: (dict[str, slice]) dictionary with names of observables in the Y vector (e.g., "force": slice(0, 3)).)
         y_moments: Mean and variance of the Y data, used to standardize the data.
@@ -247,7 +286,27 @@ def uncertainty_metrics(model, x, y, y_train, x_type, y_type, y_obs_dims, y_mome
     Returns:
 
     """
-    pass
+    if isinstance(model, ENCP):
+        encp_ccdf = ENCPConditionalCDF(
+            model=model, y_train=y_type(y_train), support_discretization_points=500, lstsq=lstsq
+        )
+        q_low, q_high = encp_ccdf.conditional_quantiles(x_cond=x_type(x_cond), alpha=alpha)
+    elif isinstance(model, NCP):
+        ncp_ccdf = NCPConditionalCDF(model=model, y_train=y_train, support_discretization_points=500, lstsq=lstsq)
+        q_low, q_high = ncp_ccdf.conditional_quantiles(x_cond=x_cond, alpha=alpha)
+    else:
+        raise ValueError(f"Model type {type(model)} not supported.")
+
+    q_low = torch.tensor(q_low).to(y.device, y.dtype)
+    q_high = torch.tensor(q_high).to(y.device, y.dtype)
+
+    metrics = dict(
+        coverage=get_coverage(q_low, q_high, target=y),
+        relaxed_coverage=get_relaxed_coverage(q_low, q_high, target=y),
+        set_size=get_set_size(q_low, q_high),
+    )
+
+    return metrics
 
 
 @hydra.main(config_path="cfg", config_name="GRF_regression", version_base="1.3")
@@ -266,7 +325,7 @@ def main(cfg: DictConfig):
     y_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=[rep_y])
 
     # Get the model_____________________________________________________________________
-    model = get_model(cfg, x_type, y_type)
+    model = get_uc_model(cfg, x_type, y_type)
     print(model)
     # Print the number of trainable parameters
     n_trainable_params = sum(p.numel() for p in model.parameters())
@@ -303,22 +362,25 @@ def main(cfg: DictConfig):
     )
 
     # Define the Lightning module ______________________________________________________
-    if isinstance(model, MLP) or isinstance(model, EMLP):
-        lightning_module = SupervisedTrainingModule(
+    if isinstance(model, MultivariateCQR):
+        lightning_module = CQRLightningModule(
             model=model,
             optimizer_fn=Adam,
             optimizer_kwargs={"lr": cfg.optim.lr},
-            loss_fn=lambda x, y: proprioceptive_regression_metrics(x, y, y_obs_dims, y_moments),
+            loss_fn=model.loss,
         )
     else:  # NCP / ENCP models
-        metrics_args = (y_train, x_type, y_type, y_obs_dims, y_moments, cfg.lstsq, cfg.analytic_residual)
         lightning_module = TrainingModule(
             model=model,
             optimizer_fn=Adam,
             optimizer_kwargs={"lr": cfg.optim.lr},
             loss_fn=model.loss if hasattr(model, "loss") else None,
-            val_metrics=lambda _: regression_metrics(model, x_val, y_val, *metrics_args),
-            test_metrics=lambda _: regression_metrics(model, x_test, y_test, *metrics_args),
+            val_metrics=lambda _: uncertainty_metrics(
+                model, x_val, y_val, y_train, x_type, y_type, cfg.alpha, cfg.lstsq
+            ),
+            test_metrics=lambda _: uncertainty_metrics(
+                model, x_test, y_test, y_train, x_type, y_type, cfg.alpha, cfg.lstsq
+            ),
         )
 
     # Define the logger and callbacks
@@ -341,7 +403,7 @@ def main(cfg: DictConfig):
 
     # Fix for all runs independent on the train_ratio chosen. This way we compare on effective number of "epochs"
     max_steps = int(n_total_samples * cfg.optim.max_epochs // cfg.optim.batch_size)
-    check_val_every_n_epochs = max(5, int(n_total_samples // cfg.optim.batch_size / 8))
+    check_val_every_n_epochs = max(5, int(n_total_samples // cfg.optim.batch_size / 4))
     metric_to_monitor = "||k(x,y) - k_r(x,y)||/val" if isinstance(model, ENCP) or isinstance(model, NCP) else "loss/val"
     early_call = EarlyStopping(metric_to_monitor, patience=50, mode="min")
 
@@ -381,25 +443,34 @@ def main(cfg: DictConfig):
 
     # Put model in cpu
     model.cpu()
+    model.eval()
     lightning_module.cpu()
 
     x_mean, x_var, y_mean, y_var = x_moments[0], x_moments[1], y_moments[0], y_moments[1]
-    if isinstance(model, NCP):
-        y_test_pred = ncp_regression(model, x_test, y_test, y_train, x_type, y_type, cfg.lstsq, cfg.analytic_residual)
+    if isinstance(model, ENCP):
+        encp_ccdf = ENCPConditionalCDF(
+            model=model, y_train=y_type(y_train), support_discretization_points=1000, lstsq=True
+        )
+        q_low, q_high = encp_ccdf.conditional_quantiles(x_cond=x_type(x_test), alpha=cfg.alpha)
+    elif isinstance(model, NCP):
+        ncp_ccdf = NCPConditionalCDF(model=model, y_train=y_train, support_discretization_points=1000, lstsq=True)
+        q_low, q_high = ncp_ccdf.conditional_quantiles(x_cond=x_test, alpha=cfg.alpha)
+    elif isinstance(model, MultivariateCQR):
+        q_low, q_high = model(x_test)
     else:
-        y_test_pred = model(x_test)
+        raise ValueError(f"Model type {type(model)} not supported.")
+
     y_test_un = y_test * torch.sqrt(y_var) + y_mean
-    y_test_pred = y_test_pred * torch.sqrt(y_var) + y_mean
-
+    q_loq_un = (q_low * torch.sqrt(y_var) + y_mean).detach()
+    q_upq_un = (q_high * torch.sqrt(y_var) + y_mean).detach()
     grf = y_test_un[:, y_obs_dims["contact_forces:base"]].detach().cpu().numpy()  # (time, 12)
-    grf_pred = y_test_pred[:, y_obs_dims["contact_forces:base"]].detach().cpu().numpy()  # (time, 12)
 
-    fig = plot_predictions_vs_gt(grf[600:3000], grf_pred[600:3000], title_prefix="grf", title="Contact Forces")
-    # Save the figure in high resolution
-    # fig_path = pathlib.Path(run_path) / "grf_predictions.html"
-    # fig.write_html(str(fig_path))
+    fig = plot_gt_and_quantiles(
+        grf[600:1500], q_loq_un[600:1500], q_upq_un[600:1500], title_prefix="grf", title="Contact Forces"
+    )
     fig_path = pathlib.Path(run_path) / "grf_predictions.png"
     fig.write_image(str(fig_path))
+    log.info(f"Saved figure to {fig_path}")
 
     # Flush the logger.
     logger.finalize(trainer.state)

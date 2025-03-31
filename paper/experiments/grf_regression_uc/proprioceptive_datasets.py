@@ -165,7 +165,7 @@ class ProprioceptiveDataset(Dataset):
         """Computes the mean and variance for each observation in x_obs_names and y_obs_names."""
         for obs_name in self.x_obs_names + self.y_obs_names:
             trajs = [self.h5file.recordings[obs_name][traj_id] for traj_id in self._traj_lengths.keys()]
-            obs_data = np.concatenate(trajs, axis=0)
+            obs_data = np.concatenate(trajs, axis=0, dtype=np.float32)
             if obs_reps is not None:
                 from linear_operator_learning.nn.symmetric.stats import var_mean
 

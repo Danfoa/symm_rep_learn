@@ -77,6 +77,7 @@ class ENCPConditionalCDF(escnn.nn.EquivariantModule):
         Returns:
 
         """
+        assert isinstance(x_cond, GeometricTensor), f"X condition must be a GeometricTensor got {type(x_cond)}"
         ccdf = []
         for dim in range(self.n_obs_dims):
             dim_ncp_regressor = self.NCP_regressors[dim]
