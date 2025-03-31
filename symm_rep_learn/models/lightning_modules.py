@@ -7,6 +7,7 @@ from copy import deepcopy
 import lightning
 import torch
 
+from symm_rep_learn.models.multivariateCQR import MultivariateCQR
 from symm_rep_learn.mysc.utils import flatten_dict
 
 
@@ -156,7 +157,6 @@ class SupervisedTrainingModule(TrainingModule):
         batch_dim = self.get_batch_dim(batch)
         self._n_train_samples += batch_dim
         self.log("loss/train", loss, prog_bar=True, batch_size=batch_dim)
-        self.log("train_samples [k]", self._n_train_samples / 1000, on_step=True, on_epoch=False)
         self.log_metrics(metrics, suffix="train", batch_size=batch_dim)
         return loss
 
@@ -177,3 +177,44 @@ class SupervisedTrainingModule(TrainingModule):
         self.log("loss/test", loss, prog_bar=True, batch_size=self.get_batch_dim(batch))
         self.log_metrics(metrics, suffix="test", batch_size=self.get_batch_dim(batch))
         return loss
+
+
+class CQRLightningModule(TrainingModule):
+    def __init__(
+        self,
+        model: MultivariateCQR,
+        optimizer_fn: torch.optim.Optimizer,
+        optimizer_kwargs: dict,
+        loss_fn: callable,
+    ):
+        super(CQRLightningModule, self).__init__(
+            model=model, optimizer_fn=optimizer_fn, optimizer_kwargs=optimizer_kwargs, loss_fn=loss_fn
+        )
+
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        q_lo, q_up = self.model(x)
+        loss, metrics = self.loss_fn(q_lo, q_up, target=y)
+
+        batch_dim = self.get_batch_dim(batch)
+        self.log("loss/train", loss, prog_bar=True, batch_size=batch_dim)
+        self.log_metrics(metrics, suffix="train", batch_size=batch_dim)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        q_lo, q_up = self.model(x)
+        loss, metrics = self.loss_fn(q_lo, q_up, target=y)
+
+        batch_dim = self.get_batch_dim(batch)
+        self.log("loss/val", loss, prog_bar=True, batch_size=batch_dim)
+        self.log_metrics(metrics, suffix="val", batch_size=batch_dim)
+
+    def test_step(self, batch, batch_idx):
+        x, y = batch
+        q_lo, q_up = self.model(x)
+        loss, metrics = self.loss_fn(q_lo, q_up, target=y)
+
+        batch_dim = self.get_batch_dim(batch)
+        self.log("loss/test", loss, prog_bar=True, batch_size=batch_dim)
+        self.log_metrics(metrics, suffix="test", batch_size=batch_dim)
