@@ -75,6 +75,7 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             embedding_x=x_embedding,
             embedding_y=y_embedding,
             gamma=cfg.gamma,
+            gamma_centering=cfg.gamma_centering,
             truncated_op_bias=cfg.truncated_op_bias,
             learnable_change_of_basis=cfg.learnable_change_basis,
         )
@@ -117,6 +118,7 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             embedding_y=fy,
             embedding_dim=embedding_dim,
             gamma=cfg.gamma,
+            gamma_centering=cfg.gamma_centering,
             truncated_op_bias=cfg.truncated_op_bias,
             learnable_change_basis=cfg.learnable_change_basis,
         )

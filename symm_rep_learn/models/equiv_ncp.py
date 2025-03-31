@@ -31,6 +31,7 @@ class ENCP(NCP):
         embedding_x: escnn.nn.EquivariantModule,
         embedding_y: escnn.nn.EquivariantModule,
         gamma=1.0,
+        gamma_centering=None,
         truncated_op_bias: str = "full_rank",
         learnable_change_of_basis: bool = False,
     ):
@@ -65,6 +66,7 @@ class ENCP(NCP):
             embedding_y=embedding_y_iso,
             embedding_dim=embedding_x_iso.out_type.size,
             gamma=gamma,
+            gamma_centering=gamma_centering,
             truncated_op_bias=truncated_op_bias,
         )
 
@@ -149,6 +151,7 @@ class ENCP(NCP):
         hy_c_iso, reps_Hy_iso = self._orth_proj_isotypic_subspaces(z=hy_c), hy_c.type.representations
 
         Cx_iso_fro_2, Cy_iso_fro_2 = [], []
+        trCx_iso, trCy_iso = [], []
         for k, (fx_ck, rep_x_k, hy_ck, rep_y_k) in enumerate(zip(fx_c_iso, reps_Fx_iso, hy_c_iso, reps_Hy_iso)):
             irrep_dim = self.irreps_dim[self.iso_subspace_ids[k]]
             # Flatten the realizations along irreducible subspaces, while preserving sampling from the joint dist.
@@ -167,11 +170,15 @@ class ENCP(NCP):
             Cy_k_fro_2 = irrep_dim * (Dy_k_fro_2 - 2 * tr_Dy_k) + r_yk
             Cx_iso_fro_2.append(Cx_k_fro_2)
             Cy_iso_fro_2.append(Cy_k_fro_2)
+            trCx_iso.append(tr_Dx_k)
+            trCy_iso.append(tr_Dy_k)
             # Cx_k_fro_2_biased = torch.linalg.matrix_norm(self.Cx(k)) ** 2
             # Cy_k_fro_2_biased = torch.linalg.matrix_norm(self.Cy(k)) ** 2
 
         Cx_I_err_fro_2 = sum(Cx_iso_fro_2)  # ||Cx - I||_F^2 = Σ_k ||Cx_k - I_r_k||_F^2,
         Cy_I_err_fro_2 = sum(Cy_iso_fro_2)  # ||Cy - I||_F^2 = Σ_k ||Cy_k - I_r_k||_F^2
+        trCx = sum(trCx_iso)  # tr(Cx) = Σ_k tr(Dx_k)
+        trCy = sum(trCy_iso)  # tr(Cy) = Σ_k tr(Dy_k)
         # Cx_fro_2_biased = torch.linalg.matrix_norm(self.Cx(None)) ** 2
         # Cy_fro_2_biased = torch.linalg.matrix_norm(self.Cy(None)) ** 2
 
@@ -189,21 +196,23 @@ class ENCP(NCP):
             metrics = (
                 {
                     "||Cx||_F^2": Cx_I_err_fro_2 / embedding_dim_x,
+                    "tr(Cx)": trCx,
                     "||mu_x||": torch.sqrt(fx_centering_loss),
                     "||Vx - I||_F^2": orthonormality_fx / embedding_dim_x,
                     #
                     "||Cy||_F^2": Cy_I_err_fro_2 / embedding_dim_y,
+                    "tr(Cy)": trCy,
                     "||mu_y||": torch.sqrt(hy_centering_loss),
                     "||Vy - I||_F^2": orthonormality_hy / embedding_dim_y,
                 }
-                | {
-                    f"||Cx||_F^2iso/{k}": Cx_k_fro_2 / fx_c_iso[k].shape[-1]
-                    for k, Cx_k_fro_2 in enumerate(Cx_iso_fro_2)
-                }
-                | {
-                    f"||Cy||_F^2iso/{k}": Cy_k_fro_2 / hy_c_iso[k].shape[-1]
-                    for k, Cy_k_fro_2 in enumerate(Cy_iso_fro_2)
-                }
+                # | {
+                #     f"||Cx||_F^2iso/{k}": Cx_k_fro_2 / fx_c_iso[k].shape[-1]
+                #     for k, Cx_k_fro_2 in enumerate(Cx_iso_fro_2)
+                # }
+                # | {
+                #     f"||Cy||_F^2iso/{k}": Cy_k_fro_2 / hy_c_iso[k].shape[-1]
+                #     for k, Cy_k_fro_2 in enumerate(Cy_iso_fro_2)
+                # }
             )
 
         if return_inner_prod:
@@ -408,7 +417,6 @@ class ENCP(NCP):
         elif self.truncated_op_bias == "full_rank":
             # D_r is diagonal and is stable (that is has eivalues <= 1)
             D_r, _ = self._Dr.expand_parameters()  # Expand the equiv lin layer into its matrix form
-            D_r.detach().cpu().numpy()
             Dr_symm = (D_r @ D_r.T) / 2  # Ensure its symmetric.
             eigval_max = torch.linalg.eigvalsh(Dr_symm)[-1]
             Dr = Dr_symm / eigval_max
@@ -510,6 +518,13 @@ class ENCP(NCP):
         elif truncated_op_bias == "full_rank":
             # Equivariant Linear layer from lat singular basis to lat singular basis.
             self._Dr = escnn.nn.Linear(in_type=lat_singular_type, out_type=lat_singular_type, bias=False)
+            # Reinitialize the (nparams,)
+            self._Dr.weights.data = torch.nn.init.uniform_(self._Dr.weights.data, a=-1, b=1)
+            Dr, _ = self._Dr.expand_parameters()
+            # sval_max = torch.linalg.matrix_norm(Dr, 2)
+            Dr = (Dr @ Dr.T) / 2
+            sval_max = torch.linalg.matrix_norm(Dr, 2)
+            self._Dr.weights.data = self._Dr.weights.data / sval_max
         elif truncated_op_bias == "Cxy":
             pass  # No parameters to define
         else:

@@ -27,7 +27,7 @@ class NCP(torch.nn.Module):
     ):
         super(NCP, self).__init__()
         self.gamma = gamma
-        self.gamma_centering = gamma_centering if gamma_centering is not None else gamma
+        self.gamma_centering = gamma_centering if gamma_centering is not None else 0.0
         self.embedding_dim = embedding_dim
         if learnable_change_basis:
             self.embedding_x = torch.nn.Sequential(embedding_x, torch.nn.Linear(embedding_dim, embedding_dim))
@@ -144,7 +144,13 @@ class NCP(torch.nn.Module):
 
         metrics |= loss_metrics if loss_metrics is not None else {}
         # Total loss ____________________________________________________________________________________
-        loss = truncation_err + self.gamma * (orthonormal_reg_fx + orthonormal_reg_hy) / (2 * self.embedding_dim)
+        loss = (
+            truncation_err
+            + self.gamma * (orthonormal_reg_fx + orthonormal_reg_hy) / (2 * self.embedding_dim)
+            +
+            # Control barrier function on model constraint.
+            self.gamma_centering * torch.exp((self.mean_fx**2 + self.mean_hy**2).sum())
+        )
         # Logging metrics _______________________________________________________________________________
         with torch.no_grad():
             metrics |= {

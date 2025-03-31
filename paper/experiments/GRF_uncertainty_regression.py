@@ -23,9 +23,7 @@ from plotly.subplots import make_subplots
 from torch.optim import Adam
 from torch.utils.data import DataLoader, default_collate
 
-from paper.experiments.CoM_regression import (
-    get_model,
-)
+from paper.experiments.CoM_regression import get_model
 from paper.experiments.grf_regression_uc.proprioceptive_datasets import ProprioceptiveDataset
 from symm_rep_learn.inference.encp import ENCPConditionalCDF
 from symm_rep_learn.inference.ncp import NCPConditionalCDF
@@ -388,6 +386,7 @@ def main(cfg: DictConfig):
     log.info(f"Run path: {run_path}")
     run_cfg = OmegaConf.to_container(cfg, resolve=True)
     logger = WandbLogger(save_dir=run_path, project=cfg.proj_name, log_model=False, config=run_cfg)
+    logger.watch(model, log="gradients")
     n_total_samples = int(len(train_ds) / cfg.dataset.train_ratio)
     scaled_saved_freq = int(5 * n_total_samples // cfg.optim.batch_size)
     BEST_CKPT_NAME, LAST_CKPT_NAME = "best", ModelCheckpoint.CHECKPOINT_NAME_LAST
@@ -403,7 +402,7 @@ def main(cfg: DictConfig):
 
     # Fix for all runs independent on the train_ratio chosen. This way we compare on effective number of "epochs"
     max_steps = int(n_total_samples * cfg.optim.max_epochs // cfg.optim.batch_size)
-    check_val_every_n_epochs = max(5, int(n_total_samples // cfg.optim.batch_size / 4))
+    check_val_every_n_epochs = max(5, int(n_total_samples // cfg.optim.batch_size))
     metric_to_monitor = "||k(x,y) - k_r(x,y)||/val" if isinstance(model, ENCP) or isinstance(model, NCP) else "loss/val"
     early_call = EarlyStopping(metric_to_monitor, patience=50, mode="min")
 
@@ -460,13 +459,17 @@ def main(cfg: DictConfig):
     else:
         raise ValueError(f"Model type {type(model)} not supported.")
 
+    q_low = torch.tensor(q_low).to(y_train.device, y_train.dtype)
+    q_high = torch.tensor(q_high).to(y_train.device, y_train.dtype)
+
     y_test_un = y_test * torch.sqrt(y_var) + y_mean
     q_loq_un = (q_low * torch.sqrt(y_var) + y_mean).detach()
     q_upq_un = (q_high * torch.sqrt(y_var) + y_mean).detach()
     grf = y_test_un[:, y_obs_dims["contact_forces:base"]].detach().cpu().numpy()  # (time, 12)
 
+    view_range = slice(600, 1000)
     fig = plot_gt_and_quantiles(
-        grf[600:1500], q_loq_un[600:1500], q_upq_un[600:1500], title_prefix="grf", title="Contact Forces"
+        grf[view_range], q_loq_un[view_range], q_upq_un[view_range], title_prefix="grf", title="Contact Forces"
     )
     fig_path = pathlib.Path(run_path) / "grf_predictions.png"
     fig.write_image(str(fig_path))
