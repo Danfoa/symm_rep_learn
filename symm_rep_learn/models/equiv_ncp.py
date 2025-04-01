@@ -196,12 +196,12 @@ class ENCP(NCP):
             metrics = (
                 {
                     "||Cx||_F^2": Cx_I_err_fro_2 / embedding_dim_x,
-                    "tr(Cx)": trCx,
+                    "tr(Cx)": trCx / embedding_dim_x,
                     "||mu_x||": torch.sqrt(fx_centering_loss),
                     "||Vx - I||_F^2": orthonormality_fx / embedding_dim_x,
                     #
                     "||Cy||_F^2": Cy_I_err_fro_2 / embedding_dim_y,
-                    "tr(Cy)": trCy,
+                    "tr(Cy)": trCy / embedding_dim_y,
                     "||mu_y||": torch.sqrt(hy_centering_loss),
                     "||Vy - I||_F^2": orthonormality_hy / embedding_dim_y,
                 }

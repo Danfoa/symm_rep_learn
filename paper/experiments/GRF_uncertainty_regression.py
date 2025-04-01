@@ -31,7 +31,7 @@ from symm_rep_learn.models.equiv_ncp import ENCP
 from symm_rep_learn.models.lightning_modules import CQRLightningModule, TrainingModule
 from symm_rep_learn.models.multivariateCQR import MultivariateCQR, get_coverage, get_relaxed_coverage, get_set_size
 from symm_rep_learn.models.ncp import NCP
-from symm_rep_learn.nn.equiv_layers import EMLP
+from symm_rep_learn.nn.equiv_layers import EMLP, IMLP
 
 log = logging.getLogger(__name__)
 
@@ -111,7 +111,9 @@ def plot_gt_and_quantiles(gt, q_low, q_high, title_prefix="Dim", subtitles=None,
             col=col,
         )
 
-    fig.update_layout(height=300 * n_rows, width=350 * n_cols, title_text=title)
+    fig.update_layout(height=800 * n_rows, width=2000 * n_cols, title_text=title)
+    # Remove borders and white spaces
+    fig.update_layout(margin=dict(l=0, r=0, b=0, t=0))
     return fig
 
 
@@ -178,6 +180,43 @@ def get_uc_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             bias=False,
         )
         return cqr
+    elif cfg.model.lower() == "encp":  # Equivariant NCP
+        from symm_rep_learn.models.equiv_ncp import ENCP
+
+        G = x_type.representation.group
+
+        reg_rep = G.regular_representation
+
+        kwargs = dict(
+            hidden_layers=cfg.architecture.hidden_layers,
+            activation=cfg.architecture.activation,
+            hidden_units=cfg.architecture.hidden_units,
+            bias=False,
+        )
+        if cfg.architecture.residual_encoder:
+            from symm_rep_learn.nn.equiv_layers import ResidualEncoder
+
+            x_embedding = IMLP(in_type=x_type, out_dim=cfg.architecture.embedding_dim, **kwargs)
+            y_embedding = ResidualEncoder(
+                encoder=IMLP(in_type=y_type, out_dim=cfg.architecture.embedding_dim - y_type.size, **kwargs),
+                in_type=y_type,
+            )
+            assert (
+                y_embedding.out_type.size == x_embedding.out_type.size
+            ), f"{y_embedding.out_type.size} != {x_embedding.out_type.size}"
+        else:
+            x_embedding = IMLP(in_type=x_type, out_dim=cfg.architecture.embedding_dim, **kwargs)
+            y_embedding = IMLP(in_type=y_type, out_dim=cfg.architecture.embedding_dim, **kwargs)
+        eNCPop = ENCP(
+            embedding_x=x_embedding,
+            embedding_y=y_embedding,
+            gamma=cfg.gamma,
+            gamma_centering=cfg.gamma_centering,
+            truncated_op_bias=cfg.truncated_op_bias,
+            learnable_change_of_basis=cfg.learnable_change_basis,
+        )
+
+        return eNCPop
     else:
         return get_model(cfg, x_type, y_type)
 
@@ -271,7 +310,9 @@ def get_proprioceptive_data(cfg: DictConfig):
 
 
 @torch.no_grad()
-def uncertainty_metrics(model, x_cond, y, y_train, x_type, y_type, alpha: float = 0.05, lstsq: bool = True):
+def uncertainty_metrics(
+    model, x_cond, y, y_train, x_type, y_type, alpha: float = 0.05, lstsq: bool = True, y_obs_dims: dict = None
+):
     """Args:
         model: NCP or ENCP model.
         x_cond: (batch, x_dim) tensor of the conditioning values.
@@ -303,6 +344,14 @@ def uncertainty_metrics(model, x_cond, y, y_train, x_type, y_type, alpha: float 
         relaxed_coverage=get_relaxed_coverage(q_low, q_high, target=y),
         set_size=get_set_size(q_low, q_high),
     )
+    for obs_name, obs_dims in y_obs_dims.items():
+        metrics |= {
+            f"{obs_name}/coverage": get_coverage(q_low[:, obs_dims], q_high[:, obs_dims], target=y[:, obs_dims]),
+            f"{obs_name}/relaxed_coverage": get_relaxed_coverage(
+                q_low[:, obs_dims], q_high[:, obs_dims], target=y[:, obs_dims]
+            ),
+            f"{obs_name}/set_size": get_set_size(q_low[:, obs_dims], q_high[:, obs_dims]),
+        }
 
     return metrics
 
@@ -374,10 +423,10 @@ def main(cfg: DictConfig):
             optimizer_kwargs={"lr": cfg.optim.lr},
             loss_fn=model.loss if hasattr(model, "loss") else None,
             val_metrics=lambda _: uncertainty_metrics(
-                model, x_val, y_val, y_train, x_type, y_type, cfg.alpha, cfg.lstsq
+                model, x_val, y_val, y_train, x_type, y_type, cfg.alpha, cfg.lstsq, y_obs_dims
             ),
             test_metrics=lambda _: uncertainty_metrics(
-                model, x_test, y_test, y_train, x_type, y_type, cfg.alpha, cfg.lstsq
+                model, x_test, y_test, y_train, x_type, y_type, cfg.alpha, cfg.lstsq, y_obs_dims
             ),
         )
 
@@ -401,15 +450,14 @@ def main(cfg: DictConfig):
     )
 
     # Fix for all runs independent on the train_ratio chosen. This way we compare on effective number of "epochs"
-    max_steps = int(n_total_samples * cfg.optim.max_epochs // cfg.optim.batch_size)
-    check_val_every_n_epochs = max(5, int(n_total_samples // cfg.optim.batch_size))
+    check_val_every_n_epochs = 33
     metric_to_monitor = "||k(x,y) - k_r(x,y)||/val" if isinstance(model, ENCP) or isinstance(model, NCP) else "loss/val"
-    early_call = EarlyStopping(metric_to_monitor, patience=50, mode="min")
+    early_call = EarlyStopping(metric_to_monitor, patience=5, mode="min")
 
     trainer = Trainer(
         accelerator="gpu",
         devices=[cfg.device] if cfg.device != -1 else cfg.device,  # -1 for all available GPUs
-        max_epochs=max_steps,
+        max_epochs=cfg.optim.max_epochs,
         logger=logger,
         enable_progress_bar=True,
         log_every_n_steps=25,
@@ -445,7 +493,6 @@ def main(cfg: DictConfig):
     model.eval()
     lightning_module.cpu()
 
-    x_mean, x_var, y_mean, y_var = x_moments[0], x_moments[1], y_moments[0], y_moments[1]
     if isinstance(model, ENCP):
         encp_ccdf = ENCPConditionalCDF(
             model=model, y_train=y_type(y_train), support_discretization_points=1000, lstsq=True
@@ -462,18 +509,24 @@ def main(cfg: DictConfig):
     q_low = torch.tensor(q_low).to(y_train.device, y_train.dtype)
     q_high = torch.tensor(q_high).to(y_train.device, y_train.dtype)
 
+    x_mean, x_var, y_mean, y_var = x_moments[0], x_moments[1], y_moments[0], y_moments[1]
     y_test_un = y_test * torch.sqrt(y_var) + y_mean
     q_loq_un = (q_low * torch.sqrt(y_var) + y_mean).detach()
     q_upq_un = (q_high * torch.sqrt(y_var) + y_mean).detach()
-    grf = y_test_un[:, y_obs_dims["contact_forces:base"]].detach().cpu().numpy()  # (time, 12)
 
-    view_range = slice(600, 1000)
-    fig = plot_gt_and_quantiles(
-        grf[view_range], q_loq_un[view_range], q_upq_un[view_range], title_prefix="grf", title="Contact Forces"
-    )
-    fig_path = pathlib.Path(run_path) / "grf_predictions.png"
-    fig.write_image(str(fig_path))
-    log.info(f"Saved figure to {fig_path}")
+    for obs_name, obs_dims in y_obs_dims.items():
+        obs = y_test_un[:, y_obs_dims[obs_name]].detach().cpu().numpy()  # (time, 12)
+        q_low_obs = q_loq_un[:, y_obs_dims[obs_name]].detach().cpu().numpy()
+        q_high_obs = q_upq_un[:, y_obs_dims[obs_name]].detach().cpu().numpy()
+        view_range = slice(600, 1000)
+        fig = plot_gt_and_quantiles(
+            obs[view_range], q_low_obs[view_range], q_high_obs[view_range], title_prefix="grf", title="Contact Forces"
+        )
+        fig_path = pathlib.Path(run_path) / f"{obs_name}_uncertainty_quantification.png"
+        fig.write_image(str(fig_path))
+        fig_path = pathlib.Path(run_path) / f"{obs_name}_uncertainty_quantification.html"
+        fig.write_html(str(fig_path))
+        log.info(f"Saved figure to {fig_path}")
 
     # Flush the logger.
     logger.finalize(trainer.state)

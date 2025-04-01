@@ -84,9 +84,12 @@ class ProprioceptiveDataset(Dataset):
             self._traj_lengths[traj_id] = traj_len
 
             for obs_name in self.x_obs_names + self.y_obs_names:
-                assert (
-                    self.h5file.recordings[obs_name][traj_id].shape[0] == traj_len
-                ), f"Obs {tmp_obs_name} and {obs_name} have different time dimensions for trajectory {traj_id}."
+                try:
+                    assert (
+                        self.h5file.recordings[obs_name][traj_id].shape[0] == traj_len
+                    ), f"Obs {tmp_obs_name} and {obs_name} have different time dimensions for trajectory {traj_id}."
+                except Exception as e:
+                    raise Exception(f"Issue with {obs_name} ") from e
 
     @property
     def n_trajectories(self):
