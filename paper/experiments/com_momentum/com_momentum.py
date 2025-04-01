@@ -3,6 +3,7 @@ import pathlib
 import time
 
 import numpy as np
+import pinocchio as pin
 import torch
 import torch.nn.functional as F
 from escnn import gspaces
@@ -10,9 +11,7 @@ from escnn.group import Group, directsum
 from escnn.nn import FieldType
 from morpho_symm.data.DynamicsRecording import DynamicsRecording
 from morpho_symm.robots.PinBulletWrapper import PinBulletWrapper
-
 from morpho_symm.utils.robot_utils import load_symmetric_system
-import pinocchio as pin
 from torch.utils.data import Dataset
 from torch.utils.data._utils.collate import default_collate
 

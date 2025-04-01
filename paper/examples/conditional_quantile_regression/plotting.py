@@ -33,7 +33,13 @@ def plot_quantiles(y_c, low_q, up_q, ax=None, label="pred", alpha=0.05, gt=True,
 
     # Add rectangles for the predicted quantiles
     pred_rect = Rectangle(
-        (y0_low, y1_low), y0_up - y0_low, y1_up - y1_low, edgecolor=quantile_color, facecolor="none", alpha=0.8
+        (y0_low, y1_low),
+        y0_up - y0_low,
+        y1_up - y1_low,
+        edgecolor=quantile_color,
+        facecolor="none",
+        alpha=0.8,
+        linewidth=2.0,
     )
     ax.add_patch(pred_rect)
     ax.text(y0_low, y1_up * 1.05, label, color=quantile_color, verticalalignment="bottom", fontweight="bold")
@@ -51,6 +57,7 @@ def plot_quantiles(y_c, low_q, up_q, ax=None, label="pred", alpha=0.05, gt=True,
             edgecolor="black",
             facecolor="none",
             alpha=0.8,
+            linewidth=2.0,
         )
         ax.add_patch(gt_rect)
         ax.text(
