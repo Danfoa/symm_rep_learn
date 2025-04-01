@@ -36,7 +36,7 @@ from symm_rep_learn.nn.equiv_layers import EMLP, IMLP
 log = logging.getLogger(__name__)
 
 
-def plot_gt_and_quantiles(gt, q_low, q_high, title_prefix="Dim", subtitles=None, title="Observables"):
+def plot_gt_and_quantiles(gt, q_low, q_high, title_prefix="Dim", subtitles=None, title="Observables", fig=None):
     """Plots predictions vs ground truth per dimension with shared legend group using Plotly.
 
     Args:
@@ -56,14 +56,15 @@ def plot_gt_and_quantiles(gt, q_low, q_high, title_prefix="Dim", subtitles=None,
     n_cols = min(3, dim)
     n_rows = int(np.ceil(dim / n_cols))
 
-    fig = make_subplots(
-        rows=n_rows,
-        cols=n_cols,
-        shared_xaxes=True,
-        subplot_titles=[
-            subtitles[i] if subtitles and i < len(subtitles) else f"{title_prefix} {i}" for i in range(dim)
-        ],
-    )
+    if fig is None:
+        fig = make_subplots(
+            rows=n_rows,
+            cols=n_cols,
+            shared_xaxes=True,
+            subplot_titles=[
+                subtitles[i] if subtitles and i < len(subtitles) else f"{title_prefix} {i}" for i in range(dim)
+            ],
+        )
 
     for i in range(dim):
         row = i // n_cols + 1
