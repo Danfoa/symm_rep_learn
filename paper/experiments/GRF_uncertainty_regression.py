@@ -36,7 +36,9 @@ from symm_rep_learn.nn.equiv_layers import EMLP, IMLP
 log = logging.getLogger(__name__)
 
 
-def plot_gt_and_quantiles(gt, q_low, q_high, title_prefix="Dim", subtitles=None, title="Observables", fig=None):
+def plot_gt_and_quantiles(
+    gt, q_low, q_high, title_prefix="Dim", subtitles=None, title="Observables", fig=None, ncols=None
+):
     """Plots predictions vs ground truth per dimension with shared legend group using Plotly.
 
     Args:
@@ -53,7 +55,7 @@ def plot_gt_and_quantiles(gt, q_low, q_high, title_prefix="Dim", subtitles=None,
 
     time = np.arange(gt.shape[0])
     dim = gt.shape[1]
-    n_cols = min(3, dim)
+    n_cols = min(3, dim) if ncols is None else ncols
     n_rows = int(np.ceil(dim / n_cols))
 
     if fig is None:
@@ -61,6 +63,7 @@ def plot_gt_and_quantiles(gt, q_low, q_high, title_prefix="Dim", subtitles=None,
             rows=n_rows,
             cols=n_cols,
             shared_xaxes=True,
+            vertical_spacing=0.05,
             subplot_titles=[
                 subtitles[i] if subtitles and i < len(subtitles) else f"{title_prefix} {i}" for i in range(dim)
             ],
@@ -91,7 +94,9 @@ def plot_gt_and_quantiles(gt, q_low, q_high, title_prefix="Dim", subtitles=None,
                 fill="toself",
                 fillcolor="rgba(255, 0, 0, 0.2)",
                 line=dict(color="rgba(255, 0, 0, 0)"),
-                showlegend=False,
+                name="Confidence Interval",
+                legendgroup="CI",
+                showlegend=(i == 0),
             ),
             row=row,
             col=col,
@@ -112,9 +117,9 @@ def plot_gt_and_quantiles(gt, q_low, q_high, title_prefix="Dim", subtitles=None,
             col=col,
         )
 
-    fig.update_layout(height=800 * n_rows, width=2000 * n_cols, title_text=title)
+    # fig.update_layout(height=800 * n_rows, width=2000 * n_cols, title_text=title)
     # Remove borders and white spaces
-    fig.update_layout(margin=dict(l=0, r=0, b=0, t=0))
+    # fig.update_layout(margin=dict(l=0, r=0, b=0, t=0))
     return fig
 
 
