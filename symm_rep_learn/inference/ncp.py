@@ -1,4 +1,3 @@
-# Created by Daniel Ordoñez (daniels.ordonez@gmail.com) at 29/03/25
 import numpy as np
 import torch
 
@@ -76,42 +75,41 @@ class NCPConditionalCDF(torch.nn.Module):
         # Estimate the CDF
         self.marginal_CDF = cdf_obs_ind.mean(axis=0)  # (discretization_points,) -> F(y') -> P(Y <= y')
         cdf_obs_ind_c = torch.tensor(cdf_obs_ind - self.marginal_CDF, dtype=torch.float32)
-
+        n_samples, _, n_dim = cdf_obs_ind_c.shape
+        cdf_obs_ind_c_flat = cdf_obs_ind_c.reshape((n_samples, n_dim * self.discretization_points))
         self.n_obs_dims = y_train.shape[1]
         self.NCP_regressors = []
 
-        for dim in range(self.n_obs_dims):
-            # Compute the conditional indicator sets per each y' in the support given X=x.
-            dim_ncp_regressor = NCPRegressor(
-                model=model, y_train=y_train, zy_train=cdf_obs_ind_c[..., dim], **ncp_regressor_kwargs
-            )
-            self.NCP_regressors.append(dim_ncp_regressor)
+        # Compute the conditional indicator sets per each y' in the support given X=x.
+        self.ccdf_regressor = NCPRegressor(
+            model=model, y_train=y_train, zy_train=cdf_obs_ind_c_flat, **ncp_regressor_kwargs
+        )
 
     def forward(self, x_cond: torch.Tensor):
         """Predicts the Conditional Cumulative Distribution Function of the random variable Y given X=x.
 
         Args:
-            x_cond:
-
+            x_cond: (torch.Tensor): The conditioning variable X of shape (n_cond_points, x_dim).
         Returns:
-
+            ccdf: (numpy.ndarray): The predicted Conditional Cumulative Distribution Function of shape
+            (n_cond_points, discretization_points, y_dim) or (discretization_points, y_dim) if x_cond is a single point.
         """
-        ccdf = []
-        for dim in range(self.n_obs_dims):
-            dim_ncp_regressor = self.NCP_regressors[dim]
-            ccdf_obs_ind_pred = (
-                self.marginal_CDF[..., dim] + dim_ncp_regressor(x_cond=x_cond).detach().cpu().numpy().squeeze()
-            )
-            ccdf_obs_ind_pred = np.max([ccdf_obs_ind_pred, np.zeros_like(ccdf_obs_ind_pred)], axis=0)
-            # Smooth the predicted Conditional Cumulative Distribution Function
-            # ccdf_obs_ind_smooth = self.smooth_cdf(self.support_obs[..., dim], np.squeeze(ccdf_obs_ind_pred))
-            # Filter out points below 0 from approximation of the NCP.
-            ccdf.append(ccdf_obs_ind_pred)
+        if x_cond.ndim == 1:
+            x_cond = x_cond[None, :]
 
-        ccdf = np.asarray(ccdf)
-        # bound predictions to [0, 1]
-        ccdf = np.clip(ccdf, 0, 1)
-        return ccdf
+        deflated_ccdf_pred = self.ccdf_regressor(x_cond=x_cond).detach().cpu().numpy()
+        # print(deflated_ccdf_pred.shape)
+        n_cond_points, _ = deflated_ccdf_pred.shape
+        deflated_ccdf_pred = deflated_ccdf_pred.reshape((n_cond_points, self.discretization_points, self.n_obs_dims))
+        ccdf_pred = self.marginal_CDF + deflated_ccdf_pred
+        # Smooth the predicted Conditional Cumulative Distribution Function
+        # TODO: Implement smoothing for multivariate CDF
+        # Filter out points below 0 from approximation of the NCP [0, 1]
+        ccdf_pred = np.clip(ccdf_pred, 0, 1)
+
+        assert ccdf_pred.shape == (n_cond_points, self.discretization_points, self.n_obs_dims)
+        ccdf_pred = np.squeeze(ccdf_pred, axis=0) if n_cond_points == 1 else ccdf_pred
+        return ccdf_pred
 
     def conditional_quantiles(self, x_cond: torch.Tensor, alpha=0.05):
         """Predicts the Conditional Quantiles of the random variable Y given X=x."""
@@ -119,17 +117,17 @@ class NCPConditionalCDF(torch.nn.Module):
         ccdf = self.forward(x_cond)
         q_low, q_high = [], []
         for dim in range(self.n_obs_dims):
-            dim_ccdf = ccdf[dim]
+            dim_ccdf = ccdf[..., dim]  # (n_train_points, discretization_points)
             if dim_ccdf.ndim == 2:  # Multiple conditioning points:
                 q_low_per_x, q_high_per_ = [], []
                 for x_cond_idx in range(dim_ccdf.shape[0]):
-                    low_qx, high_qx = self.find_best_quantile(self.support_obs[..., dim], ccdf[dim][x_cond_idx], alpha)
+                    low_qx, high_qx = self.find_best_quantile(self.support_obs[..., dim], dim_ccdf[x_cond_idx], alpha)
                     q_low_per_x.append(low_qx)
                     q_high_per_.append(high_qx)
                 q_low.append(np.asarray(q_low_per_x))
                 q_high.append(np.asarray(q_high_per_))
             elif dim_ccdf.ndim == 1:
-                low_qx, high_qx = self.find_best_quantile(self.support_obs[..., dim], ccdf[dim], alpha)
+                low_qx, high_qx = self.find_best_quantile(self.support_obs[..., dim], dim_ccdf, alpha)
                 q_low.append(low_qx)
                 q_high.append(high_qx)
             else:
@@ -152,6 +150,7 @@ class NCPConditionalCDF(torch.nn.Module):
     def find_best_quantile(x_support, cdf_x, alpha):
         """Find the best quantile interval of the random variable Y given X=x at confidence level alpha.
 
+        TODO: Vectorize for different conditioning numbers and dimensions of the random variable Y.
         Args:
             x_support (numpy.ndarray): The values of the random variable Y of shape (n_samples,)
             cdf_x  (numpy.ndarray): The cumulative distribution function values corresponding to Y of shape (n_samples,)
