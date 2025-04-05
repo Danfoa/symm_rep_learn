@@ -9,17 +9,15 @@ import numpy as np
 import torch
 from escnn.group import directsum
 from escnn.nn import FieldType, GeometricTensor
+from symm_learning.linalg import isotypic_signal2irreducible_subspaces
+from symm_learning.nn.disentangled import Change2DisentangledBasis
+from symm_learning.stats import isotypic_cov
 
 from symm_rep_learn.models.ncp import NCP
 from symm_rep_learn.mysc.statistics import (
     cov_norm_squared_unbiased_estimation,
     cross_cov_norm_squared_unbiased_estimation,
 )
-from symm_rep_learn.mysc.symm_algebra import (
-    isotypic_cross_cov,
-    isotypic_signal2irreducible_subspaces,
-)
-from symm_rep_learn.nn.equiv_layers import Change2IsotypicBasis
 
 log = logging.getLogger(__name__)
 
@@ -38,10 +36,10 @@ class ENCP(NCP):
         self.G = embedding_x.out_type.fibergroup
         # Given any Field types of the embeddings of x and y, we need to change basis to the isotypic basis.
         embedding_x_iso = escnn.nn.SequentialModule(
-            embedding_x, Change2IsotypicBasis(in_type=embedding_x.out_type, learnable=learnable_change_of_basis)
+            embedding_x, Change2DisentangledBasis(in_type=embedding_x.out_type, learnable=learnable_change_of_basis)
         )
         embedding_y_iso = escnn.nn.SequentialModule(
-            embedding_y, Change2IsotypicBasis(in_type=embedding_y.out_type, learnable=learnable_change_of_basis)
+            embedding_y, Change2DisentangledBasis(in_type=embedding_y.out_type, learnable=learnable_change_of_basis)
         )
 
         # Isotypic subspace are identified by the irrep id associated with the subspace
@@ -376,9 +374,9 @@ class ENCP(NCP):
             # Centered observations (non-trivial subspaces are centered by construction)
             fx_ck = fx_k if k != self.idx_inv_subspace else fx_k - self.mean_fx
             hy_ck = hy_k if k != self.idx_inv_subspace else hy_k - self.mean_hy
-            _, Dxy_k = isotypic_cross_cov(X=fx_ck, Y=hy_ck, rep_X=rep_x_k, rep_Y=rep_y_k, centered=True)
-            _, Dx_k = isotypic_cross_cov(X=fx_ck, Y=fx_ck, rep_X=rep_x_k, rep_Y=rep_x_k, centered=True)
-            _, Dy_k = isotypic_cross_cov(X=hy_ck, Y=hy_ck, rep_X=rep_y_k, rep_Y=rep_y_k, centered=True)
+            _, Dxy_k = isotypic_cov(x=fx_ck, y=hy_ck, rep_x=rep_x_k, rep_y=rep_y_k, center=True)
+            _, Dx_k = isotypic_cov(x=fx_ck, y=fx_ck, rep_x=rep_x_k, rep_y=rep_x_k, center=True)
+            _, Dy_k = isotypic_cov(x=hy_ck, y=hy_ck, rep_x=rep_y_k, rep_y=rep_y_k, center=True)
             setattr(self, f"Dxy_{k}", Dxy_k)
             setattr(self, f"Dx_{k}", Dx_k)
             setattr(self, f"Dy_{k}", Dy_k)

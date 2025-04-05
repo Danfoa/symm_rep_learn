@@ -1,8 +1,6 @@
 # Created by danfoa at 16/01/25
 import torch.nn
 
-from symm_rep_learn.nn.layers import Lambda
-
 
 # Density Ratio Fitting.
 class DRF(torch.nn.Module):

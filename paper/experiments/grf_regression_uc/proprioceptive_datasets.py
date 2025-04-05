@@ -170,7 +170,7 @@ class ProprioceptiveDataset(Dataset):
             trajs = [self.h5file.recordings[obs_name][traj_id] for traj_id in self._traj_lengths.keys()]
             obs_data = np.concatenate(trajs, axis=0, dtype=np.float32)
             if obs_reps is not None:
-                from linear_operator_learning.nn.symmetric.stats import var_mean
+                from symm_learning.stats import var_mean
 
                 obs_var, obs_mean = var_mean(torch.tensor(obs_data), obs_reps[obs_name])
             else:

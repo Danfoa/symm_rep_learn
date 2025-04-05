@@ -19,13 +19,13 @@ from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from morpho_symm.data.DynamicsRecording import DynamicsRecording
 from omegaconf import DictConfig, OmegaConf
+from symm_learning.stats import invariant_orthogonal_projector
 from torch.optim import Adam
 from torch.utils.data import DataLoader, TensorDataset, default_collate
 
 from symm_rep_learn.models.equiv_ncp import ENCP
 from symm_rep_learn.models.lightning_modules import SupervisedTrainingModule, TrainingModule
 from symm_rep_learn.models.ncp import NCP
-from symm_rep_learn.mysc.symm_algebra import invariant_orthogonal_projector
 from symm_rep_learn.nn.equiv_layers import EMLP
 from symm_rep_learn.nn.layers import MLP
 

@@ -31,7 +31,7 @@ from symm_rep_learn.models.equiv_ncp import ENCP
 from symm_rep_learn.models.lightning_modules import CQRLightningModule, TrainingModule
 from symm_rep_learn.models.multivariateCQR import MultivariateCQR, get_coverage, get_relaxed_coverage, get_set_size
 from symm_rep_learn.models.ncp import NCP
-from symm_rep_learn.nn.equiv_layers import EMLP, IMLP
+from symm_rep_learn.nn.equiv_layers import EMLP
 
 log = logging.getLogger(__name__)
 
@@ -199,6 +199,8 @@ def get_uc_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             hidden_units=cfg.architecture.hidden_units,
             bias=False,
         )
+        from symm_rep_learn.nn.equiv_layers import IMLP
+
         if cfg.architecture.residual_encoder:
             from symm_rep_learn.nn.equiv_layers import ResidualEncoder
 
