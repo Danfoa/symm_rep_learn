@@ -55,7 +55,7 @@ architecture:
 
 # OPTIMIZATION CONFIG
 optim:
-  lr: 5e-3                    # Learning rate NCP train best at low lr values < 1e-3
+  lr: 5e-4                    # Learning rate NCP train best at low lr values < 1e-3
   patience: 25                # Epochs to wait for improvement before early stopping
   batch_size: 2048            # The higher the best
   max_epochs: 800             # Number of passes before stop training. Early stopping is used.

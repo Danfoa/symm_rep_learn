@@ -16,20 +16,21 @@ dependencies = [
 
 # RUFF ___________________________________________________________________________________________________________
 [tool.ruff]
-# Set the maximum allowed line length to 120 characters
-line-length = 120
+line-length = 120 # Set the maximum allowed line length to 120 characters
 
+[tool.ruff.lint] # _____________________________________________________________________________________________________
 # Enable specific linting rules
 select = [
   "F",    # pyflakes: general code quality checks
-#  "E",    # pycodestyle: PEP8 error checks
+  #  "E",    # pycodestyle: PEP8 error checks
   "W",    # pycodestyle: PEP8 warning checks
   "I",    # isort: import sorting checks
-#  "D"     # pydocstyle: docstring style checks
+  #  "D"     # pydocstyle: docstring style checks
 ]
 
 # Ignore specific linting rules
 ignore = [
+  "F841", # Ignore unused variable warnings
   "D401", # Allow any docstring to start with a capital letter, not just "This"
   "D405", # Allow non-imperative mood in docstring section names
   "E701", # Allow multiple statements on one line (colon)
@@ -44,9 +45,7 @@ exclude = [
   ".vscode"
 ]
 
-[tool.ruff.pydocstyle]
-convention = "google"
-
+pydocstyle.convention = "google"
 
 # ___________________________________________________________________________________________________________
 [build-system]

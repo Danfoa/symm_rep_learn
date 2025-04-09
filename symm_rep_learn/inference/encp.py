@@ -4,7 +4,6 @@ from typing import Tuple
 import escnn
 import numpy as np
 import torch
-from escnn.gspaces import no_base_space
 from escnn.nn import FieldType, GeometricTensor
 from symm_learning.stats import invariant_orthogonal_projector
 
@@ -35,65 +34,71 @@ class ENCPConditionalCDF(escnn.nn.EquivariantModule):
         G_y_max = [self.out_type.transform_fibers(y_max, g) for g in self.G.elements]
         y_min = torch.min(torch.stack(G_y_min), dim=0).values.reshape(self.out_type.size)
         y_max = torch.max(torch.stack(G_y_max), dim=0).values.reshape(self.out_type.size)
-        # print(y_min.shape)
         # self.support_obs -> (discret_points, y_dim)
         self.support_obs = np.linspace(y_min.numpy(), y_max.numpy(), self.discretization_points)
-        # print(self.support_obs.shape)
         # Compute the indicator function of (y_i <= y_i') for each y_i' in the discretized support of y_i
         # cdf_obs_ind -> (n_samples, discretization_points, y_dim)
         G_y_train = [self.out_type.transform_fibers(y_train.tensor, g) for g in self.G.elements]
-        # print([t.shape for t in G_y_train])
         G_y_train = torch.cat(G_y_train, dim=0)  # (G * n_samples, y_dim)
-        # print(G_y_train.shape)
-        cdf_obs_ind = (G_y_train.detach().cpu().numpy()[:, None, ...] <= self.support_obs[None, ...]).astype(int)
 
+        cdf_obs_ind = (G_y_train.detach().cpu().numpy()[:, None, ...] <= self.support_obs[None, ...]).astype(int)
         # Estimate the CDF
         self.marginal_CDF = cdf_obs_ind.mean(axis=0)  # (discretization_points,) -> F(y') -> P(Y <= y')
         cdf_obs_ind_c = torch.tensor(cdf_obs_ind - self.marginal_CDF, dtype=torch.float32)
-
-        zy_type = FieldType(
-            gspace=no_base_space(self.G), representations=[self.G.trivial_representation] * self.discretization_points
-        )
-
+        n_samples, _, n_dim = cdf_obs_ind_c.shape
+        cdf_obs_ind_c_flat = cdf_obs_ind_c.reshape((n_samples, n_dim * self.discretization_points))
         self.n_obs_dims = y_train.shape[1]
-        self.NCP_regressors = []
 
-        for dim in range(self.n_obs_dims):
-            # Compute the conditional indicator sets per each y' in the support given X=x.
-            dim_ncp_regressor = ENCPRegressor(
-                model=model,
-                y_train=self.out_type(G_y_train),
-                zy_train=zy_type(cdf_obs_ind_c[..., dim]),
-                **ncp_regressor_kwargs,
-            )
-            self.NCP_regressors.append(dim_ncp_regressor)
+        # We cannot use the ENCPRegressor directly because we need a smarter symmetry-aware discretization
+        # So for now we do a linear-regression using data-agumentation.
+        prev_device = next(model.parameters()).device
+        self.model = model.to("cpu")
+        G_y_train = G_y_train.to("cpu")
+        cdf_obs_ind_c_flat = cdf_obs_ind_c_flat.to("cpu")
+        zy_train = cdf_obs_ind_c_flat
+        # Compute the expectation of the r.v `z(y)` from the training dataset.
+        self.mean_zy = zy_train.mean(axis=0, keepdim=True)
+        zy_train_c = zy_train - self.mean_zy
+        with torch.no_grad():
+            hy_train = model.embedding_y(self.y_type(G_y_train)).tensor  # shape: (n_train, embedding_dim)
+            out = torch.linalg.lstsq(hy_train, zy_train_c)
+            self.Czyhy = out.solution.T
+        self.model = self.model.to(prev_device)
 
     def forward(self, x_cond: GeometricTensor):
         """Predicts the Conditional Cumulative Distribution Function of the random variable Y given X=x.
 
         Args:
-            x_cond:
-
+            x_cond: (GeometricTensor): The conditioning variable X of shape (n_cond_points, x_dim).
         Returns:
-
+            ccdf: (numpy.ndarray): The predicted Conditional Cumulative Distribution Function of shape
+            (n_cond_points, discretization_points, y_dim) or (discretization_points, y_dim) if x_cond is a single point.
         """
         assert isinstance(x_cond, GeometricTensor), f"X condition must be a GeometricTensor got {type(x_cond)}"
-        ccdf = []
-        for dim in range(self.n_obs_dims):
-            dim_ncp_regressor = self.NCP_regressors[dim]
-            ccdf_obs_ind_pred = (
-                self.marginal_CDF[..., dim] + dim_ncp_regressor(x_cond=x_cond).tensor.detach().cpu().numpy().squeeze()
-            )
-            ccdf_obs_ind_pred = np.max([ccdf_obs_ind_pred, np.zeros_like(ccdf_obs_ind_pred)], axis=0)
-            # Smooth the predicted Conditional Cumulative Distribution Function
-            # ccdf_obs_ind_smooth = self.smooth_cdf(self.support_obs[..., dim], np.squeeze(ccdf_obs_ind_pred))
-            # Filter out points below 0 from approximation of the NCP.
-            ccdf.append(ccdf_obs_ind_pred)
+        assert x_cond.type == self.in_type, "`x_cond` and `model.embedding_x` must have the same type"
 
-        ccdf = np.asarray(ccdf)
-        # bound predictions to [0, 1]
-        ccdf = np.clip(ccdf, 0, 1)
-        return ccdf
+        if x_cond.tensor.ndim == 1:
+            x_cond.tensor = x_cond.tensor[None, :]
+
+        # Regress the deflated CCDF
+        # deflated_ccdf_pred = self.ccdf_regressor(x_cond=x_cond).detach().cpu().numpy()
+        device = next(self.parameters()).device
+        fx_cond = self.model.embedding_x(x_cond.to(device)).tensor  # shape: (n_samples, embedding_dim)
+        # Check formula 12 from https://arxiv.org/pdf/2407.01171
+        Dr = self.model.truncated_operator
+        deflated_ccdf_pred = torch.einsum("bf,fh,yh->by", fx_cond, Dr, self.Czyhy.to(device))
+        n_cond_points, _ = deflated_ccdf_pred.shape
+        deflated_ccdf_pred = deflated_ccdf_pred.reshape((n_cond_points, self.discretization_points, self.n_obs_dims))
+        ccdf_pred = self.marginal_CDF + deflated_ccdf_pred.detach().cpu().numpy()
+
+        # Smooth the predicted Conditional Cumulative Distribution Function
+        # TODO: Implement smoothing for multivariate CDF
+        # Filter out points below 0 from approximation of the NCP [0, 1]
+        ccdf_pred = np.clip(ccdf_pred, 0, 1)
+
+        assert ccdf_pred.shape == (n_cond_points, self.discretization_points, self.n_obs_dims)
+        ccdf_pred = np.squeeze(ccdf_pred, axis=0) if n_cond_points == 1 else ccdf_pred
+        return ccdf_pred
 
     @torch.no_grad()
     def conditional_quantiles(self, x_cond: GeometricTensor, alpha=0.05):
@@ -102,37 +107,26 @@ class ENCPConditionalCDF(escnn.nn.EquivariantModule):
         ccdf = self.forward(x_cond)
         q_low, q_high = [], []
         for dim in range(self.n_obs_dims):
-            dim_ccdf = ccdf[dim]
+            dim_ccdf = ccdf[..., dim]  # (n_train_points, discretization_points)
             if dim_ccdf.ndim == 2:  # Multiple conditioning points:
                 q_low_per_x, q_high_per_ = [], []
                 for x_cond_idx in range(dim_ccdf.shape[0]):
                     low_qx, high_qx = NCPConditionalCDF.find_best_quantile(
-                        self.support_obs[..., dim], ccdf[dim][x_cond_idx], alpha
+                        self.support_obs[..., dim], dim_ccdf[x_cond_idx], alpha
                     )
                     q_low_per_x.append(low_qx)
                     q_high_per_.append(high_qx)
                 q_low.append(np.asarray(q_low_per_x))
                 q_high.append(np.asarray(q_high_per_))
             elif dim_ccdf.ndim == 1:
-                low_qx, high_qx = NCPConditionalCDF.find_best_quantile(self.support_obs[..., dim], ccdf[dim], alpha)
+                low_qx, high_qx = NCPConditionalCDF.find_best_quantile(self.support_obs[..., dim], dim_ccdf, alpha)
                 q_low.append(low_qx)
                 q_high.append(high_qx)
             else:
                 raise ValueError(f"Invalid shape {dim_ccdf.shape}")
         q_low = np.asarray(q_low).T
         q_high = np.asarray(q_high).T
-        q_low = torch.tensor(q_low)
-        q_high = torch.tensor(q_high)
-        # G_q_low = [self.y_type.transform_fibers(q_low[None], g) for g in self.G.elements]
-        # G_q_high = [self.y_type.transform_fibers(q_high[None], g) for g in self.G.elements]
-        # q_low = torch.squeeze(torch.mean(torch.stack(G_q_low), dim=0), 0)
-        # q_high = torch.squeeze(torch.mean(torch.stack(G_q_high), dim=0), 0)
-        # q_high = torch.squeeze(torch.mean(torch.stack(G_q_high), dim=0), 0)
-
-        # print(q_low.shape)
-        # print(q_high.shape)
-
-        return q_low.cpu().numpy(), q_high.cpu().numpy()
+        return q_low, q_high
 
     def evaluate_output_shape(self, input_shape: Tuple[int, ...]) -> Tuple[int, ...]:
         return self.out_type.size, self.n_obs_dims

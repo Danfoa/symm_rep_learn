@@ -48,7 +48,7 @@ class NCPRegressor(torch.nn.Module):
 
     def forward(self, x_cond):
         x_cond = x_cond.to(self.device)
-        fx_cond = self.model.embedding_x(x_cond)  # shape: (n_test, embedding_dim)
+        fx_cond = self.model.embedding_x(x_cond)  # shape: (n_samples, embedding_dim)
 
         # Check formula 12 from https://arxiv.org/pdf/2407.01171
         Dr = self.model.truncated_operator
@@ -59,6 +59,7 @@ class NCPRegressor(torch.nn.Module):
 
 
 class NCPConditionalCDF(torch.nn.Module):
+
     def __init__(self, model: NCP, y_train, support_discretization_points=500, **ncp_regressor_kwargs):
         super(NCPConditionalCDF, self).__init__()
 
@@ -78,7 +79,6 @@ class NCPConditionalCDF(torch.nn.Module):
         n_samples, _, n_dim = cdf_obs_ind_c.shape
         cdf_obs_ind_c_flat = cdf_obs_ind_c.reshape((n_samples, n_dim * self.discretization_points))
         self.n_obs_dims = y_train.shape[1]
-        self.NCP_regressors = []
 
         # Compute the conditional indicator sets per each y' in the support given X=x.
         self.ccdf_regressor = NCPRegressor(
@@ -134,8 +134,6 @@ class NCPConditionalCDF(torch.nn.Module):
                 raise ValueError(f"Invalid shape {dim_ccdf.shape}")
         q_low = np.asarray(q_low).T
         q_high = np.asarray(q_high).T
-        # q_low = torch.tensor([q[0, ...] for q in quantiles])
-        # q_high = torch.tensor([q[1, ...] for q in quantiles])
         return q_low, q_high
 
     # @staticmethod
