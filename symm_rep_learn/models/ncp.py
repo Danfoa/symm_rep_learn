@@ -22,7 +22,6 @@ class NCP(torch.nn.Module):
         embedding_dim: int,
         gamma=0.1,  # Will be multiplied by the embedding_dim
         gamma_centering=None,  # Penalizes probability mass distortion
-        truncated_op_bias: str = "full_rank",  # 'Cxy', 'diag', 'svals'\
         learnable_change_basis: bool = False,
     ):
         super(NCP, self).__init__()
@@ -35,10 +34,12 @@ class NCP(torch.nn.Module):
         else:
             self.embedding_x = embedding_x
             self.embedding_y = embedding_y
-        self.truncated_op_bias = truncated_op_bias
 
         # Create parameters according to the chosen truncated operator bias
-        self._process_truncated_op_bias()
+        embedding_dim = self.embedding_dim
+        D_r = torch.eye(embedding_dim) + 1e-4 * torch.randn(embedding_dim, embedding_dim)
+        self.Dr_params = torch.nn.Parameter(D_r, requires_grad=True)
+
         # Register buffers for the statistics of the embedding functions
         self._register_stats_buffers()
 
@@ -76,19 +77,8 @@ class NCP(torch.nn.Module):
         fx, hy = self(x, y)
         fx_c, hy_c = fx - self.mean_fx, hy - self.mean_hy
 
-        # Compute the kernel function
-        if self.truncated_op_bias == "Cxy":
-            k_r = 1 + torch.einsum("...x,xy,...y->...", fx_c, self.Cxy, hy_c)
-        elif self.truncated_op_bias == "full_rank":
-            Dr = self.truncated_operator
-            k_r = 1 + torch.einsum("...x,xy,...y->...", fx_c, Dr, hy_c)
-        elif self.truncated_op_bias == "diag":
-            k_r = 1 + torch.einsum("nr,r,nc->n", fx_c, torch.diag(self.Cxy), hy_c)
-        elif self.truncated_op_bias == "svals":
-            svals = torch.exp(-(self.log_svals**2))
-            k_r = 1 + torch.einsum("nr,r,nc->n", fx_c, svals, hy_c)
-        else:
-            raise ValueError(f"Unknown truncated operator bias: {self.truncated_op_bias}.")
+        Dr = self.truncated_operator
+        k_r = 1 + torch.einsum("...x,xy,...y->...", fx_c, Dr, hy_c)
 
         return k_r
 
@@ -122,9 +112,9 @@ class NCP(torch.nn.Module):
                 + γ(||Cx - I||_F^2 + ||Cy - I||_F^2 + ||E_p(x) f(x)||_F^2 + ||E_p(y) h(y)||_F^2)
             metrics: Scalar valued metrics to monitor during training.
         """
-        assert (
-            fx.shape[-1] == hy.shape[-1] == self.embedding_dim
-        ), f"Expected number of singular functions to be {self.embedding_dim}, got {fx.shape[-1]} and {hy.shape[-1]}."
+        assert fx.shape[-1] == hy.shape[-1] == self.embedding_dim, (
+            f"Expected number of singular functions to be {self.embedding_dim}, got {fx.shape[-1]} and {hy.shape[-1]}."
+        )
 
         # Center basis functions and update mean_fx, mean_hy, Cx, Cy, Cxy
         fx_c, hy_c = self.update_fns_statistics(fx, hy)
@@ -135,12 +125,8 @@ class NCP(torch.nn.Module):
         orthonormal_reg_fx, orthonormal_reg_hy, metrics = self.orthonormality_penalization(fx_c, hy_c)
 
         # Operator truncation error = ||E - E_r||_HS^2 ____________________________________________________
-        if not self._is_truncated_op_diag:
-            # E_r = Cxy -> ||E - E_r||_HS - ||E||_HS = -2 ||Cxy||_F^2 + tr(Cxy Cy Cxy^T Cx)
-            truncation_err, loss_metrics = self.unbiased_truncation_error_matrix_form(fx_c, hy_c)
-        else:
-            # E_r = diag(σ1,...σr) -> ||E - E_r||_HS - ||E||_HS = -2 tr(E_r Cxy) + tr(E_r Cy E_r^T Cx)
-            truncation_err, loss_metrics = self.unbiased_truncation_error_diag_form(fx_c, hy_c)
+        # E_r = Cxy -> ||E - E_r||_HS - ||E||_HS = -2 ||Cxy||_F^2 + tr(Cxy Cy Cxy^T Cx)
+        truncation_err, loss_metrics = self.unbiased_truncation_error_matrix_form(fx_c, hy_c)
 
         metrics |= loss_metrics if loss_metrics is not None else {}
         # Total loss ____________________________________________________________________________________
@@ -158,7 +144,7 @@ class NCP(torch.nn.Module):
             }
         return loss, metrics
 
-    def unbiased_truncation_error_matrix_form(self, fx_c, hy_c) -> [torch.Tensor, dict]:
+    def unbiased_truncation_error_matrix_form(self, fx_c, hy_c) -> tuple[torch.Tensor, dict]:
         """Implementation of ||E - E_r||_HS^2, while assuming E_r is a full matrix.
 
         Case 1: Orthogonal basis functions give:
@@ -176,63 +162,27 @@ class NCP(torch.nn.Module):
             (dict) Metrics to monitor during training.
         """
         metrics = {}
-        if self.truncated_op_bias == "Cxy":
-            Cxy_F_2 = cross_cov_norm_squared_unbiased_estimation(fx_c, hy_c)
-            Pxyx = torch.einsum("ab,bc,cd,de->ae", self.Cxy, self.Cy, self.Cxy, self.Cx)
-            tr_Pxyx_biased = torch.trace(Pxyx)
-            truncation_err = -2 * Cxy_F_2 + tr_Pxyx_biased
-            metrics |= {
-                "E_p(x)p(y) k_r(x,y)^2": tr_Pxyx_biased.detach(),
-                "E_p(x,y) k_r(x,y)": Cxy_F_2.detach(),
-            }
-        elif self.truncated_op_bias == "full_rank":
-            n_samples = fx_c.shape[0]
-            Dr = self.truncated_operator  # Dr = Dr.T
-            # k_r(x,y) = 1 + f(x)^T Dr h(y)
-            # truncated_err = -2 * E_p(x,y)[k_r(x,y)] + E_p(x)p(y)[k_r(x,y)^2]
-            pmd_mat = 1 + torch.einsum("nx,xy,my->nm", fx_c, Dr, hy_c)  # (n_samples, n_samples)
-            # E_p(x,y)[k_r(x,y)] = diag(pmd_mat).mean()
-            E_pxy_kr = torch.diag(pmd_mat).mean()
-            pmd_squared = pmd_mat**2
-            # E_p(x)p(y)[k_r(x,y)^2]  # Note we remove the samples from the joint in the diagonal
-            E_px_py_kr = (pmd_squared.sum() - pmd_squared.diag().sum()) / (n_samples * (n_samples - 1))
-            truncation_err = (-2 * E_pxy_kr) + (E_px_py_kr) + 1
+        n_samples = fx_c.shape[0]
+        Dr = self.truncated_operator  # Dr = Dr.T
+        # k_r(x,y) = 1 + f(x)^T Dr h(y)
+        # truncated_err = -2 * E_p(x,y)[k_r(x,y)] + E_p(x)p(y)[k_r(x,y)^2]
+        pmd_mat = 1 + torch.einsum("nx,xy,my->nm", fx_c, Dr, hy_c)  # (n_samples, n_samples)
+        # E_p(x,y)[k_r(x,y)] = diag(pmd_mat).mean()
+        E_pxy_kr = torch.diag(pmd_mat).mean()
+        pmd_squared = pmd_mat**2
+        # E_p(x)p(y)[k_r(x,y)^2]  # Note we remove the samples from the joint in the diagonal
+        E_px_py_kr = (pmd_squared.sum() - pmd_squared.diag().sum()) / (n_samples * (n_samples - 1))
+        truncation_err = (-2 * E_pxy_kr) + (E_px_py_kr) + 1
 
-            with torch.no_grad():
-                prob_mass_distortion = (1 - pmd_mat.mean()) ** 2  # Always 0 for batch due to centering.
-                metrics |= {
-                    "E_p(x)p(y) k_r(x,y)^2": E_px_py_kr.detach() - 1,
-                    "E_p(x,y) k_r(x,y)": E_pxy_kr.detach() - 1,
-                    "Prob Mass Distortion": prob_mass_distortion,
-                }
-        else:
-            raise ValueError(f"Unknown matrix truncated operator bias: {self.truncated_op_bias}.")
+        with torch.no_grad():
+            prob_mass_distortion = (1 - pmd_mat.mean()) ** 2  # Always 0 for batch due to centering.
+            metrics |= {
+                "E_p(x)p(y) k_r(x,y)^2": E_px_py_kr.detach() - 1,
+                "E_p(x,y) k_r(x,y)": E_pxy_kr.detach() - 1,
+                "Prob Mass Distortion": prob_mass_distortion,
+            }
 
         return truncation_err, metrics
-
-    def unbiased_truncation_error_diag_form(self, fx_c, hy_c):
-        """Implementation of ||E - E_r||_HS^2, while assuming E_r is diagonal.
-
-        TODO: Document this appropriatedly
-        Args:
-            fx:
-            hy:
-        Returns:
-            (torch.Tensor) representing the unbiased truncation error.
-        """
-        Dr_diag = self.truncated_operator  # (r,)
-        # Tr (CxΣCyΣ)    E_p(x)p(y) k_r(x,y)^2
-        tr_CxSCyS = (
-            torch.einsum("ik, il, k, jl, jk, l->", fx_c, fx_c, Dr_diag, hy_c, hy_c, Dr_diag) / (fx_c.shape[0] - 1) ** 2
-        )
-        # tr (CxyΣ)
-        tr_CxyS = torch.einsum("ik, ik, k->", fx_c, hy_c, Dr_diag) / (fx_c.shape[0] - 1)
-        # L = -2 tr(CxyΣ) + tr(CxΣCyΣ)
-        metrics = {
-            "E_p(x)p(y) k_r(x,y)^2": tr_CxSCyS.detach(),
-            "E_p(x,y) k_r(x,y)": tr_CxyS.detach(),
-        }
-        return -2 * tr_CxyS + tr_CxSCyS, metrics
 
     def orthonormality_penalization(self, fx_c, hy_c, permutation=None):
         """Computes orthonormality and centering regularization penalization for a batch of feature vectors.
@@ -318,47 +268,10 @@ class NCP(torch.nn.Module):
 
     @property
     def truncated_operator(self):
-        # Diagonal biases
-        if self.truncated_op_bias == "svals":
-            svals = torch.exp(-(self.log_svals**2))
-            return svals
-        elif self.truncated_op_bias == "diag":
-            return torch.diag(self.Cxy)
-        # Full rank operator biases _____________________
-        elif self.truncated_op_bias == "Cxy":
-            return self.Cxy
-        elif self.truncated_op_bias == "full_rank":
-            # D_r is diagonal and is stable (that is has eivalues <= 1)
-            Dr_symm = self.Dr_params @ self.Dr_params.T  # Ensure its symmetric
-            eigval_max = torch.linalg.eigvalsh(Dr_symm)[-1]
-            Dr = Dr_symm / eigval_max
-            return Dr
-        else:
-            raise ValueError(f"Unknown truncated operator bias: {self.truncated_op_bias}.")
-
-    def _process_truncated_op_bias(self):
-        truncated_op_bias = self.truncated_op_bias
-        embedding_dim = self.embedding_dim
-
-        self._is_truncated_op_diag = False
-        # Diagonal Biases
-        if truncated_op_bias == "svals":
-            self.log_svals = torch.nn.Parameter(
-                torch.normal(mean=0.0, std=2.0 / embedding_dim, size=(embedding_dim,)),
-                requires_grad=True,
-            )
-            self._is_truncated_op_diag = True
-        elif truncated_op_bias == "diag":
-            self._is_truncated_op_diag = True
-            pass  # No parameters to define
-        # Full rank biases
-        elif truncated_op_bias == "full_rank":
-            D_r = torch.eye(embedding_dim) + 1e-4 * torch.randn(embedding_dim, embedding_dim)
-            self.Dr_params = torch.nn.Parameter(D_r, requires_grad=True)
-        elif truncated_op_bias == "Cxy":
-            pass  # No parameters to define
-        else:
-            raise ValueError(f"Unknown truncated operator bias: {truncated_op_bias}.")
+        Dr_symm = self.Dr_params @ self.Dr_params.T  # Ensure its symmetric
+        eigval_max = torch.linalg.eigvalsh(Dr_symm)[-1]
+        Dr = Dr_symm / eigval_max
+        return Dr
 
     def _register_stats_buffers(self):
         # Matrix containing the cross-covariance matrix form of the operator Cyx: L^2(Y) -> L^2(X)
