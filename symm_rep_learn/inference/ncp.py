@@ -59,7 +59,6 @@ class NCPRegressor(torch.nn.Module):
 
 
 class NCPConditionalCDF(torch.nn.Module):
-
     def __init__(self, model: NCP, y_train, support_discretization_points=500, **ncp_regressor_kwargs):
         super(NCPConditionalCDF, self).__init__()
 

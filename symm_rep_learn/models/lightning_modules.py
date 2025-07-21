@@ -186,9 +186,10 @@ class CQRLightningModule(TrainingModule):
         optimizer_fn: torch.optim.Optimizer,
         optimizer_kwargs: dict,
         loss_fn: callable,
+        **kwargs,
     ):
         super(CQRLightningModule, self).__init__(
-            model=model, optimizer_fn=optimizer_fn, optimizer_kwargs=optimizer_kwargs, loss_fn=loss_fn
+            model=model, optimizer_fn=optimizer_fn, optimizer_kwargs=optimizer_kwargs, loss_fn=loss_fn, **kwargs
         )
 
     def training_step(self, batch, batch_idx):

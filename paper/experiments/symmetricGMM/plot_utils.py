@@ -12,24 +12,24 @@ PLOT_STYLE = {
     "cpd_x": {
         "color": "red",
         "fill": "pink",
-        "legend": r"$p(y | x)$",
-        "expect": r"$E[y|x]$",
+        "legend": r"$P(y|x)$",
+        "expect": r"$\mathbb{E}[y|x]$",
     },
     "cpd_gx": {
         "color": "green",
         "fill": "lightgreen",
-        "legend": r"$p(y | g \;\triangleright_{\mathcal{X}}\; x)$",
-        "expect": r"$E[y|g \;\triangleright_{\mathcal{X}}\; x]$",
+        "legend": r"$P(y|-x)$",
+        "expect": r"$\mathbb{E}[y|-x]$",
     },
     "pdf_y": {
         "color": "lightblue",
         "fill": "lightblue",
-        "legend": r"$p(y)$",
+        "legend": r"$P(y)$",
     },
     "pdf_x": {
         "color": "lightblue",
         "fill": "lightblue",
-        "legend": r"$p(x)$",
+        "legend": r"$P(x)$",
     },
     "npmi_x": {
         "color": "red",
@@ -37,7 +37,7 @@ PLOT_STYLE = {
     },
     "npmi_gx": {
         "color": "green",
-        "legend": r"$NPMI(g \;\triangleright_{\mathcal{X}}\; x, y)$",
+        "legend": r"$NPMI(-x, y)$",
     },
     "npmi_y": {
         "color": "red",
@@ -45,7 +45,7 @@ PLOT_STYLE = {
     },
     "npmi_gy": {
         "color": "green",
-        "legend": r"$NPMI(x, g \;\triangleright_{\mathcal{Y}}\; y)$",
+        "legend": r"$NPMI(x, -y)$",
     },
     "pmd_x": {
         "color": "red",
@@ -53,7 +53,7 @@ PLOT_STYLE = {
     },
     "pmd_gx": {
         "color": "green",
-        "legend": r"$\kappa(g \;\triangleright_{\mathcal{X}}\; x, y)$",
+        "legend": r"$\kappa(-x, y)$",
     },
     "pmd_y": {
         "color": "red",
@@ -61,21 +61,23 @@ PLOT_STYLE = {
     },
     "pmd_gy": {
         "color": "green",
-        "legend": r"$\kappa(x, g \;\triangleright_{\mathcal{Y}}\; y)$",
+        "legend": r"$\kappa(x, -y)$",
     },
 }
 
-PLOT_SIZE = 3
+PLOT_SIZE = 2
 PLOT_LEVELS = 15
 PLOT_CMAP = "Blues"
 PLOT_LINEWIDTH = 1
+COND_LINEWIDTH = 1
 PLOT_MARKERSIZE = 8
 PLOT_ALPHA = 0.7
-PLOT_FONT_SIZE = 7
-LEGEND_FONT_SIZE = 5
-LEGEND_BORDER_PAD = 1
+PLOT_FONT_SIZE = 6
+LEGEND_FONT_SIZE = 4
+LEGEND_BORDER_PAD = 0.5
 EXPECTATION_MARKER = "D"
 LEGEND_FRAME_ALPHA = 0.8
+LEGEND_MARKER_SCALE = 0.5
 
 
 def plot_analytic_joint_2D(
@@ -105,27 +107,27 @@ def plot_analytic_joint_2D(
     rep_X = gmm.rep_X
     rep_Y = gmm.rep_Y
     gx_t, gy_t = (rep_X(gmm.G2Hx(g)) @ [x_t]).squeeze(), (rep_Y(gmm.G2Hy(g)) @ [y_t]).squeeze()
-    grid.ax_joint.axvline(x_t, color="r", alpha=PLOT_ALPHA)
-    grid.ax_joint.axvline(gx_t, color="g", alpha=PLOT_ALPHA)
-    # Draw red point on the selected sample
-    grid.ax_joint.plot(
-        x_t,
-        y_t,
-        "ro",
-        markersize=PLOT_MARKERSIZE,
-        alpha=PLOT_ALPHA,
-        markeredgecolor="white",
-        markeredgewidth=PLOT_LINEWIDTH,
-    )
-    grid.ax_joint.plot(
-        gx_t,
-        gy_t,
-        "go",
-        markersize=PLOT_MARKERSIZE,
-        alpha=PLOT_ALPHA,
-        markeredgecolor="white",
-        markeredgewidth=PLOT_LINEWIDTH,
-    )
+    grid.ax_joint.axvline(x_t, color="r", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
+    grid.ax_joint.axvline(gx_t, color="g", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
+    # # Draw red point on the selected sample
+    # grid.ax_joint.plot(
+    #     x_t,
+    #     y_t,
+    #     "ro",
+    #     markersize=PLOT_MARKERSIZE,
+    #     alpha=PLOT_ALPHA,
+    #     markeredgecolor="white",
+    #     markeredgewidth=PLOT_LINEWIDTH,
+    # )
+    # grid.ax_joint.plot(
+    #     gx_t,
+    #     gy_t,
+    #     "go",
+    #     markersize=PLOT_MARKERSIZE,
+    #     alpha=PLOT_ALPHA,
+    #     markeredgecolor="white",
+    #     markeredgewidth=PLOT_LINEWIDTH,
+    # )
     # Set limits
     grid.ax_joint.set_xlim([-x_max, x_max])
     grid.ax_joint.set_ylim([-y_max, y_max])
@@ -165,26 +167,18 @@ def plot_analytic_joint_2D(
 
     # Plot marginal x
     pdf_x = gmm.pdf_x(X=x_range)
-    grid.ax_marg_x.fill_between(
-        x_range, 0, pdf_x, color=PLOT_STYLE["pdf_x"]["fill"], alpha=0.6, label=PLOT_STYLE["pdf_x"]["legend"]
-    )
+    grid.ax_marg_x.fill_between(x_range, 0, pdf_x, color=PLOT_STYLE["pdf_x"]["fill"], alpha=0.6, label=None)
     grid.ax_marg_x.set_ylim([0, None])
     # Plot marginal y
     pdf_y = gmm.pdf_y(Y=y_range)
-    grid.ax_marg_y.fill_betweenx(
-        y_range, 0, pdf_y, color=PLOT_STYLE["pdf_y"]["fill"], alpha=0.6, label=PLOT_STYLE["pdf_y"]["legend"]
-    )
+    grid.ax_marg_y.fill_betweenx(y_range, 0, pdf_y, color=PLOT_STYLE["pdf_y"]["fill"], alpha=0.6, label=None)
     grid.ax_marg_y.set_xlim([0, None])
 
     # Customizing labels
-    grid.ax_joint.set_xlabel(r"$\mathcal{X}$")
-    grid.ax_joint.set_ylabel(r"$\mathcal{Y}$")
-    # grid.ax_marg_x.set_xlabel(r"$p(\textnormal{x})$")
-    # grid.ax_marg_y.set_ylabel(r"$p(\textnormal{y})$")
-    # Remove ticks from joint x and y axes
+    grid.ax_joint.set_xlabel(r"$\mathcal{X}$", fontsize=PLOT_FONT_SIZE)
+    grid.ax_joint.set_ylabel(r"$\mathcal{Y}$", fontsize=PLOT_FONT_SIZE)
     grid.ax_joint.set_xticks([])
     grid.ax_joint.set_yticks([])
-    # Remove borders from lower and left margins of the joint plot
     grid.ax_joint.spines["bottom"].set_visible(False)
     grid.ax_joint.spines["left"].set_visible(False)
     # Add legend
@@ -195,15 +189,17 @@ def plot_analytic_joint_2D(
         borderaxespad=0,
         framealpha=LEGEND_FRAME_ALPHA,
         borderpad=LEGEND_BORDER_PAD,
+        markerscale=LEGEND_MARKER_SCALE,  # Adjust marker size
     )
-    grid.ax_marg_x.legend(
-        loc="upper left",
-        fontsize=LEGEND_FONT_SIZE,
-        bbox_to_anchor=(0.0, 1.1),
-        borderaxespad=0,
-        framealpha=LEGEND_FRAME_ALPHA,
-        borderpad=LEGEND_BORDER_PAD,
-    )
+    # grid.ax_marg_x.legend(
+    #     loc="upper left",
+    #     fontsize=LEGEND_FONT_SIZE,
+    #     bbox_to_anchor=(0.0, 1.1),
+    #     borderaxespad=0,
+    #     framealpha=LEGEND_FRAME_ALPHA,
+    #     borderpad=LEGEND_BORDER_PAD,
+    #     markerscale=LEGEND_MARKER_SCALE,  # Adjust marker size
+    # )
     return grid
 
 
@@ -238,19 +234,35 @@ def plot_analytic_prod_2D(
     rep_X = gmm.rep_X
     rep_Y = gmm.rep_Y
     gx_t, gy_t = (rep_X(gmm.G2Hx(g)) @ [x_t]).squeeze(), (rep_Y(gmm.G2Hy(g)) @ [y_t]).squeeze()
-    grid.ax_joint.axvline(x_t, color="r", alpha=PLOT_ALPHA)
-    grid.ax_joint.axhline(y_t, color="r", alpha=PLOT_ALPHA)
-    grid.ax_joint.axvline(gx_t, color="g", alpha=PLOT_ALPHA)
-    grid.ax_joint.axhline(gy_t, color="g", alpha=PLOT_ALPHA)
+    grid.ax_joint.axvline(x_t, color="r", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
+    grid.ax_joint.axhline(y_t, color="r", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
+    grid.ax_joint.axvline(gx_t, color="g", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
+    grid.ax_joint.axhline(gy_t, color="g", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
     # Draw red point on the selected sample
-    grid.ax_joint.plot(x_t, y_t, "ro", markersize=PLOT_MARKERSIZE, alpha=PLOT_ALPHA)
-    grid.ax_joint.plot(gx_t, gy_t, "go", markersize=PLOT_MARKERSIZE, alpha=PLOT_ALPHA)
+    # grid.ax_joint.plot(
+    #     x_t,
+    #     y_t,
+    #     "ro",
+    #     markersize=PLOT_MARKERSIZE,
+    #     alpha=PLOT_ALPHA,
+    #     markeredgecolor="white",
+    #     markeredgewidth=PLOT_LINEWIDTH,
+    # )
+    # grid.ax_joint.plot(
+    #     gx_t,
+    #     gy_t,
+    #     "go",
+    #     markersize=PLOT_MARKERSIZE,
+    #     alpha=PLOT_ALPHA,
+    #     markeredgecolor="white",
+    #     markeredgewidth=PLOT_LINEWIDTH,
+    # )
     # Set limits
     grid.ax_joint.set_xlim([-x_max, x_max])
     grid.ax_joint.set_ylim([-y_max, y_max])
     # Customizing labels
-    grid.ax_joint.set_xlabel(r"$\mathcal{X}$")
-    grid.ax_joint.set_ylabel(r"$\mathcal{Y}$")
+    grid.ax_joint.set_xlabel(r"$\mathcal{X}$", fontsize=PLOT_FONT_SIZE)
+    grid.ax_joint.set_ylabel(r"$\mathcal{Y}$", fontsize=PLOT_FONT_SIZE)
     grid.ax_marg_x.set_xlabel(r"$p(\textnormal{x})$")
     grid.ax_marg_y.set_ylabel(r"$p(\textnormal{y})$")
 
@@ -316,6 +328,7 @@ def plot_analytic_prod_2D(
         borderaxespad=0,
         framealpha=LEGEND_FRAME_ALPHA,
         borderpad=LEGEND_BORDER_PAD,
+        markerscale=LEGEND_MARKER_SCALE,  # Adjust marker size
     )
     grid.ax_marg_x.legend(
         loc="upper left",
@@ -324,6 +337,7 @@ def plot_analytic_prod_2D(
         borderaxespad=0,
         framealpha=LEGEND_FRAME_ALPHA,
         borderpad=LEGEND_BORDER_PAD,
+        markerscale=LEGEND_MARKER_SCALE,  # Adjust marker size
     )
     return grid
 
@@ -448,12 +462,12 @@ def plot_analytic_pmd_2D(
     rep_X = gmm.rep_X
     rep_Y = gmm.rep_Y
     gx_t, gy_t = (rep_X(gmm.G2Hx(g)) @ [x_t]).squeeze(), (rep_Y(gmm.G2Hy(g)) @ [y_t]).squeeze()
-    grid.ax_joint.axvline(x_t, color="r", alpha=PLOT_ALPHA)
-    grid.ax_joint.axhline(y_t, color="r", alpha=PLOT_ALPHA)
-    grid.ax_joint.axvline(gx_t, color="g", alpha=PLOT_ALPHA)
-    grid.ax_joint.axhline(gy_t, color="g", alpha=PLOT_ALPHA)
-    grid.ax_joint.plot(x_t, y_t, "ro", markersize=PLOT_MARKERSIZE, alpha=PLOT_ALPHA)
-    grid.ax_joint.plot(gx_t, gy_t, "go", markersize=PLOT_MARKERSIZE, alpha=PLOT_ALPHA)
+    grid.ax_joint.axvline(x_t, color="r", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
+    grid.ax_joint.axhline(y_t, color="r", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
+    grid.ax_joint.axvline(gx_t, color="g", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
+    grid.ax_joint.axhline(gy_t, color="g", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
+    # grid.ax_joint.plot(x_t, y_t, "ro", markersize=PLOT_MARKERSIZE, alpha=PLOT_ALPHA)
+    # grid.ax_joint.plot(gx_t, gy_t, "go", markersize=PLOT_MARKERSIZE, alpha=PLOT_ALPHA)
     grid.ax_joint.set_xlim([-x_max, x_max])
     grid.ax_joint.set_ylim([-y_max, y_max])
     grid.ax_joint.set_xlabel(r"$\mathcal{X}$")
@@ -490,12 +504,12 @@ def plot_analytic_pmd_2D(
         )
 
     # Plot constant line at 1 for both marginals
-    grid.ax_marg_y.axvline(1, color="k", linestyle="-", alpha=0.3)
-    grid.ax_marg_x.axhline(1, color="k", linestyle="-", alpha=0.3)
+    # grid.ax_marg_y.axvline(1, color="k", linestyle="-", alpha=0.3)
+    # grid.ax_marg_x.axhline(1, color="k", linestyle="-", alpha=0.3)
 
     # Customizing labels
-    grid.ax_joint.set_xlabel(r"$\mathcal{X}$")
-    grid.ax_joint.set_ylabel(r"$\mathcal{Y}$")
+    grid.ax_joint.set_xlabel(r"$\mathcal{X}$", fontsize=PLOT_FONT_SIZE)
+    grid.ax_joint.set_ylabel(r"$\mathcal{Y}$", fontsize=PLOT_FONT_SIZE)
     # grid.ax_marg_x.set_xlabel(r"$p(\textnormal{x})$")
     # grid.ax_marg_y.set_ylabel(r"$p(\textnormal{y})$")
     # Remove ticks from joint x and y axes
@@ -512,6 +526,7 @@ def plot_analytic_pmd_2D(
         borderaxespad=0,
         framealpha=LEGEND_FRAME_ALPHA,
         borderpad=LEGEND_BORDER_PAD,
+        markerscale=LEGEND_MARKER_SCALE,  # Adjust marker size
     )
     grid.ax_marg_x.legend(
         loc="upper left",
@@ -520,6 +535,7 @@ def plot_analytic_pmd_2D(
         borderaxespad=0,
         framealpha=LEGEND_FRAME_ALPHA,
         borderpad=LEGEND_BORDER_PAD,
+        markerscale=LEGEND_MARKER_SCALE,  # Adjust marker size
     )
     return grid
 

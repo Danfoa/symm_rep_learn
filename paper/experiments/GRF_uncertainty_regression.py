@@ -111,7 +111,7 @@ def plot_gt_and_quantiles(
                 name="Outliers",
                 legendgroup="Outliers",
                 showlegend=(i == 0),
-                marker=dict(color="red"),
+                marker=dict(color="red", size=3),
             ),
             row=row,
             col=col,

@@ -16,7 +16,7 @@ FONT_SIZE_TITLES = 7
 ASPECT_RATIO = 1.7
 
 
-exp_path = pathlib.Path("experiments/eNCP_regression/CoM_sample_eff")
+exp_path = pathlib.Path("CoM_sample_eff")
 # exp_path = pathlib.Path("experiments/eNCP_regression/CoM_sample_efficiency_solo")
 # exp_path = pathlib.Path("experiments/eNCP_regression/CoM_sample_efficiency_atlas_v4_final")
 # exp_path = pathlib.Path("experiments/eNCP_regression/CoM_sample_efficiency_anymal_c")

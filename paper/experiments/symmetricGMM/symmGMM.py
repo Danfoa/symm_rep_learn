@@ -5,9 +5,10 @@ import logging
 import escnn
 import numpy as np
 import scipy.stats as stats
+import torch
 from escnn.group import Representation, directsum
+from symm_learning.stats import var_mean
 
-from symm_rep_learn.mysc.symm_algebra import symmetric_moments
 from symm_rep_learn.mysc.utils import project_to_pos_semi_def
 
 from .GMM import GaussianMixture
@@ -210,7 +211,7 @@ class SymmGaussianMixture(GaussianMixture):
     def _compute_data_statistics(self):
         """Return mean and std of the y component of the data."""
         X, Y = self.simulate(n_samples=10**4)
-        Y_mean, Y_var = symmetric_moments(Y, self.rep_Y)
+        Y_var, Y_mean = var_mean(torch.tensor(Y), self.rep_Y)
         return Y_mean.detach().numpy(), np.sqrt(Y_var.detach().numpy())
 
     def pdf_y(self, Y):

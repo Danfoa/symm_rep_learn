@@ -354,9 +354,9 @@ class ENCP(NCP):
         return truncation_err, metrics
 
     def update_fns_statistics(self, fx: GeometricTensor, hy: GeometricTensor):
-        assert isinstance(fx, GeometricTensor) and isinstance(
-            hy, GeometricTensor
-        ), f"Expected Geometric Tensors got f(x): {type(fx)} and h(y): {type(hy)}"
+        assert isinstance(fx, GeometricTensor) and isinstance(hy, GeometricTensor), (
+            f"Expected Geometric Tensors got f(x): {type(fx)} and h(y): {type(hy)}"
+        )
         assert fx.type == self.embedding_x.out_type and hy.type == self.embedding_y.out_type
         _device, _dtype = fx.tensor.device, fx.tensor.dtype
 
@@ -439,9 +439,9 @@ class ENCP(NCP):
             Cxy_iso = [self.Cxy(k) for k in range(self.n_iso_subspaces)]
             return torch.block_diag(*Cxy_iso)
         else:
-            assert (
-                0 <= iso_idx < self.n_iso_subspaces
-            ), f"Invalid isotypic subspace index {iso_idx} !in [0,{self.n_iso_subspaces}]"
+            assert 0 <= iso_idx < self.n_iso_subspaces, (
+                f"Invalid isotypic subspace index {iso_idx} !in [0,{self.n_iso_subspaces}]"
+            )
             irrep_dim = self.irreps_dim[self.iso_subspace_ids[iso_idx]]
             Dxy_k = self.__getattr__(f"Dxy_{iso_idx}")
             return torch.kron(Dxy_k, torch.eye(irrep_dim, dtype=Dxy_k.dtype, device=Dxy_k.device))
@@ -459,9 +459,9 @@ class ENCP(NCP):
             Cx_iso = [self.Cx(k) for k in range(self.n_iso_subspaces)]
             return torch.block_diag(*Cx_iso)
         else:
-            assert (
-                0 <= iso_idx < self.n_iso_subspaces
-            ), f"Invalid isotypic subspace index {iso_idx} !in [0,{self.n_iso_subspaces}]"
+            assert 0 <= iso_idx < self.n_iso_subspaces, (
+                f"Invalid isotypic subspace index {iso_idx} !in [0,{self.n_iso_subspaces}]"
+            )
             irrep_dim = self.irreps_dim[self.iso_subspace_ids[iso_idx]]
             Dx_k = self.__getattr__(f"Dx_{iso_idx}")
             return torch.kron(Dx_k, torch.eye(irrep_dim, dtype=Dx_k.dtype, device=Dx_k.device))
@@ -479,9 +479,9 @@ class ENCP(NCP):
             Cy_iso = [self.Cy(k) for k in range(self.n_iso_subspaces)]
             return torch.block_diag(*Cy_iso)
         else:
-            assert (
-                0 <= iso_idx < self.n_iso_subspaces
-            ), f"Invalid isotypic subspace index {iso_idx} !in [0,{self.n_iso_subspaces}]"
+            assert 0 <= iso_idx < self.n_iso_subspaces, (
+                f"Invalid isotypic subspace index {iso_idx} !in [0,{self.n_iso_subspaces}]"
+            )
             irrep_dim = self.irreps_dim[self.iso_subspace_ids[iso_idx]]
             Dy_k = self.__getattr__(f"Dy_{iso_idx}")
             return torch.kron(Dy_k, torch.eye(irrep_dim, dtype=Dy_k.dtype, device=Dy_k.device))
@@ -617,3 +617,8 @@ if __name__ == "__main__":
 
     torch.set_float32_matmul_precision("medium")
     trainer.fit(light_module, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
+    #
+    # log_std = torch.nn.Parameter(n,)
+    # _std = torch.exp(log_std)
+    #
+    # std = torch.mean([rep_A(g) _std for g in G.elements])   #  std = 1/|G| Sum_g∈G rep_A(g) _std
