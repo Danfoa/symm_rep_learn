@@ -1,6 +1,6 @@
 [project]
 name = "symm-rep-learn"
-version = "0.1.0"
+dynamic = ["version"]
 
 description = "Code of paper Learning Disentangled Representations for Equivariant Inference"
 readme = "README.md"
@@ -12,6 +12,10 @@ authors = [
 dependencies = [
   "torch",
   "symm-learning",
+  "plotly",
+  "lightning",
+  "scipy",
+  "wandb",
 ]
 
 # RUFF ___________________________________________________________________________________________________________
@@ -70,3 +74,9 @@ exclude = [
   "*.pkl", # Exclude pickle files
   "__pycache__/**", # Exclude Python cache files
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["symm_rep_learn"]
+
+[tool.hatch.version]
+path = "symm_rep_learn/__init__.py"
