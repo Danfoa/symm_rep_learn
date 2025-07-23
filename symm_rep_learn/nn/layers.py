@@ -1,27 +1,8 @@
 from __future__ import annotations
 
 import torch
-from escnn.nn import EquivariantModule
+from escnn.nn import EquivariantModule, GeometricTensor
 from torch.nn import Conv2d, Dropout, Linear, MaxPool2d, Module, ReLU, Sequential
-
-
-# TODO: Unless we define custom initialization schemes, this class seems rather unnecesary.
-class SingularLayer(Module):
-    def __init__(self, d):
-        super(SingularLayer, self).__init__()
-        self.weights = torch.nn.Parameter(
-            torch.Tensor(torch.normal(mean=0.0, std=2.0 / d, size=(d,))), requires_grad=True
-        )
-        # high = np.sqrt(np.log(4)- np.log(3))
-        # low = np.sqrt(np.log(4))
-        # self.weights = torch.nn.Parameter(torch.Tensor(low+(high-low)*torch.rand(d,)), requires_grad=True)
-
-    @property
-    def svals(self):
-        return torch.exp(-(self.weights**2))
-
-    def forward(self, x):
-        return x * self.svals
 
 
 class MLPBlock(Module):
@@ -155,14 +136,6 @@ class Lambda(torch.nn.Module):
 
     def extra_repr(self):
         return "function={}".format(self.func)
-
-
-class ChangeBasis(EquivariantModule):
-    def __init__(self, change_of_basis: torch.Tensor, in_type, out_type):
-        super(ChangeBasis, self).__init__()
-        self.in_type = in_type
-        self.out_type = out_type
-        self.register_buffer("Q", change_of_basis)
 
 
 class ResidualEncoder(torch.nn.Module):

@@ -14,9 +14,9 @@ class NCPRegressor(torch.nn.Module):
         self.device = next(model.parameters()).device
         self.out_dim = zy_train.shape[-1]
 
-        assert (
-            zy_train.shape[0] == y_train.shape[0]
-        ), "y_train and xy_train with same number of samples, got {zy_train.shape[0]} and {y_train.shape[0]}"
+        assert zy_train.shape[0] == y_train.shape[0], (
+            "y_train and xy_train with same number of samples, got {zy_train.shape[0]} and {y_train.shape[0]}"
+        )
         assert y_train.ndim == 2, f"Y train must have shape (n_train, y_dim) got {y_train.shape}"
         assert zy_train.ndim == 2, f"Z(Y) train must have shape (n_train, z(y)_dim) got {zy_train.ndim}"
 
@@ -30,7 +30,7 @@ class NCPRegressor(torch.nn.Module):
         zy_train_c = zy_train - self.mean_zy
 
         # Compute the embeddings of the entire y training dataset. And the linear regression between z(y) and h(y)
-        self.Czyhy = torch.zeros((zy_train.shape[-1], model.embedding_dim), device=self.device)
+        self.Czyhy = torch.zeros((zy_train.shape[-1], model.dim_hy), device=self.device)
 
         hy_train = model.embedding_y(y_train)  # shape: (n_train, embedding_dim)
 

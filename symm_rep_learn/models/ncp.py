@@ -19,27 +19,24 @@ class NCP(torch.nn.Module):
         self,
         embedding_x: torch.nn.Module,
         embedding_y: torch.nn.Module,
-        embedding_dim: int,
+        embedding_dim_x: int,
+        embedding_dim_y: int,
         gamma=0.1,  # Will be multiplied by the embedding_dim
-        gamma_centering=None,  # Penalizes probability mass distortion
-        learnable_change_basis: bool = False,
+        gamma_centering=0.01,  # Penalizes probability mass distortion
     ):
         super(NCP, self).__init__()
         self.gamma = gamma
-        self.gamma_centering = gamma_centering if gamma_centering is not None else 0.0
-        self.embedding_dim = embedding_dim
-        if learnable_change_basis:
-            self.embedding_x = torch.nn.Sequential(embedding_x, torch.nn.Linear(embedding_dim, embedding_dim))
-            self.embedding_y = torch.nn.Sequential(embedding_y, torch.nn.Linear(embedding_dim, embedding_dim))
-        else:
-            self.embedding_x = embedding_x
-            self.embedding_y = embedding_y
+        self.gamma_centering = gamma_centering
 
-        # Create parameters according to the chosen truncated operator bias
-        embedding_dim = self.embedding_dim
-        D_r = torch.eye(embedding_dim) + 1e-4 * torch.randn(embedding_dim, embedding_dim)
-        self.Dr_params = torch.nn.Parameter(D_r, requires_grad=True)
+        self.embedding_dim = embedding_dim_x
+        self.dim_fx = embedding_dim_x
+        self.dim_hy = embedding_dim_y
 
+        self.embedding_x = embedding_x
+        self.embedding_y = embedding_y
+
+        self._create_op_parameters()
+        # DD
         # Register buffers for the statistics of the embedding functions
         self._register_stats_buffers()
 
@@ -48,7 +45,7 @@ class NCP(torch.nn.Module):
 
         Computes non-linear transformations of the input random variables x and y, and returns r-dimensional embeddings
         f(x) = [f_1(x), ..., f_r(x)] and h(y) = [h_1(y), ..., h_r(y)] representing the top r-singular functions of
-        the conditional expectation operator such that E_p(y|x)[h_i(y)] = σ_i f_i(x) for i=1,...,r.
+        the conditional expectation operator such that E_p(y|x)[h_i(y)] = s_i f_i(x) for i=1,...,r.
 
         Args:
             x: (torch.Tensor) of shape (..., d) representing the input random variable x.
@@ -109,7 +106,7 @@ class NCP(torch.nn.Module):
 
         Returns:
             loss: L = -2 ||Cxy||_F^2 + tr(Cxy Cx Cxy^T Cy) - 1
-                + γ(||Cx - I||_F^2 + ||Cy - I||_F^2 + ||E_p(x) f(x)||_F^2 + ||E_p(y) h(y)||_F^2)
+                + gamma(||Cx - I||_F^2 + ||Cy - I||_F^2 + ||E_p(x) f(x)||_F^2 + ||E_p(y) h(y)||_F^2)
             metrics: Scalar valued metrics to monitor during training.
         """
         assert fx.shape[-1] == hy.shape[-1] == self.embedding_dim, (
@@ -128,14 +125,17 @@ class NCP(torch.nn.Module):
         # E_r = Cxy -> ||E - E_r||_HS - ||E||_HS = -2 ||Cxy||_F^2 + tr(Cxy Cy Cxy^T Cx)
         truncation_err, loss_metrics = self.unbiased_truncation_error_matrix_form(fx_c, hy_c)
 
+        # Lagrange multiplier term for centering constraint of basis functions
+        cent_reg_x = self.mean_fx.pow(2).sum()  #  ||E_x f(x)||_F^2
+        cent_reg_y = self.mean_hy.pow(2).sum()  #  ||E_y h(y)||_F^2
+        cent_reg = cent_reg_x / self.dim_fx + cent_reg_y / self.dim_hy
+
         metrics |= loss_metrics if loss_metrics is not None else {}
         # Total loss ____________________________________________________________________________________
         loss = (
             truncation_err
-            + self.gamma * (orthonormal_reg_fx + orthonormal_reg_hy) / (2 * self.embedding_dim)
-            +
-            # Control barrier function on model constraint.
-            self.gamma_centering * torch.exp((self.mean_fx**2 + self.mean_hy**2).sum())
+            + self.gamma * (orthonormal_reg_fx / self.dim_fx + orthonormal_reg_hy / self.dim_hy)
+            + self.gamma_centering * cent_reg
         )
         # Logging metrics _______________________________________________________________________________
         with torch.no_grad():
@@ -231,10 +231,8 @@ class NCP(torch.nn.Module):
             metrics = {
                 "tr(Cx)": (tr_Cx / embedding_dim_x).item(),
                 "||mu_x||": torch.sqrt(fx_centering_loss).item(),
-                "||Vx - I||_F^2": (orthonormality_fx / embedding_dim_x).item(),
                 "tr(Cy)": (tr_Cy / embedding_dim_y).item(),
                 "||mu_y||": torch.sqrt(hy_centering_loss).item(),
-                "||Vy - I||_F^2": (orthonormality_hy / embedding_dim_y).item(),
             }
 
         return orthonormality_fx, orthonormality_hy, metrics
@@ -254,15 +252,18 @@ class NCP(torch.nn.Module):
         """
         n_samples = fx.shape[0]
 
-        eps = 1e-6 * torch.eye(self.embedding_dim, device=fx.device, dtype=fx.dtype)
+        eps_x = 1e-6 * torch.eye(self.dim_fx, device=fx.device, dtype=fx.dtype)
+        eps_y = 1e-6 * torch.eye(self.dim_hy, device=hy.device, dtype=hy.dtype)
+        # eps_xy = 1e-6 * torch.eye(self.embedding_dim_x, self.embedding_dim_y, device=fx.device, dtype=fx.dtype)
+
         self.mean_fx = fx.mean(dim=0, keepdim=True)
         self.mean_hy = hy.mean(dim=0, keepdim=True)
 
         # Centering before (centered/un-centered) covariance estimation is key for numerical stability.
         fx_c, hy_c = fx - self.mean_fx, hy - self.mean_hy
         self.Cxy = torch.einsum("nr,nc->rc", fx_c, hy_c) / (n_samples - 1)
-        self.Cx = torch.einsum("nr,nc->rc", fx_c, fx_c) / (n_samples - 1) + eps
-        self.Cy = torch.einsum("nr,nc->rc", hy_c, hy_c) / (n_samples - 1) + eps
+        self.Cx = torch.einsum("nr,nc->rc", fx_c, fx_c) / (n_samples - 1) + eps_x
+        self.Cy = torch.einsum("nr,nc->rc", hy_c, hy_c) / (n_samples - 1) + eps_y
 
         return fx_c, hy_c
 
@@ -272,6 +273,11 @@ class NCP(torch.nn.Module):
         eigval_max = torch.linalg.eigvalsh(Dr_symm)[-1]
         Dr = Dr_symm / eigval_max
         return Dr
+
+    def _create_op_parameters(self):
+        embedding_dim = self.embedding_dim
+        D_r = torch.eye(embedding_dim) + 1e-4 * torch.randn(embedding_dim, embedding_dim)
+        self.Dr_params = torch.nn.Parameter(D_r, requires_grad=True)
 
     def _register_stats_buffers(self):
         # Matrix containing the cross-covariance matrix form of the operator Cyx: L^2(Y) -> L^2(X)
@@ -304,7 +310,7 @@ if __name__ == "__main__":
         layer_size=64,
         activation=torch.nn.GELU,
     )
-    ncp = NCP(fx, hy, embedding_dim=embedding_dim)
+    ncp = NCP(fx, hy, embedding_dim_x=embedding_dim, embedding_dim_y=embedding_dim)
 
     x = torch.randn(10, in_dim)
     y = torch.randn(10, out_dim)
