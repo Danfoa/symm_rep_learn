@@ -78,7 +78,7 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
             embedding_x=fx,
             embedding_y=fy,
             embedding_dim=embedding_dim,
-            gamma=cfg.gamma,
+            orth_reg=cfg.gamma,
             truncated_op_bias=cfg.truncated_op_bias,
         )
         return ncp
@@ -228,14 +228,14 @@ def measure_analytic_pmi_error(
     P_joint_XY_pairs_mat = P_joint_XY_pairs.reshape(X_idx.shape)  # P_joint_XY_pairs_mat_ij = p(x_i, y_j)
     # Diagonal P_XY_pairs_mat is the p(x,y) of samples from the joint.
     if debug:
-        assert np.allclose(
-            np.diag(P_joint_XY_pairs_mat), gmm.joint_pdf(X, Y), rtol=1e-5, atol=1e-5
-        ), "Error in joint PDF computation"
+        assert np.allclose(np.diag(P_joint_XY_pairs_mat), gmm.joint_pdf(X, Y), rtol=1e-5, atol=1e-5), (
+            "Error in joint PDF computation"
+        )
         x_0, y_1 = X[[0], :], Y[[1], :]
         gmm.joint_pdf(x_0, y_1)
-        assert np.allclose(
-            P_joint_XY_pairs_mat[1, 0], gmm.joint_pdf(x_0, y_1), rtol=1e-5, atol=1e-5
-        ), f"{P_joint_XY_pairs_mat[1, 0]} != {gmm.joint_pdf(x_0, y_1)}"
+        assert np.allclose(P_joint_XY_pairs_mat[1, 0], gmm.joint_pdf(x_0, y_1), rtol=1e-5, atol=1e-5), (
+            f"{P_joint_XY_pairs_mat[1, 0]} != {gmm.joint_pdf(x_0, y_1)}"
+        )
 
     # ==============================================================================================================
     # Compute the NN estimate of the PMD for the entire group orbit in a single pass ______
@@ -272,9 +272,9 @@ def measure_analytic_pmi_error(
         # Check reshaping is not breaking ordering
         pmd_xy_err = pmd_xy_gt2 - G_pmd_xy_pred_mat[G.identity].flatten()
         pmd_xy_err_mat2 = pmd_xy_err.reshape(X_idx.shape)
-        assert np.allclose(
-            G_pmd_xy_err_mat[G.identity], pmd_xy_err_mat2, rtol=1e-5, atol=1e-5
-        ), f"Max error: {np.max(G_pmd_xy_err_mat[G.identity] - pmd_xy_err_mat2)}"
+        assert np.allclose(G_pmd_xy_err_mat[G.identity], pmd_xy_err_mat2, rtol=1e-5, atol=1e-5), (
+            f"Max error: {np.max(G_pmd_xy_err_mat[G.identity] - pmd_xy_err_mat2)}"
+        )
 
     # ==============================================================================================================
     #  Approximate the operator norm from the Gram matrix of errors.

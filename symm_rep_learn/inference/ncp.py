@@ -34,17 +34,12 @@ class NCPRegressor(torch.nn.Module):
 
         hy_train = model.embedding_y(y_train)  # shape: (n_train, embedding_dim)
 
-        if analytic_residual and isinstance(model.embedding_y, ResidualEncoder):
-            y_dims_in_hy = model.embedding_y.residual_dims
-            for dim in range(y_dims_in_hy.start, y_dims_in_hy.stop):
-                self.Czyhy[dim, dim] = 1
-        else:
-            if lstsq:
-                out = torch.linalg.lstsq(hy_train, zy_train_c)
-                self.Czyhy = out.solution.T
-                assert self.Czyhy.shape == (zy_train.shape[-1], hy_train.shape[-1]), f"Invalid shape {self.Czyhy.shape}"
-            else:  # Compute empirical expectation
-                self.Czyhy = (1 / n_train) * torch.einsum("by,bh->yh", zy_train_c, hy_train)
+        if lstsq:
+            out = torch.linalg.lstsq(hy_train, zy_train_c)
+            self.Czyhy = out.solution.T
+            assert self.Czyhy.shape == (zy_train.shape[-1], hy_train.shape[-1]), f"Invalid shape {self.Czyhy.shape}"
+        else:  # Compute empirical expectation
+            self.Czyhy = (1 / n_train) * torch.einsum("by,bh->yh", zy_train_c, hy_train)
 
     def forward(self, x_cond):
         x_cond = x_cond.to(self.device)

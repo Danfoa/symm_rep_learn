@@ -112,6 +112,30 @@ class TrajectoryDataset(torch.utils.data.Dataset):
         else:
             return "TrajectoryContextDataset not initialized."
 
+    def get_all_past_windows(self):
+        """
+        Returns a tensor of shape [n_samples, state_dim, past_frames] containing all past windows.
+        Each window is a view into the original trajectory data (no memory duplication).
+        """
+        views = []
+        for traj_idx, slice_idx in self._indices:
+            s, e = slice_idx.start, slice_idx.stop
+            past = self._raw_data[traj_idx][..., s : s + self._past_frames]
+            views.append(past)
+        return torch.stack(views)
+
+    def get_all_future_windows(self):
+        """
+        Returns a tensor of shape [n_samples, state_dim, future_frames] containing all future windows.
+        Each window is a view into the original trajectory data (no memory duplication).
+        """
+        views = []
+        for traj_idx, slice_idx in self._indices:
+            s, e = slice_idx.start, slice_idx.stop
+            future = self._raw_data[traj_idx][..., s + self._past_frames : e]
+            views.append(future)
+        return torch.stack(views)
+
 
 def _slices_from_traj_len(time_horizon: int, context_length: int, time_lag: int) -> list[slice]:
     """Returns the list of slices (start_time_idx, end_time_idx) for each context window in the trajectory.

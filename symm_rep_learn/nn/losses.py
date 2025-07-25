@@ -154,8 +154,7 @@ def orthonormality_regularization(x, Cx: Tensor = None, x_mean: Tensor = None, v
     with torch.no_grad():
         # Divide by the embedding dimension to standardize metrics across experiments.
         metrics = {
-            f"tr(C{var_name})": (tr_Cx / dim_x).item(),
-            f"||mu_{var_name}||": torch.sqrt(fx_centering_loss).item(),
+            f"||mu_{var_name}||": (torch.sqrt(fx_centering_loss) / dim_x).item(),
             f"||V{var_name} - I||_F^2": (orthonormality_x / dim_x).item(),
         }
 

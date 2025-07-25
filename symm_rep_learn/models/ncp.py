@@ -21,14 +21,19 @@ class NCP(torch.nn.Module):
         embedding_y: torch.nn.Module,
         embedding_dim_x: int,
         embedding_dim_y: int,
-        gamma=0.1,  # Will be multiplied by the embedding_dim
-        gamma_centering=0.01,  # Penalizes probability mass distortion
-        running_stats=False,  # If True, uses running mean and cov for centering embeddings
-        momentum=None,  # None: Cumulative average running stats, float: Exponential moving average wih momentum
+        orth_reg=0.1,  # Will be multiplied by the embedding_dim
+        centering_reg=0.01,  # Penalizes probability mass distortion
+        momentum=1.0,  # 1.0 Batch stats to center the embeddings and compute covariance.
     ):
         super(NCP, self).__init__()
-        self.gamma = gamma
-        self.gamma_centering = gamma_centering
+
+        assert orth_reg > 0 or centering_reg > 0, (
+            "If you desire to train NCP without orthonormal regularization, set `centering_reg` to a positive value, "
+            "since this is a constraint of the optimization problem penalized via a lagrangian multiplier."
+        )
+
+        self.gamma = orth_reg
+        self.gamma_centering = centering_reg
 
         self.dim_fx = embedding_dim_x
         self.dim_hy = embedding_dim_y
@@ -44,12 +49,8 @@ class NCP(torch.nn.Module):
         torch.nn.utils.parametrizations.spectral_norm(module=self.Dr, name="weight")
 
         # Layers that center the embedding functions and keep track of mean and covariance. Variance is penalized in orthonormality
-        self.data_norm_x = DataNorm(
-            embedding_dim_x, momentum=momentum, running_stats=running_stats, compute_cov=True, only_centering=True
-        )
-        self.data_norm_y = DataNorm(
-            embedding_dim_y, momentum=momentum, running_stats=running_stats, compute_cov=True, only_centering=True
-        )
+        self.data_norm_x = DataNorm(embedding_dim_x, momentum=momentum, compute_cov=True, only_centering=True)
+        self.data_norm_y = DataNorm(embedding_dim_y, momentum=momentum, compute_cov=True, only_centering=True)
 
     def forward(self, x: torch.Tensor, y: torch.Tensor):
         """Forward pass of the NCP operator.
@@ -166,9 +167,7 @@ if __name__ == "__main__":
         layer_size=64,
         activation=torch.nn.GELU,
     )
-    ncp = NCP(
-        fx, hy, embedding_dim_x=embedding_dim_x, embedding_dim_y=embedding_dim_y, running_stats=True, momentum=0.1
-    )
+    ncp = NCP(fx, hy, embedding_dim_x=embedding_dim_x, embedding_dim_y=embedding_dim_y, momentum=1.0)
     ncp.train()
 
     for _ in range(10):

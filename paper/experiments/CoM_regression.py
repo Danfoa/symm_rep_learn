@@ -117,8 +117,8 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             embedding_x=fx,
             embedding_y=fy,
             embedding_dim=embedding_dim,
-            gamma=cfg.gamma,
-            gamma_centering=cfg.gamma_centering,
+            orth_reg=cfg.gamma,
+            centering_reg=cfg.gamma_centering,
             truncated_op_bias=cfg.truncated_op_bias,
             learnable_change_basis=cfg.learnable_change_basis,
         )
