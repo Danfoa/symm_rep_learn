@@ -3,10 +3,13 @@ import shutil
 from pathlib import Path
 
 import lightning
+import numpy as np
 import torch
 from datasets import DatasetDict, interleave_datasets, load_dataset, load_from_disk
 from omegaconf import DictConfig, OmegaConf
-from torch.utils.data import DataLoader
+from PIL import Image
+from torch.utils.data import DataLoader, Dataset
+from torchvision.transforms import Compose, Pad, RandomRotation, Resize, ToTensor, InterpolationMode
 
 from symm_rep_learn.models.lightning_modules import SupervisedTrainingModule
 
@@ -22,7 +25,7 @@ base_config = DictConfig(
         "val_ratio": 0.2,
         "test_samples": 1001,
         "num_rng_seeds": 20,
-        "batch_size": 64,
+        "batch_size": 32,
         "eval_up_to_t": 15,
         "reduced_rank": True,
         "max_epochs": 150,
@@ -32,27 +35,49 @@ base_config = DictConfig(
 
 
 def make_dataset(cfg: DictConfig):
-    # Data pipeline
+    """
+    Create an ordered MNIST dataset with sequential digit arrangement.
+
+    This function processes the MNIST dataset to create ordered sequences where
+    digits appear in sequential order (0, 1, 2, 3, 4, etc.) rather than randomly.
+    """
+    # Load the full MNIST dataset into memory for faster processing
     MNIST = load_dataset("mnist", keep_in_memory=True)
+
+    # Create separate datasets for each digit class (0-9)
+    # Filter the dataset to get only examples for each specific digit
     digit_ds = []
     for i in range(cfg.classes):
         digit_ds.append(MNIST.filter(lambda example: example["label"] == i, keep_in_memory=True, num_proc=8))
+
     ordered_MNIST = DatasetDict()
-    # Order the digits in the dataset and select only a subset of the data
+
+    # Create ordered sequences by interleaving digits sequentially
+    # This ensures digits appear in order: 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, ...
     for split in ["train", "test"]:
         ordered_MNIST[split] = interleave_datasets([ds[split] for ds in digit_ds], split=split).select(
             range(cfg[f"{split}_samples"])
         )
+
+    # Split training data to create validation set
+    # Use the last portion of training data as validation (no shuffling to maintain order)
     _tmp_ds = ordered_MNIST["train"].train_test_split(test_size=cfg.val_ratio, shuffle=False)
     ordered_MNIST["train"] = _tmp_ds["train"]
     ordered_MNIST["validation"] = _tmp_ds["test"]
+
+    # Set format to PyTorch tensors for the image and label columns
     ordered_MNIST.set_format(type="torch", columns=["image", "label"])
+
+    # Normalize pixel values from [0, 255] to [0, 1] range
+    # Apply this transformation to all examples in the dataset
     ordered_MNIST = ordered_MNIST.map(
         lambda example: {"image": example["image"] / 255.0, "label": example["label"]},
         batched=True,
         keep_in_memory=True,
         num_proc=2,
     )
+
+    # Save the processed dataset to disk for future use
     ordered_MNIST.save_to_disk(data_path)
 
 
@@ -124,7 +149,7 @@ class CNNDecoder(torch.nn.Module):
         return x
 
 
-def classification_loss_with_metrics(y_true, y_pred):
+def classification_loss_metrics(y_true, y_pred):
     """
     Loss function that returns both cross-entropy loss and accuracy metrics.
 
@@ -146,14 +171,63 @@ def classification_loss_with_metrics(y_true, y_pred):
     return loss, metrics
 
 
+def augment_image(image):
+    """
+    Apply rotation augmentation to a tensor of images.
+
+    Args:
+        image: Tensor of shape (H, W) or (1, H, W)
+
+    Returns:
+        tuple: (original_image, augmented_image) both with shape (1, 29, 29)
+    """
+    # Ensure image is in the right format
+    if image.dim() == 2:  # (H, W)
+        image = image.unsqueeze(0)  # Add channel dimension -> (1, H, W)
+
+    # Create transformation pipeline similar to the original code
+    pad = Pad((0, 0, 1, 1), fill=0)  # Pad to 29x29
+    resize_up = Resize(29 * 3)  # Upsample to reduce interpolation artifacts
+    resize_down = Resize(29)  # Downsample back to 29x29
+    rotate = RandomRotation(degrees=(0, 360), interpolation=InterpolationMode.BILINEAR)
+
+    # Apply padding first (28x28 -> 29x29)
+    original = pad(image)
+
+    # Create augmented image with random rotation
+    img_upsampled = resize_up(original)
+    img_rotated = rotate(img_upsampled)
+    augmented = resize_down(img_rotated)
+
+    return original, augmented
+
+
 def collate_fn(batch):
     """
-    Custom collate function to convert batch format from dict to tuple.
+    Custom collate function that applies augmentation and returns both original and augmented images.
     SupervisedTrainingModule expects (x, y) format.
     """
     images = torch.stack([item["image"] for item in batch])
     labels = torch.stack([item["label"] for item in batch])
-    return images, labels
+
+    original, aug_image = augment_image(images)
+
+    # # Temporary visualization code - visualize first sample
+    # import matplotlib.pyplot as plt
+
+    # fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+    # axes[0].imshow(original[4].squeeze(), cmap="gray")
+    # axes[0].set_title(f"Original - Label: {labels[4].item()}")
+    # axes[0].axis("off")
+    # axes[1].imshow(aug_image[4].squeeze(), cmap="gray")
+    # axes[1].set_title(f"Augmented - Label: {labels[4].item()}")
+    # axes[1].axis("off")
+    # plt.tight_layout()
+    # plt.savefig("sample_augmentation.png")
+    # plt.close()
+    # print("Saved visualization to sample_augmentation.png")
+
+    return aug_image, labels
 
 
 def train_oracle(cfg: DictConfig):
@@ -189,7 +263,7 @@ def train_oracle(cfg: DictConfig):
         model=model,
         optimizer_fn=torch.optim.Adam,  # type: ignore
         optimizer_kwargs={"lr": 1e-2},
-        loss_fn=classification_loss_with_metrics,
+        loss_fn=classification_loss_metrics,
     )
 
     trainer.fit(model=lightning_module, train_dataloaders=train_dl, val_dataloaders=val_dl)
