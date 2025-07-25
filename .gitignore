@@ -9,3 +9,4 @@
 /.ipynb_checkpoints
 /paper/results
 .github/
+paper/experiments/dynamics/data/ordered_mnist/*
