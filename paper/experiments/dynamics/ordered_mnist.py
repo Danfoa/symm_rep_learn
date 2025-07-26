@@ -1,7 +1,9 @@
+import math
 import os
 import shutil
 from pathlib import Path
 
+import escnn
 import lightning
 import numpy as np
 import torch
@@ -9,7 +11,7 @@ from datasets import DatasetDict, interleave_datasets, load_dataset, load_from_d
 from omegaconf import DictConfig, OmegaConf
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
-from torchvision.transforms import Compose, Pad, RandomRotation, Resize, ToTensor, InterpolationMode
+from torchvision.transforms import Compose, InterpolationMode, Pad, RandomRotation, Resize, ToTensor
 
 from symm_rep_learn.models.lightning_modules import SupervisedTrainingModule
 
@@ -86,20 +88,14 @@ class CNNEncoder(torch.nn.Module):
     def __init__(self, num_classes):
         super(CNNEncoder, self).__init__()
         self.conv1 = torch.nn.Sequential(
-            torch.nn.Conv2d(
-                in_channels=1,
-                out_channels=16,
-                kernel_size=5,
-                stride=1,
-                padding=2,
-            ),
+            torch.nn.Conv2d(in_channels=1, out_channels=16, kernel_size=5, stride=1, padding=2),
             torch.nn.ReLU(),
             torch.nn.MaxPool2d(kernel_size=2),
         )
         self.conv2 = torch.nn.Sequential(
-            torch.nn.Conv2d(16, 32, 5, 1, 2),
+            torch.nn.Conv2d(in_channels=16, out_channels=32, kernel_size=5, stride=1, padding=2),
             torch.nn.ReLU(),
-            torch.nn.MaxPool2d(2),
+            torch.nn.MaxPool2d(kernel_size=2),
         )
         # fully connected layer, output num_classes classes
         self.out = torch.nn.Sequential(torch.nn.Linear(32 * 7 * 7, num_classes))
@@ -116,6 +112,67 @@ class CNNEncoder(torch.nn.Module):
         return output
 
 
+class SO2SCNNEncoder(torch.nn.Module):
+    """SO(2) equivariant CNN encoder for ordered MNIST."""
+
+    def __init__(self, embedding_dim=64, hidden_channels=[16, 32]):
+        super(SO2SCNNEncoder, self).__init__()
+        self.embedding_dim = embedding_dim
+        self.hidden_channels = hidden_channels
+        # The model is equivariant under all planar rotations
+        self.r2_act = escnn.gspaces.rot2dOnR2(N=-1)
+        self.G = self.r2_act.fibergroup
+
+        # The input image is a scalar field (grey values), corresponding to the trivial representation
+        self.in_type = escnn.nn.FieldType(self.r2_act, [self.r2_act.trivial_repr])
+
+        # We need to mask the input image since the corners are moved outside the grid under rotations
+        self.mask = escnn.nn.MaskModule(self.in_type, 29, margin=1)
+
+        act1 = escnn.nn.FourierELU(self.r2_act, hidden_channels[0], irreps=self.G.bl_irreps(3), N=16)
+        act2 = escnn.nn.FourierELU(self.r2_act, hidden_channels[1], irreps=self.G.bl_irreps(3), N=16)
+
+        self.conv1 = escnn.nn.SequentialModule(
+            escnn.nn.R2Conv(self.in_type, act1.in_type, kernel_size=5, stride=1, padding=2),
+            act1,
+            escnn.nn.PointwiseAvgPoolAntialiased(act1.out_type, sigma=0.66, stride=2),
+        )
+        self.conv2 = escnn.nn.SequentialModule(
+            escnn.nn.R2Conv(act1.out_type, act2.in_type, kernel_size=5, stride=1, padding=2),
+            act2,
+            escnn.nn.PointwiseAvgPoolAntialiased(act2.out_type, sigma=0.66, stride=2),
+        )
+
+        # Head that flattens the gird feature maps. (B, C, H, W) -> (B, C*H*W)
+        linear_base_space = escnn.gspaces.no_base_space(self.G)
+        feat_type = escnn.nn.FieldType(linear_base_space, [act2.out_type.representation] * 8 * 8)
+        out_rep = self.G.spectral_regular_representation(*self.G.bl_irreps(3), name="embedding_rep")
+        out_rep_multiplicity = math.ceil(self.embedding_dim // out_rep.size)
+        self.out = escnn.nn.Linear(
+            in_type=feat_type,
+            out_type=escnn.nn.FieldType(linear_base_space, [out_rep] * out_rep_multiplicity),
+            bias=False,
+        )
+
+    def forward(self, input: torch.Tensor):
+        # wrap the input tensor in a GeometricTensor
+        x = self.in_type(input)
+        # mask out the corners of the input image
+        x = self.mask(x)
+        # apply equivariant blocks
+        x = self.conv1(x)
+        x = self.conv2(x)
+        # Extract the tensor and flatten correctly for group representation
+        # Shape: (B, C, H, W) -> (B, H, W, C) -> (B, H*W*C)
+        # This preserves pixel-wise feature grouping for equivariant features
+        B, C, H, W = x.tensor.shape
+        x_flat = x.tensor.permute(0, 2, 3, 1).reshape(B, -1)
+
+        embedding = self.out(self.out.in_type(x_flat))
+
+        return embedding
+
+
 # A decoder which is specular to CNNEncoder, starting with a fully connected layer and then reshaping the output to a 2D image
 class CNNDecoder(torch.nn.Module):
     def __init__(self, num_classes=10):
@@ -125,18 +182,12 @@ class CNNDecoder(torch.nn.Module):
         self.conv1 = torch.nn.Sequential(
             torch.nn.Upsample(scale_factor=2),
             torch.nn.ReLU(),
-            torch.nn.ConvTranspose2d(
-                in_channels=32,
-                out_channels=16,
-                kernel_size=5,
-                stride=1,
-                padding=2,
-            ),
+            torch.nn.ConvTranspose2d(in_channels=32, out_channels=16, kernel_size=5, stride=1, padding=2),
         )
         self.conv2 = torch.nn.Sequential(
             torch.nn.Upsample(scale_factor=2),
             torch.nn.ReLU(),
-            torch.nn.ConvTranspose2d(16, 1, 5, 1, 2),
+            torch.nn.ConvTranspose2d(in_channels=16, out_channels=1, kernel_size=5, stride=1, padding=2),
         )
 
     def forward(self, x):
@@ -147,6 +198,64 @@ class CNNDecoder(torch.nn.Module):
         # Remove the channel dimension
         x = x.squeeze(1)
         return x
+
+
+class SO2SCNNDecoder(torch.nn.Module):
+    """SO(2) equivariant CNN decoder for ordered MNIST - counterpart to SO2SCNNEncoder."""
+
+    def __init__(self, in_type: escnn.nn.FieldType, hidden_channels=[32, 16]):
+        super(SO2SCNNDecoder, self).__init__()
+        self.embedding_dim = in_type.size
+        self.hidden_channels = hidden_channels
+
+        # The model is equivariant under all planar rotations
+        self.r2_act = escnn.gspaces.rot2dOnR2(N=-1)
+        self.G = self.r2_act.fibergroup
+
+        self.in_type = in_type  # Image embedding
+        self.output_type = escnn.nn.FieldType(self.r2_act, [self.r2_act.trivial_repr])  #  Gray image
+
+        act1 = escnn.nn.FourierELU(self.r2_act, hidden_channels[0], irreps=self.G.bl_irreps(3), N=16)
+        act2 = escnn.nn.FourierELU(self.r2_act, hidden_channels[1], irreps=self.G.bl_irreps(3), N=16)
+
+        # Define the unflattened type.
+        linear_base_space = escnn.gspaces.no_base_space(self.G)
+        flat_feat_type = escnn.nn.FieldType(linear_base_space, [act1.in_type.representation] * 8 * 8)
+        # Linear map from flat_embedding to flattened spatial features
+        self.fc = escnn.nn.Linear(in_type=self.in_type, out_type=flat_feat_type)
+
+        # First decoder block: Upsample → Activation → ConvTranspose:   fx8x8 → hc1x16x16
+        self.deconv1 = escnn.nn.SequentialModule(
+            escnn.nn.R2Upsampling(act1.in_type, scale_factor=2),
+            act1,
+            escnn.nn.R2ConvTransposed(act1.in_type, act2.in_type, kernel_size=5, stride=1, padding=2),
+        )
+        # Second decoder block: Upsample → Activation → ConvTranspose:   hc1x16x16 → hc2x32x32
+        self.deconv2 = escnn.nn.SequentialModule(
+            escnn.nn.R2Upsampling(act2.in_type, scale_factor=2),
+            act2,
+            escnn.nn.R2ConvTransposed(act2.in_type, self.output_type, kernel_size=5, stride=1, padding=2, bias=True),
+        )
+
+    def forward(self, x: escnn.nn.GeometricTensor):
+        # Unflatten embedding back to spatial features
+        spatial_features = self.fc(x).tensor
+
+        # Shape: (B, H*W*C) -> (B, H, W, C) -> (B, C, H, W)
+        B = spatial_features.shape[0]
+        H, W = 8, 8  # Target spatial dimensions after encoder's pooling
+        C = self.deconv1.in_type.size
+
+        # Reshape to spatial format and permute to (B, C, H, W)
+        x_img = spatial_features.reshape(B, H, W, C).permute(0, 3, 1, 2)
+        # Apply reverse operations: each block now contains Upsample → Activation → ConvTranspose
+        x = self.deconv1(self.deconv1.in_type(x_img))
+        x = self.deconv2(x)  # 16x16 -> 32x32 (16→1 channels)
+
+        # Extract final tensor
+        output = x.tensor
+
+        return output
 
 
 import escnn
@@ -175,7 +284,7 @@ class SO2SteerableCNN(torch.nn.Module):
         # first we build the non-linear layer, which also constructs the right feature type
         # we choose 8 feature fields, each transforming under the regular representation of SO(2) up to frequency 3
         # When taking the ELU non-linearity, we sample the feature fields on N=16 points
-        activation1 = escnn.nn.FourierELU(self.r2_act, 8, irreps=self.G.bl_irreps(3), N=16, inplace=True)
+        activation1 = escnn.nn.FourierELU(self.r2_act, 8, irreps=self.G.bl_irreps(3), N=16)
         out_type = activation1.in_type
         self.block1 = escnn.nn.SequentialModule(
             escnn.nn.R2Conv(in_type, out_type, kernel_size=7, padding=1, bias=False),
@@ -187,7 +296,7 @@ class SO2SteerableCNN(torch.nn.Module):
         # the old output type is the input type to the next layer
         in_type = self.block1.out_type
         # the output type of the second convolution layer are 16 regular feature fields
-        activation2 = escnn.nn.FourierELU(self.r2_act, 16, irreps=self.G.bl_irreps(3), N=16, inplace=True)
+        activation2 = escnn.nn.FourierELU(self.r2_act, 16, irreps=self.G.bl_irreps(3), N=16)
         out_type = activation2.in_type
         self.block2 = escnn.nn.SequentialModule(
             escnn.nn.R2Conv(in_type, out_type, kernel_size=5, padding=2, bias=False),
@@ -201,7 +310,7 @@ class SO2SteerableCNN(torch.nn.Module):
         # the old output type is the input type to the next layer
         in_type = self.block2.out_type
         # the output type of the third convolution layer are 32 regular feature fields
-        activation3 = escnn.nn.FourierELU(self.r2_act, 32, irreps=self.G.bl_irreps(3), N=16, inplace=True)
+        activation3 = escnn.nn.FourierELU(self.r2_act, 32, irreps=self.G.bl_irreps(3), N=16)
         out_type = activation3.in_type
         self.block3 = escnn.nn.SequentialModule(
             escnn.nn.R2Conv(in_type, out_type, kernel_size=5, padding=2, bias=False),
@@ -213,7 +322,7 @@ class SO2SteerableCNN(torch.nn.Module):
         # the old output type is the input type to the next layer
         in_type = self.block3.out_type
         # the output type of the fourth convolution layer are 64 regular feature fields
-        activation4 = escnn.nn.FourierELU(self.r2_act, 32, irreps=self.G.bl_irreps(3), N=16, inplace=True)
+        activation4 = escnn.nn.FourierELU(self.r2_act, 32, irreps=self.G.bl_irreps(3), N=16)
         out_type = activation4.in_type
         self.block4 = escnn.nn.SequentialModule(
             escnn.nn.R2Conv(in_type, out_type, kernel_size=5, padding=2, bias=False),
@@ -226,7 +335,7 @@ class SO2SteerableCNN(torch.nn.Module):
         # the old output type is the input type to the next layer
         in_type = self.block4.out_type
         # the output type of the fifth convolution layer are 96 regular feature fields
-        activation5 = escnn.nn.FourierELU(self.r2_act, 64, irreps=self.G.bl_irreps(3), N=16, inplace=True)
+        activation5 = escnn.nn.FourierELU(self.r2_act, 64, irreps=self.G.bl_irreps(3), N=16)
         out_type = activation5.in_type
         self.block5 = escnn.nn.SequentialModule(
             escnn.nn.R2Conv(in_type, out_type, kernel_size=5, padding=2, bias=False),
@@ -238,7 +347,7 @@ class SO2SteerableCNN(torch.nn.Module):
         # the old output type is the input type to the next layer
         in_type = self.block5.out_type
         # the output type of the sixth convolution layer are 64 regular feature fields
-        activation6 = escnn.nn.FourierELU(self.r2_act, 64, irreps=self.G.bl_irreps(3), N=16, inplace=True)
+        activation6 = escnn.nn.FourierELU(self.r2_act, 64, irreps=self.G.bl_irreps(3), N=16)
         out_type = activation6.in_type
         self.block6 = escnn.nn.SequentialModule(
             escnn.nn.R2Conv(in_type, out_type, kernel_size=5, padding=1, bias=False),
@@ -453,14 +562,24 @@ if __name__ == "__main__":
 
     dataloader = DataLoader(ordered_ds, batch_size=128, shuffle=True, collate_fn=traj_collate_fn)
 
+    so2_cnn_encoder = SO2SCNNEncoder(embedding_dim=64)
+    so2_cnn_decoder = SO2SCNNDecoder(in_type=so2_cnn_encoder.out.out_type)
     # Iterate over the first 10 samples and plot currecnt and next images
     import matplotlib.pyplot as plt
 
     i = 0
     for batch_trajs in dataloader:
         present_batch, future_batch = batch_trajs
+
+        p_embedding = so2_cnn_encoder(present_batch)
+        f_embedding = so2_cnn_encoder(future_batch)
+        print(f"Embedding shapes: present {p_embedding.shape}, future {f_embedding.shape}")
+        p_rec = so2_cnn_decoder(p_embedding)
+        f_rec = so2_cnn_decoder(f_embedding)
+        print(f"Reconstruction shapes: present {p_rec.shape}, future {f_rec.shape}")
         current_img = present_batch[0].numpy()
         next_img = future_batch[0].numpy()
+
         plt.figure(figsize=(6, 3))
         plt.subplot(1, 2, 1)
         plt.imshow(current_img.squeeze(0), cmap="gray")
@@ -474,6 +593,6 @@ if __name__ == "__main__":
         plt.show()
 
         i += 1
-        if i >= 10:
+        if i >= 3:
             break
     print("Sampled and displayed first 10 trajectory images.")
