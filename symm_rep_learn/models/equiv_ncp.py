@@ -5,7 +5,6 @@ import logging
 
 import escnn.nn
 import lightning
-import numpy as np
 import symm_learning
 import torch
 from escnn.group import directsum

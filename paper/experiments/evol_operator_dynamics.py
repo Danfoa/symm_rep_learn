@@ -4,9 +4,7 @@ from __future__ import annotations  # Support new typing structure in 3.8 and 3.
 
 import logging
 import pathlib
-from pyexpat import model
 
-import escnn
 import hydra
 import numpy as np
 import pandas as pd
@@ -138,9 +136,9 @@ def get_dataset(cfg: DictConfig):
     test_ds = TrajectoryDataset(trajectories=test_trajs, **ds_kwargs)
 
     # Configure the observation space representations ------------------------------------------------------------------
+    from escnn.gspaces import no_base_space
     from symm_learning.nn.conv import GSpace1D
     from symm_learning.stats import var_mean
-    from escnn.gspaces import no_base_space
 
     G = rep_state.group
     if cfg.dataset.past_frames == 1 and cfg.dataset.future_frames == 1:
@@ -308,7 +306,9 @@ def main(cfg: DictConfig):
 
     if isinstance(model, NCP):
         ncp_state_reg = NCPRegressor(model=model, y_train=future_train, zy_train=future_train, lstsq=cfg.lstsq)
-        ncp_ccdf = NCPConditionalCDF(model=model, y_train=future_train, support_discretization_points=500, lstsq=cfg.lstsq)
+        ncp_ccdf = NCPConditionalCDF(
+            model=model, y_train=future_train, support_discretization_points=500, lstsq=cfg.lstsq
+        )
         y_test_pred = ncp_state_reg(x_cond=past_test)
         q_low, q_high = ncp_ccdf.conditional_quantiles(x_cond=past_test, alpha=cfg.alpha)
     else:

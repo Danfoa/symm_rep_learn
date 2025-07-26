@@ -63,7 +63,7 @@ def plot_quantiles(y_c, low_q, up_q, ax=None, label="pred", alpha=0.05, gt=True,
         ax.text(
             q_lo_gt[0],
             q_lo_gt[1] * 0.8,
-            f"GT{int((1-alpha)*100):d}%",
+            f"GT{int((1 - alpha) * 100):d}%",
             color="black",
             verticalalignment="top",
             horizontalalignment="left",

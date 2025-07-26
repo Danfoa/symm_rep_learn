@@ -1,17 +1,13 @@
 import math
-import os
-import shutil
 from pathlib import Path
 
 import escnn
 import lightning
-import numpy as np
 import torch
 from datasets import DatasetDict, interleave_datasets, load_dataset, load_from_disk
-from omegaconf import DictConfig, OmegaConf
-from PIL import Image
-from torch.utils.data import DataLoader, Dataset
-from torchvision.transforms import Compose, InterpolationMode, Pad, RandomRotation, Resize, ToTensor
+from omegaconf import DictConfig
+from torch.utils.data import DataLoader
+from torchvision.transforms import InterpolationMode, Pad, RandomRotation, Resize
 
 from symm_rep_learn.models.lightning_modules import SupervisedTrainingModule
 
@@ -577,8 +573,8 @@ if __name__ == "__main__":
         p_rec = so2_cnn_decoder(p_embedding)
         f_rec = so2_cnn_decoder(f_embedding)
         print(f"Reconstruction shapes: present {p_rec.shape}, future {f_rec.shape}")
-        current_img = present_batch[0].numpy()
-        next_img = future_batch[0].numpy()
+        current_img = present_batch[5].numpy()
+        next_img = future_batch[5].numpy()
 
         plt.figure(figsize=(6, 3))
         plt.subplot(1, 2, 1)

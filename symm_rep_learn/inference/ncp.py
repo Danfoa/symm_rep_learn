@@ -2,7 +2,6 @@ import numpy as np
 import torch
 
 from symm_rep_learn.models.ncp import NCP
-from symm_rep_learn.nn.layers import ResidualEncoder
 
 
 class NCPRegressor(torch.nn.Module):

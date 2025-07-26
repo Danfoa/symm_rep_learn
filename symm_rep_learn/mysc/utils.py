@@ -117,9 +117,9 @@ def filter_reduced_rank_svals(values, vectors):
     vectors = vectors[:, sort_perm]
 
     # Assert that the eigenvectors do not have any imaginary part
-    assert torch.all(
-        torch.imag(vectors) == 0 if torch.is_complex(values) else torch.ones(len(values))
-    ), "The eigenvectors should be real. Decrease the rank or increase the regularization strength."
+    assert torch.all(torch.imag(vectors) == 0 if torch.is_complex(values) else torch.ones(len(values))), (
+        "The eigenvectors should be real. Decrease the rank or increase the regularization strength."
+    )
 
     # Take the real part of the eigenvectors
     vectors = torch.real(vectors)

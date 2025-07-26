@@ -16,9 +16,9 @@ class InvDRF(DRF):
         self.pmd_type = embedding.out_type
         rep_pmd: Representation = self.pmd_type.representation
         assert len(rep_pmd._irreps_multiplicities) == 1
-        assert (
-            rep_pmd.irreps[0] == rep_pmd.group.trivial_representation.id
-        ), f"The embedding must provide a {rep_pmd.group} invariant scalar output."
+        assert rep_pmd.irreps[0] == rep_pmd.group.trivial_representation.id, (
+            f"The embedding must provide a {rep_pmd.group} invariant scalar output."
+        )
 
         # Remove the Geometric tensor wrapper before using the methods of DRF
         torch_embedding = torch.nn.Sequential(

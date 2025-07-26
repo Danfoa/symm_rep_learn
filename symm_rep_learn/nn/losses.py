@@ -3,7 +3,6 @@ from torch import Tensor
 
 from symm_rep_learn.mysc.statistics import cov_norm_squared_unbiased_estimation
 
-
 # class CLoRaLoss(torch.nn.Module):
 #     """Contrastive Low-Rank Approximation Loss.
 

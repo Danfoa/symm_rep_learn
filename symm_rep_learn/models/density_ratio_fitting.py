@@ -121,8 +121,8 @@ if __name__ == "__main__":
     joint_scores_diag = torch.diag(scores.squeeze())
 
     # Check if the individual scores match the diagonal elements
-    assert torch.allclose(
-        torch.tensor(joint_scores), joint_scores_diag, rtol=1e-5, atol=1e-5
-    ), f"err_max = {torch.max(torch.abs(torch.tensor(joint_scores) - joint_scores_diag))}"
+    assert torch.allclose(torch.tensor(joint_scores), joint_scores_diag, rtol=1e-5, atol=1e-5), (
+        f"err_max = {torch.max(torch.abs(torch.tensor(joint_scores) - joint_scores_diag))}"
+    )
 
     print("Test passed: Diagonal scores match individual scores")

@@ -5,8 +5,6 @@ import logging
 
 import torch
 from symm_learning.nn import DataNorm
-import torch.nn.utils.parametrize as P
-import torch.nn.utils.parametrizations as param
 
 from symm_rep_learn.nn import contrastive_low_rank_loss, orthonormality_regularization
 

@@ -42,9 +42,9 @@ class ProprioceptiveDataset(Dataset):
         # Load the Gym Quadruped dataset.
         self.h5file = H5Reader(data_file)
         for obs_name in x_obs_names + y_obs_names:
-            assert (
-                obs_name in self.h5file.recordings.keys()
-            ), f"Observation {obs_name} not in {self.h5file.recordings.keys()}"
+            assert obs_name in self.h5file.recordings.keys(), (
+                f"Observation {obs_name} not in {self.h5file.recordings.keys()}"
+            )
 
         self.x_obs_names, self.y_obs_names = x_obs_names, y_obs_names
         self.device = device  # Device to load the dataset to
@@ -85,9 +85,9 @@ class ProprioceptiveDataset(Dataset):
 
             for obs_name in self.x_obs_names + self.y_obs_names:
                 try:
-                    assert (
-                        self.h5file.recordings[obs_name][traj_id].shape[0] == traj_len
-                    ), f"Obs {tmp_obs_name} and {obs_name} have different time dimensions for trajectory {traj_id}."
+                    assert self.h5file.recordings[obs_name][traj_id].shape[0] == traj_len, (
+                        f"Obs {tmp_obs_name} and {obs_name} have different time dimensions for trajectory {traj_id}."
+                    )
                 except Exception as e:
                     raise Exception(f"Issue with {obs_name} ") from e
 

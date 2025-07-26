@@ -11,9 +11,10 @@ where b is a parameter that controls the system's behavior.
 Reference: Thomas, René (1999). "Deterministic chaos seen in terms of feedback circuits"
 """
 
+from typing import TYPE_CHECKING, List, Optional, Tuple
+
 import numpy as np
 from scipy.integrate import solve_ivp
-from typing import Tuple, Optional, List, TYPE_CHECKING
 
 # Optional plotting dependencies
 try:

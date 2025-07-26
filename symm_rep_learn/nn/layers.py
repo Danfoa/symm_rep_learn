@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import torch
-from escnn.nn import EquivariantModule, GeometricTensor
 from torch.nn import Conv2d, Dropout, Linear, MaxPool2d, Module, ReLU, Sequential
 
 
