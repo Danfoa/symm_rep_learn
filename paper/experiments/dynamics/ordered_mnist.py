@@ -369,22 +369,20 @@ def collate_fn(batch):
 
     original, aug_image = augment_image(images)
 
-    # # Temporary visualization code - visualize first sample
-    # import matplotlib.pyplot as plt
-
-    # fig, axes = plt.subplots(1, 2, figsize=(8, 4))
-    # axes[0].imshow(original[4].squeeze(), cmap="gray")
-    # axes[0].set_title(f"Original - Label: {labels[4].item()}")
-    # axes[0].axis("off")
-    # axes[1].imshow(aug_image[4].squeeze(), cmap="gray")
-    # axes[1].set_title(f"Augmented - Label: {labels[4].item()}")
-    # axes[1].axis("off")
-    # plt.tight_layout()
-    # plt.savefig("sample_augmentation.png")
-    # plt.close()
-    # print("Saved visualization to sample_augmentation.png")
-
     return aug_image, labels
+
+
+def traj_collate_fn(batch):
+    """
+    Custom collate function that applies augmentation and returns both original and augmented images.
+    SupervisedTrainingModule expects (x, y) format.
+    """
+    images = torch.utils.data.default_collate(batch)
+
+    _, aug_image = augment_image(images.squeeze(2))
+
+    present_image, future_image = aug_image[:, [0]], aug_image[:, [1]]
+    return present_image, future_image
 
 
 def train_oracle(cfg: DictConfig):
@@ -443,4 +441,39 @@ if __name__ == "__main__":
         print("Data directory not found, preprocessing data.")
         make_dataset(cfg)
 
+    # Train the oracle classifier which is SO(2) equivariant
     train_oracle(cfg)
+
+    # Test that we can sample trajectories of consecutive digits
+    ordered_MNIST = load_from_disk(str(data_path))
+
+    from paper.experiments.dynamics.dynamics_dataset import TrajectoryDataset
+
+    ordered_ds = TrajectoryDataset(trajectories=[ordered_MNIST["train"]["image"]], past_frames=1, future_frames=1)
+
+    dataloader = DataLoader(ordered_ds, batch_size=128, shuffle=True, collate_fn=traj_collate_fn)
+
+    # Iterate over the first 10 samples and plot currecnt and next images
+    import matplotlib.pyplot as plt
+
+    i = 0
+    for batch_trajs in dataloader:
+        present_batch, future_batch = batch_trajs
+        current_img = present_batch[0].numpy()
+        next_img = future_batch[0].numpy()
+        plt.figure(figsize=(6, 3))
+        plt.subplot(1, 2, 1)
+        plt.imshow(current_img.squeeze(0), cmap="gray")
+        plt.title("Current Image")
+        plt.axis("off")
+        plt.subplot(1, 2, 2)
+        plt.imshow(next_img.squeeze(0), cmap="gray")
+        plt.title("Next Image")
+        plt.axis("off")
+        plt.tight_layout()
+        plt.show()
+
+        i += 1
+        if i >= 10:
+            break
+    print("Sampled and displayed first 10 trajectory images.")

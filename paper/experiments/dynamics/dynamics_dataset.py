@@ -22,7 +22,7 @@ class TrajectoryDataset(torch.utils.data.Dataset):
         """Initialize a Dataset instance that can be passed to a torch.data.DataLoader.
 
         Args:
-            trajectories: list([feat_dims*, time]) trajectories of potentially different lengths but same feature dimension.
+            trajectories: list([time, feat_dims*]) trajectories of potentially different lengths but same feature dimension.
             past_frames: (int) Number of past time-frames to return in each context window.
             future_frames: (int) Number of future time-frames to return in each context window.
             time_lag: (int) Time lag between successive context windows. Default to 1.
@@ -47,16 +47,12 @@ class TrajectoryDataset(torch.utils.data.Dataset):
         self._raw_data = []  # Variable containing the trajectories in the desired backed.
 
         # Convert trajectories to the desired backend. We copy data only once, and keep the original memory footprint.
-        self._raw_data = [torch.tensor(traj, **torch_kwargs) for traj in trajectories]
+        self._raw_data = trajectories  # [torch.tensor(traj, **torch_kwargs) for traj in trajectories]
 
         # Compute the list of indices (traj_idx, slice(start, end)) for each ContextWindow.
         for traj_idx, traj_data in enumerate(self._raw_data):
-            if traj_data.ndim < 2:
-                raise ValueError(
-                    f"Shape of trajectory {traj_idx} is {traj_data.shape}. Expected a 2D array of (time, *features)."
-                )
             context_window_slices = _slices_from_traj_len(
-                time_horizon=traj_data.shape[-1], context_length=context_length, time_lag=time_lag
+                time_horizon=len(traj_data), context_length=context_length, time_lag=time_lag
             )
             # Store a tuple of (traj_idx, context window slice) for each context window.
             self._indices.extend([(traj_idx, s) for s in context_window_slices])
@@ -101,7 +97,8 @@ class TrajectoryDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         traj_idx, slice_idx = self._indices[idx]
-        return self._raw_data[traj_idx][..., slice_idx]
+        context_window = self._raw_data[traj_idx][slice_idx.start : slice_idx.stop]
+        return context_window
 
     def __repr__(self):
         device = "cpu"
