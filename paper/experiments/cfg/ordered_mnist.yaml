@@ -5,7 +5,7 @@ proj_name: "ordered_mnist"
 exp_name: "test"
 
 seed: -1
-debug: False
+debug: True
 device: 0  # -1 for all GPUs [0, ..., gpu_id] for a specific GPU
 profile: False
 
@@ -39,6 +39,8 @@ dataset:
 architecture:
   activation: ELU             # Any torch activation
   hidden_units: [64, 128]
+  dilation: 1  
+  self_adjoint: True               
 
 # OPTIMIZATION CONFIG
 optim:
@@ -46,7 +48,7 @@ optim:
   patience: 50                # Epochs to wait for improvement before early stopping
   batch_size: 128             # The higher the best
   val_batch_size: 64          # The higher the best
-  max_epochs: 400             # Number of passes before stop training. Early stopping is used.
+  max_epochs: 150             # Number of passes before stop training. Early stopping is used.
   dl_num_workers: 0           # Number of workers for data loading
 
 

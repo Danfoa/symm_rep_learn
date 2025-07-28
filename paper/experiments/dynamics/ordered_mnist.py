@@ -14,6 +14,8 @@ main_path = Path(__file__).parent
 data_path = main_path / "data" / "ordered_mnist"
 oracle_ckpt_path = data_path / "oracle.ckpt"
 
+TRAIN_SAMPLES = {"train": 29210, "val": 1000, "test": 4900}
+
 
 def make_dataset(n_classes: int, val_ratio: float = 0.2):
     """
@@ -36,9 +38,11 @@ def make_dataset(n_classes: int, val_ratio: float = 0.2):
     # Create ordered sequences by interleaving digits sequentially
     # This ensures digits appear in order: 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, ...
     for split in ["train", "test"]:
-        ordered_MNIST[split] = interleave_datasets([ds[split] for ds in digit_ds], split=split).select(
-            range(cfg[f"{split}_samples"])
-        )
+        ordered_MNIST[split] = interleave_datasets(
+            [ds[split] for ds in digit_ds],
+            split=split,
+            stopping_strategy="all_exhausted",
+        ).select(range(TRAIN_SAMPLES[f"{split}"]))
 
     # Split training data to create validation set
     # Use the last portion of training data as validation (no shuffling to maintain order)
@@ -64,35 +68,43 @@ def make_dataset(n_classes: int, val_ratio: float = 0.2):
 
 # CNN Architecture
 class CNNEncoder(torch.nn.Module):
-    def __init__(self, hidden_channels=[16, 32]):
+    def __init__(self, channels=[16, 32], batch_norm: bool = False):
         super(CNNEncoder, self).__init__()
-        self.hidden_channels = hidden_channels
-        self.conv1 = torch.nn.Sequential(  # (1, 29, 29) -> (HC1, 14, 14)
-            torch.nn.Conv2d(in_channels=1, out_channels=hidden_channels[0], kernel_size=5, stride=1, padding=2),
-            torch.nn.ReLU(),
-            torch.nn.MaxPool2d(kernel_size=2),
+
+        conv_kwargs_low_rf = dict(kernel_size=4, stride=2, padding=1, dilation=1)
+        conv_kwargs_high_rf = dict(kernel_size=4, stride=2, padding=4, dilation=3)
+
+        self.hidden_channels = channels
+        self.conv1_low_rf = torch.nn.Sequential(  # (1, 28, 28) -> (HC1, 14, 14)
+            torch.nn.Conv2d(1, channels[0] // 2, bias=True, **conv_kwargs_low_rf),
+            torch.nn.BatchNorm2d(channels[0] // 2) if batch_norm else torch.nn.Identity(),
+            torch.nn.ELU(),
         )
+        self.conv1_high_rf = torch.nn.Sequential(  # (1, 28, 28) -> (HC1, 14, 14)
+            torch.nn.Conv2d(1, channels[0] // 2, bias=True, **conv_kwargs_high_rf),
+            torch.nn.BatchNorm2d(channels[0] // 2) if batch_norm else torch.nn.Identity(),
+            torch.nn.ELU(),
+        )
+
         self.conv2 = torch.nn.Sequential(  # (HC1, 14, 14) -> (HC2, 7, 7)
-            torch.nn.Conv2d(
-                in_channels=hidden_channels[0], out_channels=hidden_channels[1], kernel_size=5, stride=1, padding=2
-            ),
-            torch.nn.ReLU(),
-            torch.nn.MaxPool2d(kernel_size=2),
+            torch.nn.Conv2d(channels[0], channels[1], bias=False, **conv_kwargs_low_rf),
+            torch.nn.BatchNorm2d(channels[1]) if batch_norm else torch.nn.Identity(),
+            torch.nn.ELU(),
         )
-        # Store the spatial dimensions after conv operations for easy inversion
-        self.spatial_size = 7  # 28 -> 14 -> 7 after two max pools
+        self.spatial_size = 7
 
     def forward(self, x: torch.Tensor):
         if x.dim() == 3:
             x = x.unsqueeze(1)  # Add a channel dimension if needed
         # print(f"Input shape: {x.shape}")
-        x = self.conv1(x)
+        x_low = self.conv1_low_rf(x)
+        x_high = self.conv1_high_rf(x)
+        x = torch.cat([x_low, x_high], dim=1)
         # print(f"After conv1: {x.shape}")
         x = self.conv2(x)  # Shape: (B, hidden_channels[1], 7, 7)
-        assert x.shape[2] == x.shape[3] == self.spatial_size, (
-            f"Expected size {self.spatial_size}, got {x.shape[2]}x{x.shape[3]}"
-        )
         # print(f"After conv2: {x.shape}")
+
+        assert x.shape[2] == x.shape[3] == self.spatial_size, f"Expected size {self.spatial_size}, got {x.shape}"
         # Reshape from (B, C, H, W) to (B * H * W, C)
         B, C, H, W = x.shape
         output = x.permute(0, 2, 3, 1).contiguous().view(B * H * W, C)
@@ -166,25 +178,20 @@ class SO2SCNNEncoder(torch.nn.Module):
 
 # A decoder which is specular to CNNEncoder, starting with reshaping from (B*H*W, C) back to (B, C, H, W)
 class CNNDecoder(torch.nn.Module):
-    def __init__(self, hidden_channels=[32, 16], spatial_size: int = 7):
+    def __init__(self, spatial_size: int, channels=[32, 16]):
         super(CNNDecoder, self).__init__()
-        self.hidden_channels = hidden_channels
+        self.hidden_channels = channels
         self.spatial_size = spatial_size
 
-        self.conv1 = torch.nn.Sequential(  # (F, 7, 7) -> (HC1, 14, 14)
-            torch.nn.Upsample(scale_factor=2),
-            torch.nn.ReLU(),
-            torch.nn.ConvTranspose2d(
-                in_channels=hidden_channels[0], out_channels=hidden_channels[1], kernel_size=5, stride=1, padding=2
-            ),
+        conv_kwargs_low_rf = dict(kernel_size=4, stride=2, padding=1, dilation=1)
+        self.conv1 = torch.nn.Sequential(  # (F, 7, 7) -> (HC1//2, 14, 14)
+            torch.nn.ConvTranspose2d(channels[0], channels[1], bias=True, **conv_kwargs_low_rf),
+            torch.nn.ELU(),
         )
+
         self.conv2 = torch.nn.Sequential(  # (HC1, 14, 14) -> (1, 29, 29)
-            torch.nn.Upsample(scale_factor=2),
-            torch.nn.ReLU(),
-            torch.nn.ConvTranspose2d(
-                in_channels=hidden_channels[1], out_channels=1, kernel_size=5, stride=1, padding=2
-            ),
-            torch.nn.ZeroPad2d((0, 1, 0, 1)),  # Add padding to go from 28x28 to 29x29
+            torch.nn.ConvTranspose2d(channels[1], 1, bias=True, **conv_kwargs_low_rf),
+            torch.nn.Sigmoid(),
         )
 
     def forward(self, x):
@@ -205,8 +212,6 @@ class CNNDecoder(torch.nn.Module):
         # print(f"After conv1: {x.shape}")
         x = self.conv2(x)
         # print(f"After conv2: {x.shape}")
-
-        x = torch.nn.functional.sigmoid(x)
         return x
 
 
@@ -448,9 +453,7 @@ def classification_loss_metrics(y_true, y_pred):
 
 def pre_process_images(images):
     """Define required transformations for all MNIST images."""
-    pad = Pad((0, 0, 1, 1), fill=0)  # Pad to 29x29
-    p_images = pad(images)
-    return p_images
+    return images
 
 
 def augment_image(image, split: str):
@@ -466,8 +469,8 @@ def augment_image(image, split: str):
     # Ensure image is in the right format
     if image.dim() == 2:  # (H, W)
         image = image.unsqueeze(0)  # Add channel dimension -> (1, H, W)
-    resize_up = Resize(29 * 3)  # Upsample to reduce interpolation artifacts
-    resize_down = Resize(29)  # Downsample back to 29x29
+    resize_up = Resize(28 * 3)  # Upsample to reduce interpolation artifacts
+    resize_down = Resize(28)  # Downsample back to 28x28
     rotate = RandomRotation(degrees=(0, 360), interpolation=InterpolationMode.BILINEAR)
 
     original = image
@@ -650,13 +653,13 @@ def train_oracle(n_classes=5):
 
 
 if __name__ == "__main__":
-    if not data_path.exists():
+    if not (data_path / "train").exists():
         # Check if the data directory exists, if not preprocess the data
         print("Data directory not found, preprocessing data.")
         make_dataset(n_classes=5)
 
     # Train the oracle classifier which is SO(2) equivariant
-    train_oracle(n_classes=5)
+    # train_oracle(n_classes=5)
 
     # Test that we can sample trajectories of consecutive digits
     ordered_MNIST = load_from_disk(str(data_path))
@@ -669,13 +672,13 @@ if __name__ == "__main__":
 
     # cnn_encoder = SO2SCNNEncoder(embedding_dim=64)
     # cnn_decoder = SO2SCNNDecoder(in_type=cnn_encoder.out.out_type)
-    cnn_encoder = CNNEncoder(hidden_channels=[16, 32])
-    cnn_decoder = CNNDecoder(hidden_channels=[32, 16], spatial_size=cnn_encoder.spatial_size)
-    so2_cnn_classifier = SO2SteerableCNN(n_classes=5)
+    cnn_encoder = CNNEncoder(channels=[16, 32])
+    cnn_decoder = CNNDecoder(channels=[32, 16], spatial_size=cnn_encoder.spatial_size)
+    # so2_cnn_classifier = SO2SteerableCNN(n_classes=5)
 
     state_dict = torch.load(oracle_ckpt_path)["state_dict"]
     state_dict = {k.replace("model.", ""): v for k, v in state_dict.items()}
-    so2_cnn_classifier.load_state_dict(state_dict, strict=True)
+    # so2_cnn_classifier.load_state_dict(state_dict, strict=True)
 
     # Iterate over the first 10 samples and plot currecnt and next images
     import matplotlib.pyplot as plt
@@ -683,7 +686,7 @@ if __name__ == "__main__":
     i = 0
     for batch_trajs in dataloader:
         present_batch, future_batch = batch_trajs
-
+        print(f"Present: {present_batch.shape} - Future {future_batch.shape}")
         p_embedding = cnn_encoder(present_batch)
         f_embedding = cnn_encoder(future_batch)
         print(f"Embedding shapes: present {p_embedding.shape}, future {f_embedding.shape}")
@@ -694,8 +697,8 @@ if __name__ == "__main__":
         current_img = present_batch[5].numpy()
         next_img = future_batch[5].numpy()
 
-        present_label = so2_cnn_classifier(present_batch).argmax(dim=1)[5].item()
-        next_label = so2_cnn_classifier(future_batch).argmax(dim=1)[5].item()
+        # present_label = so2_cnn_classifier(present_batch).argmax(dim=1)[5].item()
+        # next_label = so2_cnn_classifier(future_batch).argmax(dim=1)[5].item()
 
         break
         # plt.figure(figsize=(6, 3))

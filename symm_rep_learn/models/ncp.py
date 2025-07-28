@@ -42,7 +42,8 @@ class NCP(torch.nn.Module):
         # Initialize the parameters of the low-rank approximation of the operator
         self.Dr = torch.nn.Linear(in_features=self.dim_hy, out_features=self.dim_fx, bias=False)
         # Initialization close to identity. Full rank operator.
-        self.Dr.weight.data = torch.eye(self.dim_fx, self.dim_hy) + 1e-4 * torch.randn(self.dim_fx, self.dim_hy)
+        with torch.no_grad():
+            self.Dr.weight.data = torch.eye(self.dim_fx, self.dim_hy) + 1e-4 * torch.randn(self.dim_fx, self.dim_hy)
         # Ensure the truncated operator has spectral norm maximum of 1
         torch.nn.utils.parametrizations.spectral_norm(module=self.Dr, name="weight")
 
@@ -50,7 +51,7 @@ class NCP(torch.nn.Module):
         self.data_norm_x = DataNorm(embedding_dim_x, momentum=momentum, compute_cov=True, only_centering=True)
         self.data_norm_y = DataNorm(embedding_dim_y, momentum=momentum, compute_cov=True, only_centering=True)
 
-    def forward(self, x: torch.Tensor, y: torch.Tensor):
+    def forward(self, x: torch.Tensor = None, y: torch.Tensor = None):
         """Forward pass of the NCP operator.
 
         Computes non-linear transformations of the input random variables x and y, and returns r-dimensional embeddings
@@ -65,22 +66,21 @@ class NCP(torch.nn.Module):
             fx_c: (torch.Tensor) of shape (..., r) *centered* basis functions of subspace of L^2(X) .
             hy_c: (torch.Tensor) of shape (..., r) *centered* basis functions of subspace of L^2(Y) .
         """
-        fx_c = self.encode_x(x)  # f_c(x) = f(x) - E_p(x)[f(x)]
-        hy_c = self.encode_y(y)  # h_c(y) = h(y) - E_p(y)[h(y)]
+        assert x is not None or y is not None, "At least one of x or y must be provided."
+
+        if x is not None:
+            fx = self._embedding_x(x)  # f(x) = [f_1(x), ..., f_r(x)]
+            fx_c = self.data_norm_x(fx)  # f_c(x) = f(x) - E_p(x)[f(x)]
+        else:
+            fx_c = None
+
+        if y is not None:
+            hy = self._embedding_y(y)  # h(y) = [h_1(y), ..., h_r(y)]
+            hy_c = self.data_norm_y(hy)  # h_c(y) = h(y) - E_p(y)[h(y)]
+        else:
+            hy_c = None
 
         return fx_c, hy_c
-
-    def encode_x(self, x: torch.Tensor):
-        """Compute the embedding of the input random variable x."""
-        fx = self._embedding_x(x)  # f(x) = [f_1(x), ..., f_r(x)]
-        fx_c = self.data_norm_x(fx)  # f_c(x) = f(x) - E_p(x)[f(x)]
-        return fx_c
-
-    def encode_y(self, y: torch.Tensor):
-        """Compute the embedding of the input random variable y."""
-        hy = self._embedding_y(y)
-        hy_c = self.data_norm_y(hy)  # h_c(y) = h(y) - E_p(y)[h(y)]
-        return hy_c
 
     def pointwise_mutual_dependency(self, x: torch.Tensor, y: torch.Tensor):
         """Return the estimated pointwise mutual dependency between the random variables x and y.

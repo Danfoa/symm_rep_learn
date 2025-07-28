@@ -111,7 +111,7 @@ class TrainingModule(lightning.LightningModule):
 
     def on_validation_epoch_end(self) -> None:
         if self._val_metrics is not None and self._val_metrics_run is False:
-            metrics = self._val_metrics(None)
+            metrics = self._val_metrics(current_epoch=self.current_epoch)
             self.log_metrics(metrics, suffix="val", batch_size=None)
             self._val_metrics_run = True
 
@@ -120,7 +120,7 @@ class TrainingModule(lightning.LightningModule):
 
     def on_test_epoch_end(self) -> None:
         if self._test_metrics is not None and self._test_metrics_run is False:
-            metrics = self._test_metrics(None)
+            metrics = self._test_metrics(current_epoch=self.current_epoch)
             self.log_metrics(metrics, suffix="test", batch_size=None)
 
     @torch.no_grad()
