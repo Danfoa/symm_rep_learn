@@ -272,18 +272,18 @@ def ncp_regression(model: NCP, x, y, y_train, x_type, y_type, lstsq=False, analy
     # Compute the embeddings of the entire y training dataset. And the linear regression between y and h(y)
     Cyhy = torch.zeros((y_train.shape[-1], model.embedding_dim), device=device)
     n_train = y_train.shape[0]
-    if isinstance(model.embedding_y, EquivariantModule):  # Symmetry aware models.
-        hy_train = model.embedding_y(y_type(y_train)).tensor  # shape: (n_train, embedding_dim)
+    if isinstance(model._embedding_y, EquivariantModule):  # Symmetry aware models.
+        hy_train = model._embedding_y(y_type(y_train)).tensor  # shape: (n_train, embedding_dim)
         from symm_rep_learn.nn.equiv_layers import ResidualEncoder
 
-        if analytic_residual and isinstance(model.embedding_y[0], ResidualEncoder):
+        if analytic_residual and isinstance(model._embedding_y[0], ResidualEncoder):
             # Y is embedded in the encoded vector h(y), we can get the prediction using indexing.
-            res_encoder = model.embedding_y[0]
-            change2iso_module = model.embedding_y[-1]
+            res_encoder = model._embedding_y[0]
+            change2iso_module = model._embedding_y[-1]
             Qiso2y = change2iso_module.Qin2iso.T
             Cyhy = Qiso2y[res_encoder.residual_dims, :]
         else:  # Compute the symmetry aware linear regression from h(y) to y
-            rep_Hy = model.embedding_y.out_type.representation
+            rep_Hy = model._embedding_y.out_type.representation
             if lstsq:  # TODO: symmetry aware lstsq
                 import linear_operator_learning as lol
 
@@ -293,11 +293,11 @@ def ncp_regression(model: NCP, x, y, y_train, x_type, y_type, lstsq=False, analy
 
                 Cyhy = lol.nn.symmetric.stats.covariance(X=hy_train, Y=y_train_c, rep_X=rep_Hy, rep_Y=rep_Y)
     else:  # Symmetry agnostic models.
-        hy_train = model.embedding_y(y_train)  # shape: (n_train, embedding_dim)
+        hy_train = model._embedding_y(y_train)  # shape: (n_train, embedding_dim)
         from symm_rep_learn.nn.layers import ResidualEncoder
 
-        if analytic_residual and isinstance(model.embedding_y, ResidualEncoder):
-            y_dims_in_hy = model.embedding_y.residual_dims
+        if analytic_residual and isinstance(model._embedding_y, ResidualEncoder):
+            y_dims_in_hy = model._embedding_y.residual_dims
             mask = torch.zeros(hy_train.shape[-1], device=device)
             mask[y_dims_in_hy] = 1
             for dim in range(y_dims_in_hy.start, y_dims_in_hy.stop):
@@ -311,10 +311,10 @@ def ncp_regression(model: NCP, x, y, y_train, x_type, y_type, lstsq=False, analy
                 Cyhy = (1 / n_train) * torch.einsum("by,bh->yh", y_train_c, hy_train)
 
     # Introduce the entire group orbit of the testing set, to appropriately compute the equivariant error.
-    if isinstance(model.embedding_x, EquivariantModule):
-        fx = model.embedding_x(x_type(x)).tensor
+    if isinstance(model._embedding_x, EquivariantModule):
+        fx = model._embedding_x(x_type(x)).tensor
     else:
-        fx = model.embedding_x(x)  # shape: (n_test, embedding_dim)
+        fx = model._embedding_x(x)  # shape: (n_test, embedding_dim)
 
     # Check formula 12 from https://arxiv.org/pdf/2407.01171
     Dr = model.truncated_operator

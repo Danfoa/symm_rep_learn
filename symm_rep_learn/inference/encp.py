@@ -18,10 +18,10 @@ class ENCPConditionalCDF(escnn.nn.EquivariantModule):
     ):
         super(ENCPConditionalCDF, self).__init__()
         assert isinstance(y_train, GeometricTensor), f"Y train must be a GeometricTensor got {type(y_train)}"
-        assert model.embedding_y.in_type == y_train.type, "`y_train` and `model.embedding_y` must have the same type"
+        assert model._embedding_y.in_type == y_train.type, "`y_train` and `model.embedding_y` must have the same type"
         assert y_train.tensor.ndim == 2, f"Y train must have shape (n_train, y_dim) {y_train.tensor.ndim}"
-        self.in_type: FieldType = model.embedding_x.in_type
-        self.out_type: FieldType = model.embedding_y.in_type
+        self.in_type: FieldType = model._embedding_x.in_type
+        self.out_type: FieldType = model._embedding_y.in_type
         self.y_type = self.out_type
 
         self.discretization_points = support_discretization_points
@@ -60,7 +60,7 @@ class ENCPConditionalCDF(escnn.nn.EquivariantModule):
         self.mean_zy = zy_train.mean(axis=0, keepdim=True)
         zy_train_c = zy_train - self.mean_zy
         with torch.no_grad():
-            hy_train = model.embedding_y(self.y_type(G_y_train)).tensor  # shape: (n_train, embedding_dim)
+            hy_train = model._embedding_y(self.y_type(G_y_train)).tensor  # shape: (n_train, embedding_dim)
             out = torch.linalg.lstsq(hy_train, zy_train_c)
             self.Czyhy = out.solution.T
         self.model = self.model.to(prev_device)
@@ -83,7 +83,7 @@ class ENCPConditionalCDF(escnn.nn.EquivariantModule):
         # Regress the deflated CCDF
         # deflated_ccdf_pred = self.ccdf_regressor(x_cond=x_cond).detach().cpu().numpy()
         device = next(self.parameters()).device
-        fx_cond = self.model.embedding_x(x_cond.to(device)).tensor  # shape: (n_samples, embedding_dim)
+        fx_cond = self.model._embedding_x(x_cond.to(device)).tensor  # shape: (n_samples, embedding_dim)
         # Check formula 12 from https://arxiv.org/pdf/2407.01171
         Dr = self.model.truncated_operator
         deflated_ccdf_pred = torch.einsum("bf,fh,yh->by", fx_cond, Dr, self.Czyhy.to(device))
@@ -139,11 +139,11 @@ class ENCPRegressor(escnn.nn.EquivariantModule):
         super(ENCPRegressor, self).__init__()
         assert isinstance(y_train, GeometricTensor), f"Y train must be a GeometricTensor got {type(y_train)}"
         assert isinstance(zy_train, GeometricTensor), f"z(y) train must be a GeometricTensor got {type(y_train)}"
-        assert model.embedding_y.in_type == y_train.type, "`y_train` and `model.embedding_y` must have the same type"
+        assert model._embedding_y.in_type == y_train.type, "`y_train` and `model.embedding_y` must have the same type"
         assert y_train.tensor.ndim == 2, f"Y train must have shape (n_train, y_dim) {y_train.tensor.ndim}"
 
         self.model = model
-        self.in_type = self.model.embedding_x.in_type
+        self.in_type = self.model._embedding_x.in_type
         self.out_type = zy_train.type
 
         self.lstsq = lstsq
@@ -166,16 +166,16 @@ class ENCPRegressor(escnn.nn.EquivariantModule):
 
         # Compute the embeddings of the entire y training dataset. And the linear regression between z(y) and h(y)
         self.Czyhy = torch.zeros((zy_train.shape[-1], model.embedding_dim), device=self.device)
-        hy_train = model.embedding_y(y_train).tensor  # shape: (n_train, embedding_dim)
+        hy_train = model._embedding_y(y_train).tensor  # shape: (n_train, embedding_dim)
 
-        if analytic_residual and isinstance(model.embedding_y[0], ResidualEncoder):
+        if analytic_residual and isinstance(model._embedding_y[0], ResidualEncoder):
             # Y is embedded in the encoded vector h(y), we can get the prediction using indexing.
-            res_encoder = model.embedding_y[0]
-            change2iso_module = model.embedding_y[-1]
+            res_encoder = model._embedding_y[0]
+            change2iso_module = model._embedding_y[-1]
             Qiso2y = change2iso_module.Qin2iso.T
             self.Czyhy = Qiso2y[res_encoder.residual_dims, :]
         else:  # Compute the symmetry aware linear regression from h(y) to y
-            rep_Hy = model.embedding_y.out_type.representation
+            rep_Hy = model._embedding_y.out_type.representation
             rep_Zy = self.out_type.representation
             if lstsq:  # TODO: symmetry aware lstsq
                 import linear_operator_learning as lol
@@ -188,7 +188,7 @@ class ENCPRegressor(escnn.nn.EquivariantModule):
 
     def forward(self, x_cond: GeometricTensor):
         x_cond = x_cond.to(self.device)
-        fx_cond = self.model.embedding_x(x_cond)  # shape: (n_test, embedding_dim)
+        fx_cond = self.model._embedding_x(x_cond)  # shape: (n_test, embedding_dim)
 
         # Check formula 12 from https://arxiv.org/pdf/2407.01171
         Dr = self.model.truncated_operator

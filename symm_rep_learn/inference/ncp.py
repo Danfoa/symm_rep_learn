@@ -31,7 +31,7 @@ class NCPRegressor(torch.nn.Module):
         # Compute the embeddings of the entire y training dataset. And the linear regression between z(y) and h(y)
         self.Czyhy = torch.zeros((zy_train.shape[-1], model.dim_hy), device=self.device)
 
-        hy_train = model.embedding_y(y_train)  # shape: (n_train, embedding_dim)
+        hy_train = model._embedding_y(y_train)  # shape: (n_train, embedding_dim)
 
         if lstsq:
             out = torch.linalg.lstsq(hy_train, zy_train_c)
@@ -42,7 +42,7 @@ class NCPRegressor(torch.nn.Module):
 
     def forward(self, x_cond):
         x_cond = x_cond.to(self.device)
-        fx_cond = self.model.embedding_x(x_cond)  # shape: (n_samples, embedding_dim)
+        fx_cond = self.model._embedding_x(x_cond)  # shape: (n_samples, embedding_dim)
 
         # Check formula 12 from https://arxiv.org/pdf/2407.01171
         Dr = self.model.truncated_operator

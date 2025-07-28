@@ -79,8 +79,8 @@ class ENCP(NCP):
             fx: (GeometricTensor) of shape (..., r) representing the singular functions of a subspace of L^2(X)
             hy: (GeometricTensor) of shape (..., r) representing the singular functions of a subspace of L^2(Y)
         """
-        fx = self.embedding_x(x)  # f(x) = [f_1(x), ..., f_r(x)]
-        hy = self.embedding_y(y)  # h(y) = [h_1(y), ..., h_r(y)]
+        fx = self._embedding_x(x)  # f(x) = [f_1(x), ..., f_r(x)]
+        hy = self._embedding_y(y)  # h(y) = [h_1(y), ..., h_r(y)]
         return fx, hy
 
     def pointwise_mutual_dependency(self, x: GeometricTensor, y: GeometricTensor):
@@ -122,7 +122,7 @@ class ENCP(NCP):
         Returns:
             Regularization term as a scalar tensor.
         """
-        assert fx_c.type == self.embedding_x.out_type and hy_c.type == self.embedding_y.out_type  # Iso basis.
+        assert fx_c.type == self._embedding_x.out_type and hy_c.type == self._embedding_y.out_type  # Iso basis.
         # Project embedding into the isotypic subspaces
         fx_c_iso, reps_Fx_iso = self._orth_proj_isotypic_subspaces(z=fx_c), fx_c.type.representations
         hy_c_iso, reps_Hy_iso = self._orth_proj_isotypic_subspaces(z=hy_c), hy_c.type.representations
@@ -169,7 +169,7 @@ class ENCP(NCP):
         orthonormality_hy = Cy_I_err_fro_2 + 2 * hy_centering_loss
 
         with torch.no_grad():
-            embedding_dim_x, embedding_dim_y = self.embedding_x.out_type.size, self.embedding_y.out_type.size
+            embedding_dim_x, embedding_dim_y = self._embedding_x.out_type.size, self._embedding_y.out_type.size
             metrics = {
                 "||Cx||_F^2": Cx_I_err_fro_2 / embedding_dim_x,
                 "tr(Cx)": trCx / embedding_dim_x,
@@ -199,7 +199,7 @@ class ENCP(NCP):
         Returns:
             (torch.Tensor) representing the unbiased truncation error.
         """
-        assert fx_c.type == self.embedding_x.out_type and hy_c.type == self.embedding_y.out_type  # Iso basis.
+        assert fx_c.type == self._embedding_x.out_type and hy_c.type == self._embedding_y.out_type  # Iso basis.
         metrics = {}
 
         # k_r(x,y) = 1 + f(x)^T Dr h(y) = 1 + Σ_κ f_κ(x)^T Dr_κ h_κ(y)
@@ -244,7 +244,7 @@ class ENCP(NCP):
         assert isinstance(fx, GeometricTensor) and isinstance(hy, GeometricTensor), (
             f"Expected Geometric Tensors got f(x): {type(fx)} and h(y): {type(hy)}"
         )
-        assert fx.type == self.embedding_x.out_type and hy.type == self.embedding_y.out_type
+        assert fx.type == self._embedding_x.out_type and hy.type == self._embedding_y.out_type
         _device, _dtype = fx.tensor.device, fx.tensor.dtype
 
         # Get projections into isotypic subspaces.  fx_iso[k] = fx^(k), hy_iso[k] = hy^(k)
@@ -274,8 +274,8 @@ class ENCP(NCP):
             inv_subspace_dims = self.iso_subspace_slice[self.idx_inv_subspace]
             fx_c[..., inv_subspace_dims] = fx.tensor[..., inv_subspace_dims] - self.mean_fx
             hy_c[..., inv_subspace_dims] = hy.tensor[..., inv_subspace_dims] - self.mean_hy
-        fx_c = GeometricTensor(fx_c, self.embedding_x.out_type)
-        hy_c = GeometricTensor(hy_c, self.embedding_y.out_type)
+        fx_c = GeometricTensor(fx_c, self._embedding_x.out_type)
+        hy_c = GeometricTensor(hy_c, self._embedding_y.out_type)
 
         return fx_c, hy_c
 
@@ -342,7 +342,7 @@ class ENCP(NCP):
         return z_iso
 
     def _create_op_parameters(self):
-        lat_singular_type = self.embedding_x.out_type
+        lat_singular_type = self._embedding_x.out_type
 
         # Equivariant Linear layer from lat singular basis to lat singular basis.
         self._Dr = escnn.nn.Linear(in_type=lat_singular_type, out_type=lat_singular_type, bias=False)
@@ -357,8 +357,8 @@ class ENCP(NCP):
     def _register_stats_buffers(self):
         """Register the buffers for the running mean, Covariance and Cross-Covariance matrix matrix."""
         if self.idx_inv_subspace is not None:
-            dim_x_inv_subspace = self.embedding_x.out_type.representations[self.idx_inv_subspace].size
-            dim_y_inv_subspace = self.embedding_y.out_type.representations[self.idx_inv_subspace].size
+            dim_x_inv_subspace = self._embedding_x.out_type.representations[self.idx_inv_subspace].size
+            dim_y_inv_subspace = self._embedding_y.out_type.representations[self.idx_inv_subspace].size
             self.register_buffer("mean_fx", torch.zeros((1, dim_x_inv_subspace)))
             self.register_buffer("mean_hy", torch.zeros((1, dim_y_inv_subspace)))
 

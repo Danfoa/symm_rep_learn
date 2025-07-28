@@ -67,12 +67,12 @@ class CNNEncoder(torch.nn.Module):
     def __init__(self, hidden_channels=[16, 32]):
         super(CNNEncoder, self).__init__()
         self.hidden_channels = hidden_channels
-        self.conv1 = torch.nn.Sequential(
+        self.conv1 = torch.nn.Sequential(  # (1, 29, 29) -> (HC1, 14, 14)
             torch.nn.Conv2d(in_channels=1, out_channels=hidden_channels[0], kernel_size=5, stride=1, padding=2),
             torch.nn.ReLU(),
             torch.nn.MaxPool2d(kernel_size=2),
         )
-        self.conv2 = torch.nn.Sequential(
+        self.conv2 = torch.nn.Sequential(  # (HC1, 14, 14) -> (HC2, 7, 7)
             torch.nn.Conv2d(
                 in_channels=hidden_channels[0], out_channels=hidden_channels[1], kernel_size=5, stride=1, padding=2
             ),
@@ -82,15 +82,21 @@ class CNNEncoder(torch.nn.Module):
         # Store the spatial dimensions after conv operations for easy inversion
         self.spatial_size = 7  # 28 -> 14 -> 7 after two max pools
 
-    def forward(self, X):
-        if X.dim() == 3:
-            X = X.unsqueeze(1)  # Add a channel dimension if needed
-        X = self.conv1(X)
-        X = self.conv2(X)  # Shape: (B, hidden_channels[1], 7, 7)
-
+    def forward(self, x: torch.Tensor):
+        if x.dim() == 3:
+            x = x.unsqueeze(1)  # Add a channel dimension if needed
+        # print(f"Input shape: {x.shape}")
+        x = self.conv1(x)
+        # print(f"After conv1: {x.shape}")
+        x = self.conv2(x)  # Shape: (B, hidden_channels[1], 7, 7)
+        assert x.shape[2] == x.shape[3] == self.spatial_size, (
+            f"Expected size {self.spatial_size}, got {x.shape[2]}x{x.shape[3]}"
+        )
+        # print(f"After conv2: {x.shape}")
         # Reshape from (B, C, H, W) to (B * H * W, C)
-        B, C, H, W = X.shape
-        output = X.permute(0, 2, 3, 1).contiguous().view(B * H * W, C)
+        B, C, H, W = x.shape
+        output = x.permute(0, 2, 3, 1).contiguous().view(B * H * W, C)
+        # print(f"Flattened output shape: {output.shape}")
         return output
 
 
@@ -141,15 +147,18 @@ class SO2SCNNEncoder(torch.nn.Module):
         x = self.in_type(input)
         # mask out the corners of the input image
         x = self.mask(x)
+        print(f"mask: {x.shape}")
         # apply equivariant blocks
         x = self.conv1(x)
+        print(f"conv1: {x.shape}")
         x = self.conv2(x)
+        print(f"conv2: {x.shape}")
         # Extract the tensor and flatten correctly for group representation
         # Shape: (B, C, H, W) -> (B, H, W, C) -> (B, H*W*C)
         # This preserves pixel-wise feature grouping for equivariant features
         B, C, H, W = x.tensor.shape
         x_flat = x.tensor.permute(0, 2, 3, 1).reshape(B, -1)
-
+        print(f"flattened: {x_flat.shape}")
         embedding = self.out(self.out.in_type(x_flat))
 
         return embedding
@@ -162,35 +171,42 @@ class CNNDecoder(torch.nn.Module):
         self.hidden_channels = hidden_channels
         self.spatial_size = spatial_size
 
-        self.conv1 = torch.nn.Sequential(
+        self.conv1 = torch.nn.Sequential(  # (F, 7, 7) -> (HC1, 14, 14)
             torch.nn.Upsample(scale_factor=2),
             torch.nn.ReLU(),
             torch.nn.ConvTranspose2d(
                 in_channels=hidden_channels[0], out_channels=hidden_channels[1], kernel_size=5, stride=1, padding=2
             ),
         )
-        self.conv2 = torch.nn.Sequential(
+        self.conv2 = torch.nn.Sequential(  # (HC1, 14, 14) -> (1, 29, 29)
             torch.nn.Upsample(scale_factor=2),
             torch.nn.ReLU(),
             torch.nn.ConvTranspose2d(
                 in_channels=hidden_channels[1], out_channels=1, kernel_size=5, stride=1, padding=2
             ),
+            torch.nn.ZeroPad2d((0, 1, 0, 1)),  # Add padding to go from 28x28 to 29x29
         )
 
     def forward(self, x):
         # x shape: (B * H * W, C)
         # Infer batch size from input
         total_spatial_elements = x.size(0)
+        assert total_spatial_elements % (self.spatial_size * self.spatial_size) == 0, (
+            f"Expected batch size to be divisible by {self.spatial_size}x{self.spatial_size}, got {total_spatial_elements}"
+        )
         batch_size = total_spatial_elements // (self.spatial_size * self.spatial_size)
 
+        # print(f"Input shape: {x.shape}")
         # Reshape from (B * H * W, C) to (B, H, W, C) to (B, C, H, W)
         x = x.view(batch_size, self.spatial_size, self.spatial_size, self.hidden_channels[0])
         x = x.permute(0, 3, 1, 2).contiguous()  # (B, C, H, W)
-
+        # print(f"Reshaped to: {x.shape}")
         x = self.conv1(x)
+        # print(f"After conv1: {x.shape}")
         x = self.conv2(x)
-        # Remove the channel dimension
-        x = x.squeeze(1)
+        # print(f"After conv2: {x.shape}")
+
+        x = torch.nn.functional.sigmoid(x)
         return x
 
 
@@ -370,7 +386,6 @@ class SO2SteerableCNN(torch.nn.Module):
         # wrap the input tensor in a GeometricTensor
         # (associate it with the input type)
         x = self.input_type(input)
-
         # mask out the corners of the input image
         x = self.mask(x)
 
@@ -421,7 +436,7 @@ def classification_loss_metrics(y_true, y_pred):
         tuple: (loss, metrics_dict)
     """
     loss_fn = torch.nn.CrossEntropyLoss()
-    loss = loss_fn(y_pred, y_true)
+    loss = loss_fn(input=y_pred, target=y_true)
 
     with torch.no_grad():
         pred_labels = y_pred.argmax(dim=1)
@@ -429,6 +444,13 @@ def classification_loss_metrics(y_true, y_pred):
 
     metrics = {"accuracy": accuracy}
     return loss, metrics
+
+
+def pre_process_images(images):
+    """Define required transformations for all MNIST images."""
+    pad = Pad((0, 0, 1, 1), fill=0)  # Pad to 29x29
+    p_images = pad(images)
+    return p_images
 
 
 def augment_image(image, split: str):
@@ -444,15 +466,11 @@ def augment_image(image, split: str):
     # Ensure image is in the right format
     if image.dim() == 2:  # (H, W)
         image = image.unsqueeze(0)  # Add channel dimension -> (1, H, W)
-
-    # Create transformation pipeline similar to the original code
-    pad = Pad((0, 0, 1, 1), fill=0)  # Pad to 29x29
     resize_up = Resize(29 * 3)  # Upsample to reduce interpolation artifacts
     resize_down = Resize(29)  # Downsample back to 29x29
     rotate = RandomRotation(degrees=(0, 360), interpolation=InterpolationMode.BILINEAR)
 
-    # Apply padding first (28x28 -> 29x29)
-    original = pad(image)
+    original = image
 
     # Create augmented image with random rotation
     img_upsampled = resize_up(original)
@@ -468,7 +486,7 @@ def augment_image(image, split: str):
     return imgs
 
 
-def collate_fn(batch):
+def collate_fn(batch, split="train"):
     """
     Custom collate function that applies augmentation and returns both original and augmented images.
     SupervisedTrainingModule expects (x, y) format.
@@ -476,9 +494,10 @@ def collate_fn(batch):
     images = torch.stack([item["image"] for item in batch])
     labels = torch.stack([item["label"] for item in batch])
 
-    original, aug_image = augment_image(images)
+    images = pre_process_images(images)
+    images = augment_image(images, split=split)
 
-    return aug_image, labels
+    return images, labels
 
 
 def traj_collate_fn(batch, augment: bool = True, split: str = "train"):
@@ -487,17 +506,97 @@ def traj_collate_fn(batch, augment: bool = True, split: str = "train"):
     SupervisedTrainingModule expects (x, y) format.
     """
     imgs = torch.utils.data.default_collate(batch)
+    imgs = pre_process_images(imgs)
 
     if augment:
-        imgs, out_imgs = augment_image(imgs.squeeze(2))
-        if split == "test" or split == "val":  # Append aug images to original images in batch dimension
-            # This provides better estimate of the equivariant component of the error.
-            out_imgs = torch.cat((imgs.squeeze(2), out_imgs), dim=0)
+        imgs = augment_image(imgs.squeeze(2), split=split)
     else:
-        out_imgs = imgs.squeeze(2)
-
-    present_image, future_image = out_imgs[:, [0]], out_imgs[:, [1]]
+        imgs = imgs.squeeze(2)
+    present_image, future_image = imgs[:, [0]], imgs[:, [1]]
     return present_image, future_image
+
+
+def plot_predictions_images(
+    past_imgs,
+    rec_past_imgs,
+    future_imgs,
+    pred_future_imgs,
+    pred_future_labels,
+    pred_rec_labls,
+    n_rows=4,
+    n_cols=10,
+    save_path=None,
+):
+    """
+    Plot predictions in a 4-row grid showing:
+    - Row 1: Past images
+    - Row 2: Reconstructed past images
+    - Row 3: True future images
+    - Row 4: Predicted future images
+
+    Args:
+        past_imgs: Tensor of past images (B, 1, H, W)
+        rec_past_imgs: Tensor of reconstructed past images (B, 1, H, W)
+        future_imgs: Tensor of true future images (B, 1, H, W)
+        pred_future_imgs: Tensor of predicted future images (B, 1, H, W)
+        pred_future_labels: Tensor of predicted future labels (B,)
+        pred_rec_labls: Tensor of predicted reconstructed labels (B,)
+        n_rows: Number of rows (should be 4)
+        n_cols: Number of columns
+        save_path: Optional path to save the figure
+
+    Returns:
+        matplotlib.pyplot.Figure: The created figure
+    """
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 2, n_rows * 2))
+
+    # Convert tensors to numpy and ensure they're on CPU
+    past_imgs = past_imgs.detach().cpu().numpy()
+    rec_past_imgs = rec_past_imgs.detach().cpu().numpy()
+    future_imgs = future_imgs.detach().cpu().numpy()
+    pred_future_imgs = pred_future_imgs.detach().cpu().numpy()
+    pred_future_labels = pred_future_labels.detach().cpu().numpy()
+    pred_rec_labls = pred_rec_labls.detach().cpu().numpy()
+
+    # Row titles
+    row_titles = ["Past Images", "Reconstructed Past", "True Future", "Predicted Future"]
+
+    for col in range(n_cols):
+        # Row 0: Past images
+        axes[0, col].imshow(past_imgs[col].squeeze(), cmap="gray")
+        axes[0, col].axis("off")
+        if col == 0:
+            axes[0, col].set_ylabel(row_titles[0], rotation=90, size=12)
+
+        # Row 1: Reconstructed past images
+        axes[1, col].imshow(rec_past_imgs[col].squeeze(), cmap="gray")
+        axes[1, col].set_title(f"Rec: {pred_rec_labls[col]}", fontsize=10)
+        axes[1, col].axis("off")
+        if col == 0:
+            axes[1, col].set_ylabel(row_titles[1], rotation=90, size=12)
+
+        # Row 2: True future images
+        axes[2, col].imshow(future_imgs[col].squeeze(), cmap="gray")
+        axes[2, col].axis("off")
+        if col == 0:
+            axes[2, col].set_ylabel(row_titles[2], rotation=90, size=12)
+
+        # Row 3: Predicted future images with labels
+        axes[3, col].imshow(pred_future_imgs[col].squeeze(), cmap="gray")
+        axes[3, col].set_title(f"Pred: {pred_future_labels[col]}", fontsize=10)
+        axes[3, col].axis("off")
+        if col == 0:
+            axes[3, col].set_ylabel(row_titles[3], rotation=90, size=12)
+
+    plt.tight_layout()
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Figure saved to {save_path}")
+
+    return fig
 
 
 def train_oracle(n_classes=5):
@@ -546,7 +645,7 @@ def train_oracle(n_classes=5):
     out = trainer.test(model=lightning_module, dataloaders=test_dl)
     print("Test results:", out)
     # Save the model checkpoint
-    oracle_ckpt_path.mkdir(parents=True, exist_ok=True)
+    oracle_ckpt_path.parent.mkdir(parents=True, exist_ok=True)
     trainer.save_checkpoint(oracle_ckpt_path)
 
 
@@ -557,7 +656,7 @@ if __name__ == "__main__":
         make_dataset(n_classes=5)
 
     # Train the oracle classifier which is SO(2) equivariant
-    train_oracle
+    train_oracle(n_classes=5)
 
     # Test that we can sample trajectories of consecutive digits
     ordered_MNIST = load_from_disk(str(data_path))
@@ -568,8 +667,16 @@ if __name__ == "__main__":
 
     dataloader = DataLoader(ordered_ds, batch_size=128, shuffle=True, collate_fn=traj_collate_fn)
 
-    so2_cnn_encoder = SO2SCNNEncoder(embedding_dim=64)
-    so2_cnn_decoder = SO2SCNNDecoder(in_type=so2_cnn_encoder.out.out_type)
+    # cnn_encoder = SO2SCNNEncoder(embedding_dim=64)
+    # cnn_decoder = SO2SCNNDecoder(in_type=cnn_encoder.out.out_type)
+    cnn_encoder = CNNEncoder(hidden_channels=[16, 32])
+    cnn_decoder = CNNDecoder(hidden_channels=[32, 16], spatial_size=cnn_encoder.spatial_size)
+    so2_cnn_classifier = SO2SteerableCNN(n_classes=5)
+
+    state_dict = torch.load(oracle_ckpt_path)["state_dict"]
+    state_dict = {k.replace("model.", ""): v for k, v in state_dict.items()}
+    so2_cnn_classifier.load_state_dict(state_dict, strict=True)
+
     # Iterate over the first 10 samples and plot currecnt and next images
     import matplotlib.pyplot as plt
 
@@ -577,28 +684,32 @@ if __name__ == "__main__":
     for batch_trajs in dataloader:
         present_batch, future_batch = batch_trajs
 
-        p_embedding = so2_cnn_encoder(present_batch)
-        f_embedding = so2_cnn_encoder(future_batch)
+        p_embedding = cnn_encoder(present_batch)
+        f_embedding = cnn_encoder(future_batch)
         print(f"Embedding shapes: present {p_embedding.shape}, future {f_embedding.shape}")
-        p_rec = so2_cnn_decoder(p_embedding)
-        f_rec = so2_cnn_decoder(f_embedding)
+        p_rec = cnn_decoder(p_embedding)
+        f_rec = cnn_decoder(f_embedding)
+        assert present_batch.shape == p_rec.shape, f"{present_batch.shape} != {p_rec.shape}"
         print(f"Reconstruction shapes: present {p_rec.shape}, future {f_rec.shape}")
         current_img = present_batch[5].numpy()
         next_img = future_batch[5].numpy()
 
-        plt.figure(figsize=(6, 3))
-        plt.subplot(1, 2, 1)
-        plt.imshow(current_img.squeeze(0), cmap="gray")
-        plt.title("Current Image")
-        plt.axis("off")
-        plt.subplot(1, 2, 2)
-        plt.imshow(next_img.squeeze(0), cmap="gray")
-        plt.title("Next Image")
-        plt.axis("off")
-        plt.tight_layout()
-        plt.show()
+        present_label = so2_cnn_classifier(present_batch).argmax(dim=1)[5].item()
+        next_label = so2_cnn_classifier(future_batch).argmax(dim=1)[5].item()
 
-        i += 1
-        if i >= 3:
-            break
-    print("Sampled and displayed first 10 trajectory images.")
+        break
+        # plt.figure(figsize=(6, 3))
+        # plt.subplot(1, 2, 1)
+        # plt.imshow(current_img.squeeze(0), cmap="gray")
+        # plt.title(f"Current Image: {present_label}")
+        # plt.axis("off")
+        # plt.subplot(1, 2, 2)
+        # plt.imshow(next_img.squeeze(0), cmap="gray")
+        # plt.title(f"Next Image: {next_label}")
+        # plt.axis("off")
+        # plt.tight_layout()
+        # plt.show()
+
+        # i += 1
+        # if i >= 3:
+        #     break
