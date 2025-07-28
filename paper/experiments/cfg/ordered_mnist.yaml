@@ -1,0 +1,92 @@
+defaults:
+  - override hydra/launcher: joblib  # Parallel runs
+
+proj_name: "ordered_mnist"
+exp_name: "test"
+
+seed: -1
+debug: False
+device: 0  # -1 for all GPUs [0, ..., gpu_id] for a specific GPU
+profile: False
+
+# EXPERIMENT CONFIG
+model: NCP
+gamma: 0.25                        # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
+gamma_centering: 0.1            # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
+momentum: 0.9                   # 1.0 = batch stats for centering and Cov. 1.0 > leads to use of running average stats in the orthonormality and centering loss. 
+lstsq: true                     # Use analytic lstsq for regression of NCP models.
+analytic_residual: false
+alpha: 0.1
+
+
+dataset:
+  # Observations that will be concatenated to compose y and x, given y = NN(x)
+  past_frames: 1       # Number of time-frames of observations for x -> (x_frames, x_obs_dim)
+  future_frames: 1       # Number of time-frames to consider for y -> (y_frames, y_obs_dim)
+  #  Dataset splitting
+  train_ratio: 0.7
+  val_ratio: 0.15
+  augment_train: False        # Augment training data using symmetry transformations. Not useful for equiv models.
+  augment_test: False         # This better emulates the real-world scenario in which symmetry related points have equal probability of being observed.
+  augment_val:  False         # This better emulates the real-world scenario in which symmetry related points have equal probability of being observed.
+  #  Dataset loading
+  load_to_memory: True    # Load dataset to memory for faster read and batch collection.
+  device: 'cuda'           # Device to load the dataset to. 'cpu' or 'cuda'
+  seed: 10                # Seed to dataset generation
+  n_classes: 5
+
+# Architecture of the neural network
+architecture:
+  activation: ELU             # Any torch activation
+  hidden_units: [64, 128]
+
+# OPTIMIZATION CONFIG
+optim:
+  lr: 1e-3                    # Learning rate NCP train best at low lr values < 1e-3
+  patience: 50                # Epochs to wait for improvement before early stopping
+  batch_size: 128             # The higher the best
+  val_batch_size: 64          # The higher the best
+  max_epochs: 400             # Number of passes before stop training. Early stopping is used.
+  dl_num_workers: 0           # Number of workers for data loading
+
+
+exp_desc: "evol_op_dynamics"
+opt_desc: "lr=${optim.lr}_bs=${optim.batch_size}_pat=${optim.patience}"
+model_desc: "${model} hu=${architecture.hidden_units} gamma=${gamma} gamma_c=${gamma_centering}"
+run_desc: "${exp_desc}_${opt_desc}_${model_desc}"
+
+hydra:
+  run:
+    dir: "./paper/results/${proj_name}/${exp_name}/${run_desc}/${hydra.job.override_dirname} seed=${seed}"
+  sweep:
+    dir: "./paper/results/${proj_name}/${exp_name}/"
+    subdir: "${run_desc}/${hydra.job.override_dirname} seed=${seed}"
+
+  job:
+    name: ${exp_name}
+    num: ${seed}
+    env_set:
+      HYDRA_FULL_ERROR: '1'
+      WANDB_START_METHOD: 'thread'
+    config:
+      override_dirname:
+        kv_sep: "="
+        item_sep: " "
+        exclude_keys:
+          - debug
+          - device
+          - seed
+          - dataset.path
+          - exp_name
+          - robot_name
+          - proj_name
+          - max_epochs
+          - architecture.hidden_units
+          - architecture.hidden_layers
+          - architecture.activation
+          - architecture.residual_encoder
+          - lstsq
+          - model
+          - optim.lr
+          - optim.batch_size
+          - optim.max_epochs

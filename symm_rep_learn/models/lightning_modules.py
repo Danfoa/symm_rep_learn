@@ -20,10 +20,14 @@ class TrainingModule(lightning.LightningModule):
         loss_fn: torch.nn.Module | callable,
         test_metrics: callable = None,  # Callable at the end of testing
         val_metrics: callable = None,  # Callable at the end of validation
+        metrics_prefix: str = "",
+        pbar_metrics: list[str] | None = None,  # Metrics to show in progress bar
     ):
         super(TrainingModule, self).__init__()
         self._test_metrics = test_metrics
         self._val_metrics = val_metrics
+        self.metrics_prefix = metrics_prefix
+        self.pbar_metrics = pbar_metrics if pbar_metrics is not None else ["loss"]
 
         self.model = model
         self._optimizer = optimizer_fn
@@ -61,9 +65,10 @@ class TrainingModule(lightning.LightningModule):
 
         batch_dim = self.get_batch_dim(batch)
         self._n_train_samples += batch_dim
-        self.log("loss/train", loss, prog_bar=True, batch_size=batch_dim)
         self.log("train_samples [k]", self._n_train_samples / 1000, on_step=True, on_epoch=False)
-        self.log_metrics(metrics, suffix="train", batch_size=batch_dim)
+
+        all_metrics = {"loss": loss} | metrics
+        self.log_metrics(all_metrics, suffix="train", batch_size=batch_dim)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -75,8 +80,8 @@ class TrainingModule(lightning.LightningModule):
         else:
             loss, metrics = self.loss_fn(out)
 
-        self.log("loss/val", loss, prog_bar=True, batch_size=self.get_batch_dim(batch))
-        self.log_metrics(metrics, suffix="val", batch_size=self.get_batch_dim(batch))
+        all_metrics = {"loss": loss} | metrics
+        self.log_metrics(all_metrics, suffix="val", batch_size=self.get_batch_dim(batch))
         return loss
 
     def test_step(self, batch, batch_idx):
@@ -88,8 +93,9 @@ class TrainingModule(lightning.LightningModule):
         else:
             loss, metrics = self.loss_fn(out)
 
-        self.log("loss/test", loss, prog_bar=True, batch_size=self.get_batch_dim(batch))
-        self.log_metrics(metrics, suffix="test", batch_size=self.get_batch_dim(batch))
+        batch_dim = self.get_batch_dim(batch)
+        all_metrics = {"loss": loss} | metrics
+        self.log_metrics(all_metrics, suffix="test", batch_size=batch_dim)
         return loss
 
     def on_train_epoch_start(self) -> None:
@@ -121,8 +127,10 @@ class TrainingModule(lightning.LightningModule):
     def log_metrics(self, metrics: dict, suffix="", batch_size=None, **kwargs):
         flat_metrics = flatten_dict(metrics)
         for k, v in flat_metrics.items():
-            name = f"{k}/{suffix}"
-            self.log(name, v, batch_size=batch_size, **kwargs)
+            name = f"{self.metrics_prefix}{k}/{suffix}"
+            # Check if this metric should be shown in progress bar
+            prog_bar = k in self.pbar_metrics
+            self.log(name, v, batch_size=batch_size, prog_bar=prog_bar, **kwargs)
 
     def get_batch_dim(self, batch):
         return batch[0].shape[0]
@@ -140,6 +148,8 @@ class SupervisedTrainingModule(TrainingModule):
         loss_fn: torch.nn.Module | callable,
         test_metrics: callable = None,  # Callable at the end of testing
         val_metrics: callable = None,  # Callable at the end of validation
+        metrics_prefix: str = "",
+        pbar_metrics: list[str] | None = None,  # Metrics to show in progress bar
     ):
         super(SupervisedTrainingModule, self).__init__(
             model=model,
@@ -148,6 +158,8 @@ class SupervisedTrainingModule(TrainingModule):
             loss_fn=torch.nn.MSELoss(reduce=True, reduction="mean") if loss_fn is None else loss_fn,
             test_metrics=test_metrics,
             val_metrics=val_metrics,
+            metrics_prefix=metrics_prefix,
+            pbar_metrics=pbar_metrics,
         )
 
     def training_step(self, batch, batch_idx):
@@ -156,8 +168,9 @@ class SupervisedTrainingModule(TrainingModule):
         loss, metrics = self.loss_fn(y, y_pred)
         batch_dim = self.get_batch_dim(batch)
         self._n_train_samples += batch_dim
-        self.log("loss/train", loss, prog_bar=True, batch_size=batch_dim)
-        self.log_metrics(metrics, suffix="train", batch_size=batch_dim)
+
+        all_metrics = {"loss": loss} | metrics
+        self.log_metrics(all_metrics, suffix="train", batch_size=batch_dim)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -165,8 +178,8 @@ class SupervisedTrainingModule(TrainingModule):
         y_pred = self.model(x)
         loss, metrics = self.loss_fn(y, y_pred)
 
-        self.log("loss/val", loss, prog_bar=True, batch_size=self.get_batch_dim(batch))
-        self.log_metrics(metrics, suffix="val", batch_size=self.get_batch_dim(batch))
+        all_metrics = {"loss": loss} | metrics
+        self.log_metrics(all_metrics, suffix="val", batch_size=self.get_batch_dim(batch))
         return loss
 
     def test_step(self, batch, batch_idx):
@@ -174,8 +187,8 @@ class SupervisedTrainingModule(TrainingModule):
         y_pred = self.model(x)
         loss, metrics = self.loss_fn(y, y_pred)
 
-        self.log("loss/test", loss, prog_bar=True, batch_size=self.get_batch_dim(batch))
-        self.log_metrics(metrics, suffix="test", batch_size=self.get_batch_dim(batch))
+        all_metrics = {"loss": loss} | metrics
+        self.log_metrics(all_metrics, suffix="test", batch_size=self.get_batch_dim(batch))
         return loss
 
 
@@ -198,8 +211,8 @@ class CQRLightningModule(TrainingModule):
         loss, metrics = self.loss_fn(q_lo, q_up, target=y)
 
         batch_dim = self.get_batch_dim(batch)
-        self.log("loss/train", loss, prog_bar=True, batch_size=batch_dim)
-        self.log_metrics(metrics, suffix="train", batch_size=batch_dim)
+        all_metrics = {"loss": loss} | metrics
+        self.log_metrics(all_metrics, suffix="train", batch_size=batch_dim)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -208,8 +221,8 @@ class CQRLightningModule(TrainingModule):
         loss, metrics = self.loss_fn(q_lo, q_up, target=y)
 
         batch_dim = self.get_batch_dim(batch)
-        self.log("loss/val", loss, prog_bar=True, batch_size=batch_dim)
-        self.log_metrics(metrics, suffix="val", batch_size=batch_dim)
+        all_metrics = {"loss": loss} | metrics
+        self.log_metrics(all_metrics, suffix="val", batch_size=batch_dim)
 
     def test_step(self, batch, batch_idx):
         x, y = batch
@@ -217,5 +230,5 @@ class CQRLightningModule(TrainingModule):
         loss, metrics = self.loss_fn(q_lo, q_up, target=y)
 
         batch_dim = self.get_batch_dim(batch)
-        self.log("loss/test", loss, prog_bar=True, batch_size=batch_dim)
-        self.log_metrics(metrics, suffix="test", batch_size=batch_dim)
+        all_metrics = {"loss": loss} | metrics
+        self.log_metrics(all_metrics, suffix="test", batch_size=batch_dim)

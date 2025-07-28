@@ -5,7 +5,6 @@ import escnn
 import lightning
 import torch
 from datasets import DatasetDict, interleave_datasets, load_dataset, load_from_disk
-from omegaconf import DictConfig
 from torch.utils.data import DataLoader
 from torchvision.transforms import InterpolationMode, Pad, RandomRotation, Resize
 
@@ -13,26 +12,10 @@ from symm_rep_learn.models.lightning_modules import SupervisedTrainingModule
 
 main_path = Path(__file__).parent
 data_path = main_path / "data" / "ordered_mnist"
-ckpt_path = main_path / "ckpt"
-
-# Create OmegaConf config
-base_config = DictConfig(
-    {
-        "classes": 5,
-        "train_samples": 1001,
-        "val_ratio": 0.2,
-        "test_samples": 1001,
-        "num_rng_seeds": 20,
-        "batch_size": 32,
-        "eval_up_to_t": 15,
-        "reduced_rank": True,
-        "max_epochs": 150,
-        "trial_budget": 50,
-    }
-)
+oracle_ckpt_path = data_path / "oracle.ckpt"
 
 
-def make_dataset(cfg: DictConfig):
+def make_dataset(n_classes: int, val_ratio: float = 0.2):
     """
     Create an ordered MNIST dataset with sequential digit arrangement.
 
@@ -45,7 +28,7 @@ def make_dataset(cfg: DictConfig):
     # Create separate datasets for each digit class (0-9)
     # Filter the dataset to get only examples for each specific digit
     digit_ds = []
-    for i in range(cfg.classes):
+    for i in range(n_classes):
         digit_ds.append(MNIST.filter(lambda example: example["label"] == i, keep_in_memory=True, num_proc=8))
 
     ordered_MNIST = DatasetDict()
@@ -59,7 +42,7 @@ def make_dataset(cfg: DictConfig):
 
     # Split training data to create validation set
     # Use the last portion of training data as validation (no shuffling to maintain order)
-    _tmp_ds = ordered_MNIST["train"].train_test_split(test_size=cfg.val_ratio, shuffle=False)
+    _tmp_ds = ordered_MNIST["train"].train_test_split(test_size=val_ratio, shuffle=False)
     ordered_MNIST["train"] = _tmp_ds["train"]
     ordered_MNIST["validation"] = _tmp_ds["test"]
 
@@ -81,30 +64,33 @@ def make_dataset(cfg: DictConfig):
 
 # CNN Architecture
 class CNNEncoder(torch.nn.Module):
-    def __init__(self, num_classes):
+    def __init__(self, hidden_channels=[16, 32]):
         super(CNNEncoder, self).__init__()
+        self.hidden_channels = hidden_channels
         self.conv1 = torch.nn.Sequential(
-            torch.nn.Conv2d(in_channels=1, out_channels=16, kernel_size=5, stride=1, padding=2),
+            torch.nn.Conv2d(in_channels=1, out_channels=hidden_channels[0], kernel_size=5, stride=1, padding=2),
             torch.nn.ReLU(),
             torch.nn.MaxPool2d(kernel_size=2),
         )
         self.conv2 = torch.nn.Sequential(
-            torch.nn.Conv2d(in_channels=16, out_channels=32, kernel_size=5, stride=1, padding=2),
+            torch.nn.Conv2d(
+                in_channels=hidden_channels[0], out_channels=hidden_channels[1], kernel_size=5, stride=1, padding=2
+            ),
             torch.nn.ReLU(),
             torch.nn.MaxPool2d(kernel_size=2),
         )
-        # fully connected layer, output num_classes classes
-        self.out = torch.nn.Sequential(torch.nn.Linear(32 * 7 * 7, num_classes))
-        torch.nn.init.orthogonal_(self.out[0].weight)
+        # Store the spatial dimensions after conv operations for easy inversion
+        self.spatial_size = 7  # 28 -> 14 -> 7 after two max pools
 
     def forward(self, X):
         if X.dim() == 3:
             X = X.unsqueeze(1)  # Add a channel dimension if needed
         X = self.conv1(X)
-        X = self.conv2(X)
-        # Flatten the output of conv2
-        X = X.view(X.size(0), -1)
-        output = self.out(X)
+        X = self.conv2(X)  # Shape: (B, hidden_channels[1], 7, 7)
+
+        # Reshape from (B, C, H, W) to (B * H * W, C)
+        B, C, H, W = X.shape
+        output = X.permute(0, 2, 3, 1).contiguous().view(B * H * W, C)
         return output
 
 
@@ -169,26 +155,38 @@ class SO2SCNNEncoder(torch.nn.Module):
         return embedding
 
 
-# A decoder which is specular to CNNEncoder, starting with a fully connected layer and then reshaping the output to a 2D image
+# A decoder which is specular to CNNEncoder, starting with reshaping from (B*H*W, C) back to (B, C, H, W)
 class CNNDecoder(torch.nn.Module):
-    def __init__(self, num_classes=10):
+    def __init__(self, hidden_channels=[32, 16], spatial_size: int = 7):
         super(CNNDecoder, self).__init__()
-        self.fc = torch.nn.Sequential(torch.nn.Linear(num_classes, 32 * 7 * 7))
+        self.hidden_channels = hidden_channels
+        self.spatial_size = spatial_size
 
         self.conv1 = torch.nn.Sequential(
             torch.nn.Upsample(scale_factor=2),
             torch.nn.ReLU(),
-            torch.nn.ConvTranspose2d(in_channels=32, out_channels=16, kernel_size=5, stride=1, padding=2),
+            torch.nn.ConvTranspose2d(
+                in_channels=hidden_channels[0], out_channels=hidden_channels[1], kernel_size=5, stride=1, padding=2
+            ),
         )
         self.conv2 = torch.nn.Sequential(
             torch.nn.Upsample(scale_factor=2),
             torch.nn.ReLU(),
-            torch.nn.ConvTranspose2d(in_channels=16, out_channels=1, kernel_size=5, stride=1, padding=2),
+            torch.nn.ConvTranspose2d(
+                in_channels=hidden_channels[1], out_channels=1, kernel_size=5, stride=1, padding=2
+            ),
         )
 
     def forward(self, x):
-        x = self.fc(x)
-        x = x.view(x.size(0), 32, 7, 7)
+        # x shape: (B * H * W, C)
+        # Infer batch size from input
+        total_spatial_elements = x.size(0)
+        batch_size = total_spatial_elements // (self.spatial_size * self.spatial_size)
+
+        # Reshape from (B * H * W, C) to (B, H, W, C) to (B, C, H, W)
+        x = x.view(batch_size, self.spatial_size, self.spatial_size, self.hidden_channels[0])
+        x = x.permute(0, 3, 1, 2).contiguous()  # (B, C, H, W)
+
         x = self.conv1(x)
         x = self.conv2(x)
         # Remove the channel dimension
@@ -433,7 +431,7 @@ def classification_loss_metrics(y_true, y_pred):
     return loss, metrics
 
 
-def augment_image(image):
+def augment_image(image, split: str):
     """
     Apply rotation augmentation to a tensor of images.
 
@@ -461,7 +459,13 @@ def augment_image(image):
     img_rotated = rotate(img_upsampled)
     augmented = resize_down(img_rotated)
 
-    return original, augmented
+    if split == "test" or split == "val":  # Append aug images to original images in batch dimension
+        # This provides better estimate of the equivariant component of the error.
+        imgs = torch.cat((original.squeeze(2), augmented), dim=0)
+    else:
+        imgs = augmented.squeeze(2)
+
+    return imgs
 
 
 def collate_fn(batch):
@@ -477,22 +481,28 @@ def collate_fn(batch):
     return aug_image, labels
 
 
-def traj_collate_fn(batch):
+def traj_collate_fn(batch, augment: bool = True, split: str = "train"):
     """
     Custom collate function that applies augmentation and returns both original and augmented images.
     SupervisedTrainingModule expects (x, y) format.
     """
-    images = torch.utils.data.default_collate(batch)
+    imgs = torch.utils.data.default_collate(batch)
 
-    _, aug_image = augment_image(images.squeeze(2))
+    if augment:
+        imgs, out_imgs = augment_image(imgs.squeeze(2))
+        if split == "test" or split == "val":  # Append aug images to original images in batch dimension
+            # This provides better estimate of the equivariant component of the error.
+            out_imgs = torch.cat((imgs.squeeze(2), out_imgs), dim=0)
+    else:
+        out_imgs = imgs.squeeze(2)
 
-    present_image, future_image = aug_image[:, [0]], aug_image[:, [1]]
+    present_image, future_image = out_imgs[:, [0]], out_imgs[:, [1]]
     return present_image, future_image
 
 
-def train_oracle(cfg: DictConfig):
+def train_oracle(n_classes=5):
     ordered_MNIST = load_from_disk(str(data_path))
-    train_dl = DataLoader(ordered_MNIST["train"], batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_fn)
+    train_dl = DataLoader(ordered_MNIST["train"], batch_size=64, shuffle=True, collate_fn=collate_fn)
     val_dl = DataLoader(
         ordered_MNIST["validation"], batch_size=len(ordered_MNIST["validation"]), shuffle=False, collate_fn=collate_fn
     )
@@ -516,8 +526,7 @@ def train_oracle(cfg: DictConfig):
     lightning.seed_everything(0)
 
     # Create the CNN encoder model
-    # model = CNNEncoder(num_classes=cfg.classes)
-    model = SO2SteerableCNN(n_classes=cfg.classes)
+    model = SO2SteerableCNN(n_classes=n_classes)
 
     # Create the supervised training module
     lightning_module = SupervisedTrainingModule(
@@ -528,26 +537,27 @@ def train_oracle(cfg: DictConfig):
     )
 
     trainer.fit(
-        model=lightning_module, train_dataloaders=train_dl, val_dataloaders=val_dl, ckpt_path=ckpt_path / "oracle.ckpt"
+        model=lightning_module,
+        train_dataloaders=train_dl,
+        val_dataloaders=val_dl,
+        ckpt_path=oracle_ckpt_path,
     )
 
     out = trainer.test(model=lightning_module, dataloaders=test_dl)
     print("Test results:", out)
     # Save the model checkpoint
-    ckpt_path.mkdir(parents=True, exist_ok=True)
-    trainer.save_checkpoint(ckpt_path / "oracle.ckpt")
+    oracle_ckpt_path.mkdir(parents=True, exist_ok=True)
+    trainer.save_checkpoint(oracle_ckpt_path)
 
 
 if __name__ == "__main__":
-    cfg = base_config
-
     if not data_path.exists():
         # Check if the data directory exists, if not preprocess the data
         print("Data directory not found, preprocessing data.")
-        make_dataset(cfg)
+        make_dataset(n_classes=5)
 
     # Train the oracle classifier which is SO(2) equivariant
-    train_oracle(cfg)
+    train_oracle
 
     # Test that we can sample trajectories of consecutive digits
     ordered_MNIST = load_from_disk(str(data_path))
