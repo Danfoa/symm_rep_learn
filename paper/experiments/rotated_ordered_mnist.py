@@ -78,7 +78,7 @@ def get_model(cfg: DictConfig, state_type: FieldType) -> torch.nn.Module:
 
         # Channels of the last (latent) image representation are the basis functions.
         embedding_dim = cfg.architecture.hidden_units[-1]
-        fx = ordered_mnist.CNNEncoder(channels=cfg.architecture.hidden_units)
+        fx = ordered_mnist.CNNEncoder(channels=cfg.architecture.hidden_units, batch_norm=cfg.architecture.batch_norm)
         ncp = EvolutionOperator(
             embedding_state=fx,
             state_embedding_dim=embedding_dim,
@@ -368,7 +368,7 @@ def main(cfg: DictConfig):
     )
 
     # Fix for all runs independent on the train_ratio chosen. This way we compare on effective number of "epochs"
-    check_val_every_n_epoch = 5
+    check_val_every_n_epoch = cfg.optim.check_val_every_n_epochs
     effective_patience = cfg.optim.patience // check_val_every_n_epoch
     early_call = EarlyStopping(VAL_METRIC, patience=effective_patience, mode="min")
 
@@ -384,6 +384,7 @@ def main(cfg: DictConfig):
         fast_dev_run=5 if cfg.debug else False,
         num_sanity_val_steps=5,
         reload_dataloaders_every_n_epochs=20,
+        limit_train_batches=cfg.optim.limit_train_batches,
     )
 
     torch.set_float32_matmul_precision("medium")
@@ -433,7 +434,9 @@ def main(cfg: DictConfig):
         sup_test_ds["image"], val_batch_size, shuffle=True, collate_fn=lambda x: decoder_collect_fn(x, ncp_model)
     )
 
-    plot_kwargs = dict(samples=next(iter(test_dataloader)), path=run_path, plot_every_n_epochs=50)
+    plot_kwargs = dict(
+        samples=next(iter(test_dataloader)), path=run_path, plot_every_n_epochs=cfg.optim.max_epochs // 5
+    )
     decoder_module = SupervisedTrainingModule(
         model=decoder,
         optimizer_fn=Adam,

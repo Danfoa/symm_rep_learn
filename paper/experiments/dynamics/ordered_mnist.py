@@ -68,27 +68,42 @@ def make_dataset(n_classes: int, val_ratio: float = 0.2):
 
 # CNN Architecture
 class CNNEncoder(torch.nn.Module):
-    def __init__(self, channels=[16, 32], batch_norm: bool = False):
+    def __init__(self, channels=[32, 64, 64], batch_norm: bool = False):
         super(CNNEncoder, self).__init__()
 
-        conv_kwargs_low_rf = dict(kernel_size=4, stride=2, padding=1, dilation=1)
-        conv_kwargs_high_rf = dict(kernel_size=4, stride=2, padding=4, dilation=3)
+        # conv_kwargs_low_rf = dict(kernel_size=4, stride=2, padding=1, dilation=1)
+        conv_kwargs_low_rf = dict(kernel_size=5, stride=1, padding=2, dilation=1)
+        conv_kwargs_high_rf = dict(kernel_size=5, stride=1, padding=6, dilation=3)
+
+        conv_kwargs_low_rf_d = dict(kernel_size=4, stride=2, padding=1, dilation=1)
+        conv_kwargs_high_rf_d = dict(kernel_size=4, stride=2, padding=4, dilation=3)
 
         self.hidden_channels = channels
-        self.conv1_low_rf = torch.nn.Sequential(  # (1, 28, 28) -> (HC1, 14, 14)
+        self.conv1_low_rf = torch.nn.Sequential(
             torch.nn.Conv2d(1, channels[0] // 2, bias=True, **conv_kwargs_low_rf),
             torch.nn.BatchNorm2d(channels[0] // 2) if batch_norm else torch.nn.Identity(),
             torch.nn.ELU(),
         )
-        self.conv1_high_rf = torch.nn.Sequential(  # (1, 28, 28) -> (HC1, 14, 14)
+        self.conv1_high_rf = torch.nn.Sequential(
             torch.nn.Conv2d(1, channels[0] // 2, bias=True, **conv_kwargs_high_rf),
             torch.nn.BatchNorm2d(channels[0] // 2) if batch_norm else torch.nn.Identity(),
             torch.nn.ELU(),
         )
 
-        self.conv2 = torch.nn.Sequential(  # (HC1, 14, 14) -> (HC2, 7, 7)
-            torch.nn.Conv2d(channels[0], channels[1], bias=False, **conv_kwargs_low_rf),
-            torch.nn.BatchNorm2d(channels[1]) if batch_norm else torch.nn.Identity(),
+        self.conv2_low_rf = torch.nn.Sequential(
+            torch.nn.Conv2d(channels[0], channels[1] // 2, bias=True, **conv_kwargs_low_rf_d),
+            torch.nn.BatchNorm2d(channels[1] // 2) if batch_norm else torch.nn.Identity(),
+            torch.nn.ELU(),
+        )
+        self.conv2_high_rf = torch.nn.Sequential(
+            torch.nn.Conv2d(channels[0], channels[1] // 2, bias=True, **conv_kwargs_high_rf_d),
+            torch.nn.BatchNorm2d(channels[1] // 2) if batch_norm else torch.nn.Identity(),
+            torch.nn.ELU(),
+        )
+
+        self.conv3 = torch.nn.Sequential(  # (HC1, 14, 14) -> (HC2, 7, 7)
+            torch.nn.Conv2d(channels[1], channels[2], bias=False, **conv_kwargs_low_rf_d),
+            torch.nn.BatchNorm2d(channels[2]) if batch_norm else torch.nn.Identity(),
             torch.nn.ELU(),
         )
         self.spatial_size = 7
@@ -100,9 +115,10 @@ class CNNEncoder(torch.nn.Module):
         x_low = self.conv1_low_rf(x)
         x_high = self.conv1_high_rf(x)
         x = torch.cat([x_low, x_high], dim=1)
-        # print(f"After conv1: {x.shape}")
-        x = self.conv2(x)  # Shape: (B, hidden_channels[1], 7, 7)
-        # print(f"After conv2: {x.shape}")
+        x_low = self.conv2_low_rf(x)
+        x_high = self.conv2_high_rf(x)
+        x = torch.cat([x_low, x_high], dim=1)
+        x = self.conv3(x)  # Shape: (B, hidden_channels[1], 7, 7)
 
         assert x.shape[2] == x.shape[3] == self.spatial_size, f"Expected size {self.spatial_size}, got {x.shape}"
         # Reshape from (B, C, H, W) to (B * H * W, C)
@@ -672,8 +688,8 @@ if __name__ == "__main__":
 
     # cnn_encoder = SO2SCNNEncoder(embedding_dim=64)
     # cnn_decoder = SO2SCNNDecoder(in_type=cnn_encoder.out.out_type)
-    cnn_encoder = CNNEncoder(channels=[16, 32])
-    cnn_decoder = CNNDecoder(channels=[32, 16], spatial_size=cnn_encoder.spatial_size)
+    cnn_encoder = CNNEncoder(channels=[8, 16, 32])
+    cnn_decoder = CNNDecoder(channels=[32, 16, 8], spatial_size=cnn_encoder.spatial_size)
     # so2_cnn_classifier = SO2SteerableCNN(n_classes=5)
 
     state_dict = torch.load(oracle_ckpt_path)["state_dict"]
