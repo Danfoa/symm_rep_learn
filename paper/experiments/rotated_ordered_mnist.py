@@ -78,7 +78,11 @@ def get_model(cfg: DictConfig, state_type: FieldType) -> torch.nn.Module:
 
         # Channels of the last (latent) image representation are the basis functions.
         embedding_dim = cfg.architecture.hidden_units[-1]
-        fx = ordered_mnist.CNNEncoder(channels=cfg.architecture.hidden_units, batch_norm=cfg.architecture.batch_norm)
+        fx = ordered_mnist.CNNEncoder(
+            channels=cfg.architecture.hidden_units,
+            batch_norm=cfg.architecture.batch_norm,
+            flatten_img=cfg.flat_embedding,
+        )
         ncp = EvolutionOperator(
             embedding_state=fx,
             state_embedding_dim=embedding_dim,
@@ -383,7 +387,7 @@ def main(cfg: DictConfig):
         callbacks=[ckpt_call, early_call],
         fast_dev_run=5 if cfg.debug else False,
         num_sanity_val_steps=5,
-        reload_dataloaders_every_n_epochs=20,
+        reload_dataloaders_every_n_epochs=10,
         limit_train_batches=cfg.optim.limit_train_batches,
     )
 
@@ -413,7 +417,9 @@ def main(cfg: DictConfig):
     # Keep the model in the target device
     ncp_model.to(device=cfg.device)
     decoder = ordered_mnist.CNNDecoder(
-        channels=list(reversed(cfg.architecture.hidden_units)), spatial_size=ncp_model._embedding_x.spatial_size
+        channels=list(reversed(cfg.architecture.hidden_units)),
+        spatial_size=ncp_model._embedding_x.spatial_size,
+        flat_img=cfg.flat_embedding,
     )
 
     def img_reconstruction_loss(y, y_gt) -> tuple[torch.Tensor, dict]:
@@ -435,7 +441,9 @@ def main(cfg: DictConfig):
     )
 
     plot_kwargs = dict(
-        samples=next(iter(test_dataloader)), path=run_path, plot_every_n_epochs=cfg.optim.max_epochs // 5
+        samples=next(iter(test_dataloader)),
+        path=run_path,
+        plot_every_n_epochs=max(1, int(cfg.optim.max_epochs // 5 // check_val_every_n_epoch) * check_val_every_n_epoch),
     )
     decoder_module = SupervisedTrainingModule(
         model=decoder,
@@ -490,7 +498,8 @@ def main(cfg: DictConfig):
         callbacks=[dec_ckpt_call, dec_early_call],
         fast_dev_run=25 if cfg.debug else False,
         num_sanity_val_steps=5,
-        reload_dataloaders_every_n_epochs=20,
+        reload_dataloaders_every_n_epochs=10,
+        limit_train_batches=cfg.optim.limit_train_batches,
     )
 
     # Freeze the encoder and oracle classifier

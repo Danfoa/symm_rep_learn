@@ -68,9 +68,10 @@ def make_dataset(n_classes: int, val_ratio: float = 0.2):
 
 # CNN Architecture
 class CNNEncoder(torch.nn.Module):
-    def __init__(self, channels=[32, 64, 64], batch_norm: bool = False):
+    def __init__(self, channels=[32, 64, 64], batch_norm: bool = False, flatten_img: bool = False):
         super(CNNEncoder, self).__init__()
-
+        self.channels = channels
+        self.flatten_img = flatten_img
         # conv_kwargs_low_rf = dict(kernel_size=4, stride=2, padding=1, dilation=1)
         conv_kwargs_low_rf = dict(kernel_size=5, stride=1, padding=2, dilation=1)
         conv_kwargs_high_rf = dict(kernel_size=5, stride=1, padding=6, dilation=3)
@@ -108,6 +109,12 @@ class CNNEncoder(torch.nn.Module):
         )
         self.spatial_size = 7
 
+        if flatten_img:
+            self.head = torch.nn.Linear(
+                in_features=channels[2] * self.spatial_size * self.spatial_size,
+                out_features=channels[-1],
+            )
+
     def forward(self, x: torch.Tensor):
         if x.dim() == 3:
             x = x.unsqueeze(1)  # Add a channel dimension if needed
@@ -121,11 +128,69 @@ class CNNEncoder(torch.nn.Module):
         x = self.conv3(x)  # Shape: (B, hidden_channels[1], 7, 7)
 
         assert x.shape[2] == x.shape[3] == self.spatial_size, f"Expected size {self.spatial_size}, got {x.shape}"
-        # Reshape from (B, C, H, W) to (B * H * W, C)
-        B, C, H, W = x.shape
-        output = x.permute(0, 2, 3, 1).contiguous().view(B * H * W, C)
-        # print(f"Flattened output shape: {output.shape}")
-        return output
+
+        if self.flatten_img:
+            # Flatten image (B, C, H, W) -> (B, H * W * C)
+            x = x.view(x.shape[0], -1)
+            x = self.head(x)  # Apply the linear head
+            return x
+        else:
+            # Reshape from (B, C, H, W) to (B * H * W, C)
+            B, C, H, W = x.shape
+            output = x.permute(0, 2, 3, 1).contiguous().view(B * H * W, C)
+            # print(f"Flattened output shape: {output.shape}")
+            return output
+
+
+# A decoder which is specular to CNNEncoder, starting with reshaping from (B*H*W, C) back to (B, C, H, W)
+class CNNDecoder(torch.nn.Module):
+    def __init__(self, spatial_size: int, channels=[32, 16], flat_img: bool = False):
+        super(CNNDecoder, self).__init__()
+        self.hidden_channels = channels
+        self.spatial_size = spatial_size
+        self.flat_img = flat_img
+
+        conv_kwargs_low_rf = dict(kernel_size=4, stride=2, padding=1, dilation=1)
+        self.conv1 = torch.nn.Sequential(  # (F, 7, 7) -> (HC1//2, 14, 14)
+            torch.nn.ConvTranspose2d(channels[0], channels[1], bias=True, **conv_kwargs_low_rf),
+            torch.nn.ELU(),
+        )
+
+        self.conv2 = torch.nn.Sequential(  # (HC1, 14, 14) -> (1, 29, 29)
+            torch.nn.ConvTranspose2d(channels[1], 1, bias=True, **conv_kwargs_low_rf),
+            torch.nn.Sigmoid(),
+        )
+
+        if flat_img:
+            self.head = torch.nn.Linear(
+                in_features=channels[0],
+                out_features=channels[0] * self.spatial_size * self.spatial_size,
+            )
+
+    def forward(self, x):
+        if self.flat_img:
+            x = self.head(x)
+            # Reshape from (B, C * H * W) to (B, C, H, W)
+            x = x.view(x.shape[0], self.hidden_channels[0], self.spatial_size, self.spatial_size)
+        else:
+            # x shape: (B * H * W, C)
+            # Infer batch size from input
+            total_spatial_elements = x.size(0)
+            assert total_spatial_elements % (self.spatial_size * self.spatial_size) == 0, (
+                f"Expected batch size to be divisible by {self.spatial_size}x{self.spatial_size}, got {total_spatial_elements}"
+            )
+            batch_size = total_spatial_elements // (self.spatial_size * self.spatial_size)
+            # print(f"Input shape: {x.shape}")
+            # Reshape from (B * H * W, C) to (B, H, W, C) to (B, C, H, W)
+            x = x.view(batch_size, self.spatial_size, self.spatial_size, self.hidden_channels[0])
+            x = x.permute(0, 3, 1, 2).contiguous()  # (B, C, H, W)
+
+        # print(f"Reshaped to: {x.shape}")
+        x = self.conv1(x)
+        # print(f"After conv1: {x.shape}")
+        x = self.conv2(x)
+        # print(f"After conv2: {x.shape}")
+        return x
 
 
 class SO2SCNNEncoder(torch.nn.Module):
@@ -190,45 +255,6 @@ class SO2SCNNEncoder(torch.nn.Module):
         embedding = self.out(self.out.in_type(x_flat))
 
         return embedding
-
-
-# A decoder which is specular to CNNEncoder, starting with reshaping from (B*H*W, C) back to (B, C, H, W)
-class CNNDecoder(torch.nn.Module):
-    def __init__(self, spatial_size: int, channels=[32, 16]):
-        super(CNNDecoder, self).__init__()
-        self.hidden_channels = channels
-        self.spatial_size = spatial_size
-
-        conv_kwargs_low_rf = dict(kernel_size=4, stride=2, padding=1, dilation=1)
-        self.conv1 = torch.nn.Sequential(  # (F, 7, 7) -> (HC1//2, 14, 14)
-            torch.nn.ConvTranspose2d(channels[0], channels[1], bias=True, **conv_kwargs_low_rf),
-            torch.nn.ELU(),
-        )
-
-        self.conv2 = torch.nn.Sequential(  # (HC1, 14, 14) -> (1, 29, 29)
-            torch.nn.ConvTranspose2d(channels[1], 1, bias=True, **conv_kwargs_low_rf),
-            torch.nn.Sigmoid(),
-        )
-
-    def forward(self, x):
-        # x shape: (B * H * W, C)
-        # Infer batch size from input
-        total_spatial_elements = x.size(0)
-        assert total_spatial_elements % (self.spatial_size * self.spatial_size) == 0, (
-            f"Expected batch size to be divisible by {self.spatial_size}x{self.spatial_size}, got {total_spatial_elements}"
-        )
-        batch_size = total_spatial_elements // (self.spatial_size * self.spatial_size)
-
-        # print(f"Input shape: {x.shape}")
-        # Reshape from (B * H * W, C) to (B, H, W, C) to (B, C, H, W)
-        x = x.view(batch_size, self.spatial_size, self.spatial_size, self.hidden_channels[0])
-        x = x.permute(0, 3, 1, 2).contiguous()  # (B, C, H, W)
-        # print(f"Reshaped to: {x.shape}")
-        x = self.conv1(x)
-        # print(f"After conv1: {x.shape}")
-        x = self.conv2(x)
-        # print(f"After conv2: {x.shape}")
-        return x
 
 
 class SO2SCNNDecoder(torch.nn.Module):
@@ -309,7 +335,7 @@ class SO2SteerableCNN(torch.nn.Module):
         self.input_type = in_type
 
         # We need to mask the input image since the corners are moved outside the grid under rotations
-        self.mask = escnn.nn.MaskModule(in_type, 29, margin=1)
+        # self.mask = escnn.nn.MaskModule(in_type, 29, margin=1)
 
         # convolution 1
         # first we build the non-linear layer, which also constructs the right feature type
@@ -381,7 +407,7 @@ class SO2SteerableCNN(torch.nn.Module):
         activation6 = escnn.nn.FourierELU(self.r2_act, 64, irreps=self.G.bl_irreps(3), N=16)
         out_type = activation6.in_type
         self.block6 = escnn.nn.SequentialModule(
-            escnn.nn.R2Conv(in_type, out_type, kernel_size=5, padding=1, bias=False),
+            escnn.nn.R2Conv(in_type, out_type, kernel_size=4, padding=1, bias=False),
             escnn.nn.IIDBatchNorm2d(out_type),
             activation6,
         )
@@ -408,7 +434,7 @@ class SO2SteerableCNN(torch.nn.Module):
         # (associate it with the input type)
         x = self.input_type(input)
         # mask out the corners of the input image
-        x = self.mask(x)
+        # x = self.mask(x)
 
         # apply each equivariant block
 
@@ -418,22 +444,28 @@ class SO2SteerableCNN(torch.nn.Module):
         #
         # Each layer outputs a new GeometricTensor, associated with the layer's output type.
         # As a result, consecutive layers need to have matching input/output types
+        # print(f"Input shape: {x.shape}")
         x = self.block1(x)
         x = self.block2(x)
         x = self.pool1(x)
+        # print(f"After block1 and pool1: {x.shape}")
 
         x = self.block3(x)
         x = self.block4(x)
         x = self.pool2(x)
+        # print(f"After block2 and pool2: {x.shape}")
 
         x = self.block5(x)
         x = self.block6(x)
+        # print(f"After block5 and block6: {x.shape}")
 
         # pool over the spatial dimensions
         x = self.pool3(x)
+        # print(f"After pool3: {x.shape}")
 
         # extract invariant features
         x = self.invariant_map(x)
+        # print(f"After invariant map: {x.shape}")
 
         # unwrap the output GeometricTensor
         # (take the Pytorch tensor and discard the associated representation)
@@ -620,17 +652,25 @@ def plot_predictions_images(
 
 def train_oracle(n_classes=5):
     ordered_MNIST = load_from_disk(str(data_path))
-    train_dl = DataLoader(ordered_MNIST["train"], batch_size=64, shuffle=True, collate_fn=collate_fn)
+    train_dl = DataLoader(
+        ordered_MNIST["train"], batch_size=512, shuffle=True, collate_fn=lambda x: collate_fn(x, split="train")
+    )
     val_dl = DataLoader(
-        ordered_MNIST["validation"], batch_size=len(ordered_MNIST["validation"]), shuffle=False, collate_fn=collate_fn
+        ordered_MNIST["validation"],
+        batch_size=128,
+        shuffle=False,
+        collate_fn=lambda x: collate_fn(x),
     )
     test_dl = DataLoader(
-        ordered_MNIST["test"], batch_size=len(ordered_MNIST["test"]), shuffle=False, collate_fn=collate_fn
+        ordered_MNIST["test"],
+        batch_size=128,
+        shuffle=False,
+        collate_fn=lambda x: collate_fn(x),
     )
 
     trainer_kwargs = {
         "accelerator": "gpu",
-        "max_epochs": 20,
+        "max_epochs": 5,
         "log_every_n_steps": 2,
         "enable_progress_bar": True,
         "devices": 1,
@@ -650,7 +690,7 @@ def train_oracle(n_classes=5):
     lightning_module = SupervisedTrainingModule(
         model=model,
         optimizer_fn=torch.optim.Adam,  # type: ignore
-        optimizer_kwargs={"lr": 1e-2},
+        optimizer_kwargs={"lr": 1e-3},
         loss_fn=classification_loss_metrics,
     )
 
@@ -658,7 +698,7 @@ def train_oracle(n_classes=5):
         model=lightning_module,
         train_dataloaders=train_dl,
         val_dataloaders=val_dl,
-        ckpt_path=oracle_ckpt_path,
+        ckpt_path=oracle_ckpt_path if oracle_ckpt_path.exists() else None,
     )
 
     out = trainer.test(model=lightning_module, dataloaders=test_dl)
@@ -675,7 +715,7 @@ if __name__ == "__main__":
         make_dataset(n_classes=5)
 
     # Train the oracle classifier which is SO(2) equivariant
-    # train_oracle(n_classes=5)
+    train_oracle(n_classes=5)
 
     # Test that we can sample trajectories of consecutive digits
     ordered_MNIST = load_from_disk(str(data_path))
@@ -689,12 +729,12 @@ if __name__ == "__main__":
     # cnn_encoder = SO2SCNNEncoder(embedding_dim=64)
     # cnn_decoder = SO2SCNNDecoder(in_type=cnn_encoder.out.out_type)
     cnn_encoder = CNNEncoder(channels=[8, 16, 32])
-    cnn_decoder = CNNDecoder(channels=[32, 16, 8], spatial_size=cnn_encoder.spatial_size)
-    # so2_cnn_classifier = SO2SteerableCNN(n_classes=5)
+    cnn_decoder = CNNDecoder(channels=[32, 16], spatial_size=cnn_encoder.spatial_size)
+    so2_cnn_classifier = SO2SteerableCNN(n_classes=5)
 
     state_dict = torch.load(oracle_ckpt_path)["state_dict"]
     state_dict = {k.replace("model.", ""): v for k, v in state_dict.items()}
-    # so2_cnn_classifier.load_state_dict(state_dict, strict=True)
+    so2_cnn_classifier.load_state_dict(state_dict, strict=True)
 
     # Iterate over the first 10 samples and plot currecnt and next images
     import matplotlib.pyplot as plt
@@ -713,8 +753,8 @@ if __name__ == "__main__":
         current_img = present_batch[5].numpy()
         next_img = future_batch[5].numpy()
 
-        # present_label = so2_cnn_classifier(present_batch).argmax(dim=1)[5].item()
-        # next_label = so2_cnn_classifier(future_batch).argmax(dim=1)[5].item()
+        present_label = so2_cnn_classifier(present_batch).argmax(dim=1)[5].item()
+        next_label = so2_cnn_classifier(future_batch).argmax(dim=1)[5].item()
 
         break
         # plt.figure(figsize=(6, 3))

@@ -17,6 +17,7 @@ momentum: 0.9                   # 1.0 = batch stats for centering and Cov. 1.0 >
 lstsq: true                     # Use analytic lstsq for regression of NCP models.
 analytic_residual: false
 alpha: 0.1
+flat_embedding: True            # Use flat or spatial embedding of Image data.
 
 
 dataset:
@@ -38,7 +39,8 @@ dataset:
 # Architecture of the neural network
 architecture:
   activation: ELU             # Any torch activation
-  hidden_units: [32, 64, 128]
+  # hidden_units: [32, 64, 128]
+  hidden_units: [16, 32, 32]
   dilation: 1  
   self_adjoint: False    
   batch_norm: True           
@@ -46,13 +48,13 @@ architecture:
 # OPTIMIZATION CONFIG
 optim:
   lr: 1e-3                    # Learning rate NCP train best at low lr values < 1e-3
-  patience: 10                # Epochs to wait for improvement before early stopping
+  patience: 20                # Epochs to wait for improvement before early stopping
   batch_size: 128             # The higher the best
   val_batch_size: 64          # The higher the best
   max_epochs: 100              # Number of passes before stop training. Early stopping is used.
   dl_num_workers: 0           # Number of workers for data loading
-  check_val_every_n_epochs: 4
-  limit_train_batches: 1.0        
+  check_val_every_n_epochs: 5
+  limit_train_batches: 0.1       
 
 exp_desc: "evol_op_dynamics"
 opt_desc: "lr=${optim.lr}_bs=${optim.batch_size}_pat=${optim.patience}"
