@@ -11,8 +11,8 @@ profile: False
 
 # EXPERIMENT CONFIG
 model: NCP
-gamma: 1.0                        # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
-gamma_centering: 0.1            # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
+gamma: 0.5                        # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
+gamma_centering: 0.05            # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
 momentum: 0.9                   # 1.0 = batch stats for centering and Cov. 1.0 > leads to use of running average stats in the orthonormality and centering loss. 
 lstsq: true                     # Use analytic lstsq for regression of NCP models.
 analytic_residual: false
@@ -27,9 +27,9 @@ dataset:
   #  Dataset splitting
   train_ratio: 0.7
   val_ratio: 0.15
-  augment_train: False        # Augment training data using symmetry transformations. Not useful for equiv models.
-  augment_test: False         # This better emulates the real-world scenario in which symmetry related points have equal probability of being observed.
-  augment_val:  False         # This better emulates the real-world scenario in which symmetry related points have equal probability of being observed.
+  augment_train: True        # Augment training data using symmetry transformations. Not useful for equiv models.
+  augment_test: True         # This better emulates the real-world scenario in which symmetry related points have equal probability of being observed.
+  augment_val:  True         # This better emulates the real-world scenario in which symmetry related points have equal probability of being observed.
   #  Dataset loading
   load_to_memory: True    # Load dataset to memory for faster read and batch collection.
   device: 'cuda'           # Device to load the dataset to. 'cpu' or 'cuda'
@@ -48,13 +48,13 @@ architecture:
 # OPTIMIZATION CONFIG
 optim:
   lr: 1e-3                    # Learning rate NCP train best at low lr values < 1e-3
-  patience: 20                # Epochs to wait for improvement before early stopping
+  patience: 5                # Epochs to wait for improvement before early stopping
   batch_size: 128             # The higher the best
   val_batch_size: 64          # The higher the best
   max_epochs: 100              # Number of passes before stop training. Early stopping is used.
   dl_num_workers: 0           # Number of workers for data loading
-  check_val_every_n_epochs: 5
-  limit_train_batches: 0.1       
+  check_val_n_times: 100
+  limit_train_batches: 0.2      
 
 exp_desc: "evol_op_dynamics"
 opt_desc: "lr=${optim.lr}_bs=${optim.batch_size}_pat=${optim.patience}"

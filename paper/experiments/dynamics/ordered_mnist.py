@@ -72,14 +72,14 @@ class CNNEncoder(torch.nn.Module):
         super(CNNEncoder, self).__init__()
         self.channels = channels
         self.flatten_img = flatten_img
-        # conv_kwargs_low_rf = dict(kernel_size=4, stride=2, padding=1, dilation=1)
+        self.hidden_channels = channels
+        # Covolutional parameters
         conv_kwargs_low_rf = dict(kernel_size=5, stride=1, padding=2, dilation=1)
         conv_kwargs_high_rf = dict(kernel_size=5, stride=1, padding=6, dilation=3)
-
+        # Downsampling parameters
         conv_kwargs_low_rf_d = dict(kernel_size=4, stride=2, padding=1, dilation=1)
         conv_kwargs_high_rf_d = dict(kernel_size=4, stride=2, padding=4, dilation=3)
 
-        self.hidden_channels = channels
         self.conv1_low_rf = torch.nn.Sequential(
             torch.nn.Conv2d(1, channels[0] // 2, bias=True, **conv_kwargs_low_rf),
             torch.nn.BatchNorm2d(channels[0] // 2) if batch_norm else torch.nn.Identity(),
@@ -146,7 +146,7 @@ class CNNEncoder(torch.nn.Module):
 class CNNDecoder(torch.nn.Module):
     def __init__(self, spatial_size: int, channels=[32, 16], flat_img: bool = False):
         super(CNNDecoder, self).__init__()
-        self.hidden_channels = channels
+        self.channels = channels
         self.spatial_size = spatial_size
         self.flat_img = flat_img
 
@@ -171,7 +171,7 @@ class CNNDecoder(torch.nn.Module):
         if self.flat_img:
             x = self.head(x)
             # Reshape from (B, C * H * W) to (B, C, H, W)
-            x = x.view(x.shape[0], self.hidden_channels[0], self.spatial_size, self.spatial_size)
+            x = x.view(x.shape[0], self.channels[0], self.spatial_size, self.spatial_size)
         else:
             # x shape: (B * H * W, C)
             # Infer batch size from input
@@ -182,7 +182,7 @@ class CNNDecoder(torch.nn.Module):
             batch_size = total_spatial_elements // (self.spatial_size * self.spatial_size)
             # print(f"Input shape: {x.shape}")
             # Reshape from (B * H * W, C) to (B, H, W, C) to (B, C, H, W)
-            x = x.view(batch_size, self.spatial_size, self.spatial_size, self.hidden_channels[0])
+            x = x.view(batch_size, self.spatial_size, self.spatial_size, self.channels[0])
             x = x.permute(0, 3, 1, 2).contiguous()  # (B, C, H, W)
 
         # print(f"Reshaped to: {x.shape}")
@@ -196,121 +196,173 @@ class CNNDecoder(torch.nn.Module):
 class SO2SCNNEncoder(torch.nn.Module):
     """SO(2) equivariant CNN encoder for ordered MNIST."""
 
-    def __init__(self, embedding_dim=64, hidden_channels=[16, 32]):
+    def __init__(self, channels=[32, 64, 64], batch_norm: bool = False, flatten_img: bool = False):
         super(SO2SCNNEncoder, self).__init__()
-        self.embedding_dim = embedding_dim
-        self.hidden_channels = hidden_channels
+        self.channels = channels
+        self.batch_norm = batch_norm
+        self.flatten_img = flatten_img
         # The model is equivariant under all planar rotations
-        self.r2_act = escnn.gspaces.rot2dOnR2(N=-1)
-        self.G = self.r2_act.fibergroup
-
+        self.r2_act_gs = escnn.gspaces.rot2dOnR2(N=-1)
+        self.G = self.r2_act_gs.fibergroup
         # The input image is a scalar field (grey values), corresponding to the trivial representation
-        self.in_type = escnn.nn.FieldType(self.r2_act, [self.r2_act.trivial_repr])
+        self.in_type = escnn.nn.FieldType(self.r2_act_gs, [self.r2_act_gs.trivial_repr])
+        # Covolutional parameters
+        conv_kwargs_low_rf = dict(kernel_size=5, stride=1, padding=2, dilation=1)
+        conv_kwargs_high_rf = dict(kernel_size=5, stride=1, padding=6, dilation=3)
+        # Downsampling parameters
+        conv_kwargs_low_rf_d = dict(kernel_size=4, stride=2, padding=1, dilation=1)
+        conv_kwargs_high_rf_d = dict(kernel_size=4, stride=2, padding=4, dilation=3)
 
-        # We need to mask the input image since the corners are moved outside the grid under rotations
-        self.mask = escnn.nn.MaskModule(self.in_type, 29, margin=1)
+        reg_channels = [max(1, math.ceil(c / 7)) for c in channels]
+        reg_channels[0] = max(1, reg_channels[0] // 2)
+        reg_channels[1] = max(1, reg_channels[1] // 2)
 
-        act1 = escnn.nn.FourierELU(self.r2_act, hidden_channels[0], irreps=self.G.bl_irreps(3), N=16)
-        act2 = escnn.nn.FourierELU(self.r2_act, hidden_channels[1], irreps=self.G.bl_irreps(3), N=16)
+        act1 = escnn.nn.FourierELU(self.r2_act_gs, reg_channels[0], irreps=self.G.bl_irreps(3), N=16)
+        block1_out_type = act1.out_type + act1.out_type
+        act2 = escnn.nn.FourierELU(self.r2_act_gs, reg_channels[1], irreps=self.G.bl_irreps(3), N=16)
+        block2_out_type = act2.out_type + act2.out_type
+        act3 = escnn.nn.FourierELU(self.r2_act_gs, reg_channels[2], irreps=self.G.bl_irreps(3), N=16)
 
-        self.conv1 = escnn.nn.SequentialModule(
-            escnn.nn.R2Conv(self.in_type, act1.in_type, kernel_size=5, stride=1, padding=2),
+        self.conv1_low_rf = escnn.nn.SequentialModule(
+            escnn.nn.R2Conv(self.in_type, act1.in_type, bias=True, **conv_kwargs_low_rf),
+            escnn.nn.IIDBatchNorm2d(act1.in_type) if batch_norm else torch.nn.Identity(),
             act1,
-            escnn.nn.PointwiseAvgPoolAntialiased(act1.out_type, sigma=0.66, stride=2),
         )
-        self.conv2 = escnn.nn.SequentialModule(
-            escnn.nn.R2Conv(act1.out_type, act2.in_type, kernel_size=5, stride=1, padding=2),
-            act2,
-            escnn.nn.PointwiseAvgPoolAntialiased(act2.out_type, sigma=0.66, stride=2),
+        self.conv1_high_rf = escnn.nn.SequentialModule(
+            escnn.nn.R2Conv(self.in_type, act1.in_type, bias=True, **conv_kwargs_high_rf),
+            escnn.nn.IIDBatchNorm2d(act1.in_type) if batch_norm else torch.nn.Identity(),
+            act1,
         )
 
-        # Head that flattens the gird feature maps. (B, C, H, W) -> (B, C*H*W)
-        linear_base_space = escnn.gspaces.no_base_space(self.G)
-        feat_type = escnn.nn.FieldType(linear_base_space, [act2.out_type.representation] * 8 * 8)
-        out_rep = self.G.spectral_regular_representation(*self.G.bl_irreps(3), name="embedding_rep")
-        out_rep_multiplicity = math.ceil(self.embedding_dim // out_rep.size)
-        self.out = escnn.nn.Linear(
-            in_type=feat_type,
-            out_type=escnn.nn.FieldType(linear_base_space, [out_rep] * out_rep_multiplicity),
-            bias=False,
+        self.conv2_low_rf = escnn.nn.SequentialModule(
+            escnn.nn.R2Conv(block1_out_type, act2.in_type, bias=True, **conv_kwargs_low_rf_d),
+            escnn.nn.IIDBatchNorm2d(act2.in_type) if batch_norm else torch.nn.Identity(),
+            act2,
         )
+        self.conv2_high_rf = escnn.nn.SequentialModule(
+            escnn.nn.R2Conv(block1_out_type, act2.in_type, bias=True, **conv_kwargs_high_rf_d),
+            escnn.nn.IIDBatchNorm2d(act2.in_type) if batch_norm else torch.nn.Identity(),
+            act2,
+        )
+
+        self.conv3 = escnn.nn.SequentialModule(
+            escnn.nn.R2Conv(block2_out_type, act3.in_type, bias=False, **conv_kwargs_low_rf_d),
+            escnn.nn.IIDBatchNorm2d(act3.in_type) if batch_norm else torch.nn.Identity(),
+            act3,
+        )
+
+        self.spatial_size = 7  # Output spatial size after convolutions
+
+        if flatten_img:
+            # Head that flattens the gird feature maps. (B, C, H, W) -> (B, C*H*W)
+            linear_base_space = escnn.gspaces.no_base_space(self.G)
+            feat_type = escnn.nn.FieldType(linear_base_space, [act3.out_type.representation] * self.spatial_size**2)
+            out_rep = self.G.spectral_regular_representation(*self.G.bl_irreps(3), name="embedding_rep")
+            out_rep_multiplicity = math.ceil(channels[-1] // out_rep.size)
+            self.out = escnn.nn.Linear(
+                in_type=feat_type,
+                out_type=escnn.nn.FieldType(linear_base_space, [out_rep] * out_rep_multiplicity),
+                bias=False,
+            )
 
     def forward(self, input: torch.Tensor):
         # wrap the input tensor in a GeometricTensor
         x = self.in_type(input)
-        # mask out the corners of the input image
-        x = self.mask(x)
-        print(f"mask: {x.shape}")
-        # apply equivariant blocks
-        x = self.conv1(x)
-        print(f"conv1: {x.shape}")
-        x = self.conv2(x)
-        print(f"conv2: {x.shape}")
-        # Extract the tensor and flatten correctly for group representation
-        # Shape: (B, C, H, W) -> (B, H, W, C) -> (B, H*W*C)
-        # This preserves pixel-wise feature grouping for equivariant features
-        B, C, H, W = x.tensor.shape
-        x_flat = x.tensor.permute(0, 2, 3, 1).reshape(B, -1)
-        print(f"flattened: {x_flat.shape}")
-        embedding = self.out(self.out.in_type(x_flat))
 
-        return embedding
+        x_low = self.conv1_low_rf(x)
+        x_high = self.conv1_high_rf(x)
+        x = torch.cat([x_low.tensor, x_high.tensor], dim=1)
+        print(f"After conv1: {x.shape}")
+        x_low = self.conv2_low_rf(self.conv2_low_rf.in_type(x))
+        x_high = self.conv2_high_rf(self.conv2_high_rf.in_type(x))
+        x = torch.cat([x_low.tensor, x_high.tensor], dim=1)
+        print(f"After conv2: {x.shape}")
+        x = self.conv3(self.conv3.in_type(x))  # Shape: (B, hidden_channels[1], 7, 7)
+        print(f"After conv3: {x.shape}")
+
+        B, C, H, W = x.tensor.shape
+        if self.flatten_img:  # Extract the tensor and flatten correctly for group representation
+            # Shape: (B, C, H, W) -> (B, H, W, C) -> (B, H*W*C)
+            # This preserves pixel-wise feature grouping for equivariant features
+            x_flat = x.tensor.permute(0, 2, 3, 1).reshape(B, -1)
+            print(f"flattened: {x_flat.shape}")
+            output = self.out(self.out.in_type(x_flat))
+            return output.tensor
+        else:
+            output = x.tensor.permute(0, 2, 3, 1).contiguous().view(B * H * W, C)
+            # print(f"Flattened output shape: {output.shape}")
+            return output
 
 
 class SO2SCNNDecoder(torch.nn.Module):
     """SO(2) equivariant CNN decoder for ordered MNIST - counterpart to SO2SCNNEncoder."""
 
-    def __init__(self, in_type: escnn.nn.FieldType, hidden_channels=[32, 16]):
+    def __init__(self, in_type: escnn.nn.FieldType, spatial_size: int, channels=[32, 16], flat_img: bool = True):
         super(SO2SCNNDecoder, self).__init__()
-        self.embedding_dim = in_type.size
-        self.hidden_channels = hidden_channels
+        self.channels = channels
+        self.spatial_size = spatial_size
+        self.flat_img = flat_img
 
         # The model is equivariant under all planar rotations
         self.r2_act = escnn.gspaces.rot2dOnR2(N=-1)
         self.G = self.r2_act.fibergroup
 
+        reg_channels = [max(1, math.ceil(c / 7)) for c in channels]
+        act1 = escnn.nn.FourierELU(self.r2_act, reg_channels[0], irreps=self.G.bl_irreps(3), N=16)
+        act2 = escnn.nn.FourierELU(self.r2_act, reg_channels[1], irreps=self.G.bl_irreps(3), N=16)
+        act3 = escnn.nn.FourierPointwise(
+            self.r2_act, 1, irreps=[self.r2_act.trivial_repr.id], N=16, function="p_sigmoid"
+        )
+
         self.in_type = in_type  # Image embedding
-        self.output_type = escnn.nn.FieldType(self.r2_act, [self.r2_act.trivial_repr])  #  Gray image
-
-        act1 = escnn.nn.FourierELU(self.r2_act, hidden_channels[0], irreps=self.G.bl_irreps(3), N=16)
-        act2 = escnn.nn.FourierELU(self.r2_act, hidden_channels[1], irreps=self.G.bl_irreps(3), N=16)
-
+        self.out_type = act3.out_type  # Final output type
+        # if self.flat_img:
         # Define the unflattened type.
         linear_base_space = escnn.gspaces.no_base_space(self.G)
-        flat_feat_type = escnn.nn.FieldType(linear_base_space, [act1.in_type.representation] * 8 * 8)
+        flat_feat_type = escnn.nn.FieldType(linear_base_space, [act1.in_type.representation] * spatial_size**2)
         # Linear map from flat_embedding to flattened spatial features
         self.fc = escnn.nn.Linear(in_type=self.in_type, out_type=flat_feat_type)
 
+        conv_kwargs_low_rf = dict(kernel_size=4, stride=2, padding=1, dilation=1)
         # First decoder block: Upsample → Activation → ConvTranspose:   fx8x8 → hc1x16x16
         self.deconv1 = escnn.nn.SequentialModule(
-            escnn.nn.R2Upsampling(act1.in_type, scale_factor=2),
+            escnn.nn.R2ConvTransposed(act1.in_type, act1.in_type, bias=True, **conv_kwargs_low_rf),
             act1,
-            escnn.nn.R2ConvTransposed(act1.in_type, act2.in_type, kernel_size=5, stride=1, padding=2),
         )
         # Second decoder block: Upsample → Activation → ConvTranspose:   hc1x16x16 → hc2x32x32
         self.deconv2 = escnn.nn.SequentialModule(
-            escnn.nn.R2Upsampling(act2.in_type, scale_factor=2),
+            escnn.nn.R2ConvTransposed(act1.out_type, act2.in_type, bias=True, **conv_kwargs_low_rf),
             act2,
-            escnn.nn.R2ConvTransposed(act2.in_type, self.output_type, kernel_size=5, stride=1, padding=2, bias=True),
+        )
+        # Final invariant block mapping to gray scale values.
+        self.inv_map = escnn.nn.SequentialModule(
+            escnn.nn.R2ConvTransposed(act2.out_type, self.out_type, kernel_size=1, bias=True),
+            act3,
         )
 
-    def forward(self, x: escnn.nn.GeometricTensor):
-        # Unflatten embedding back to spatial features
-        spatial_features = self.fc(x).tensor
+    def forward(self, x: torch.Tensor):
+        x = self.in_type(x)  # Wrap input tensor in a GeometricTensor
 
+        # Flat embedding linear map to flatten spatial fibers
+        spatial_features = self.fc(x).tensor
+        # Unflatten spatial fibers.
         # Shape: (B, H*W*C) -> (B, H, W, C) -> (B, C, H, W)
         B = spatial_features.shape[0]
-        H, W = 8, 8  # Target spatial dimensions after encoder's pooling
+        H, W = self.spatial_size, self.spatial_size  # Target spatial dimensions after encoder's pooling
         C = self.deconv1.in_type.size
-
         # Reshape to spatial format and permute to (B, C, H, W)
         x_img = spatial_features.reshape(B, H, W, C).permute(0, 3, 1, 2)
-        # Apply reverse operations: each block now contains Upsample → Activation → ConvTranspose
-        x = self.deconv1(self.deconv1.in_type(x_img))
-        x = self.deconv2(x)  # 16x16 -> 32x32 (16→1 channels)
 
+        # Apply reverse operations: each block now contains Upsample → Activation → ConvTranspose
+        x_img = self.deconv1.in_type(x_img)  # Wrap input tensor in a GeometricTensor
+        x_img = self.deconv1(x_img)
+        # print(f"After deconv1: {x_img.shape}")
+        x_img = self.deconv2(x_img)  # 16x16 -> 32x32 (16→1 channels)
+        # print(f"After deconv2: {x_img.shape}")
+        x_img = self.inv_map(x_img)
+        # print(f"After conv3: {x_img.shape}")
         # Extract final tensor
-        output = x.tensor
+        output = x_img.tensor
 
         return output
 
@@ -563,6 +615,7 @@ def traj_collate_fn(batch, augment: bool = True, split: str = "train"):
         imgs = augment_image(imgs.squeeze(2), split=split)
     else:
         imgs = imgs.squeeze(2)
+
     present_image, future_image = imgs[:, [0]], imgs[:, [1]]
     return present_image, future_image
 
@@ -701,8 +754,8 @@ def train_oracle(n_classes=5):
         ckpt_path=oracle_ckpt_path if oracle_ckpt_path.exists() else None,
     )
 
-    out = trainer.test(model=lightning_module, dataloaders=test_dl)
-    print("Test results:", out)
+    # out = trainer.test(model=lightning_module, dataloaders=test_dl)
+    # print("Test results:", out)
     # Save the model checkpoint
     oracle_ckpt_path.parent.mkdir(parents=True, exist_ok=True)
     trainer.save_checkpoint(oracle_ckpt_path)
@@ -726,8 +779,10 @@ if __name__ == "__main__":
 
     dataloader = DataLoader(ordered_ds, batch_size=128, shuffle=True, collate_fn=traj_collate_fn)
 
-    # cnn_encoder = SO2SCNNEncoder(embedding_dim=64)
-    # cnn_decoder = SO2SCNNDecoder(in_type=cnn_encoder.out.out_type)
+    # cnn_encoder = SO2SCNNEncoder(channels=[32, 64, 128], batch_norm=True, flatten_img=True)
+    # cnn_decoder = SO2SCNNDecoder(
+    #     in_type=cnn_encoder.out.out_type, spatial_size=cnn_encoder.spatial_size, channels=[128, 64], flat_img=True
+    # )
     cnn_encoder = CNNEncoder(channels=[8, 16, 32])
     cnn_decoder = CNNDecoder(channels=[32, 16], spatial_size=cnn_encoder.spatial_size)
     so2_cnn_classifier = SO2SteerableCNN(n_classes=5)
@@ -756,19 +811,40 @@ if __name__ == "__main__":
         present_label = so2_cnn_classifier(present_batch).argmax(dim=1)[5].item()
         next_label = so2_cnn_classifier(future_batch).argmax(dim=1)[5].item()
 
-        break
-        # plt.figure(figsize=(6, 3))
-        # plt.subplot(1, 2, 1)
-        # plt.imshow(current_img.squeeze(0), cmap="gray")
-        # plt.title(f"Current Image: {present_label}")
-        # plt.axis("off")
-        # plt.subplot(1, 2, 2)
-        # plt.imshow(next_img.squeeze(0), cmap="gray")
-        # plt.title(f"Next Image: {next_label}")
-        # plt.axis("off")
-        # plt.tight_layout()
-        # plt.show()
+        # Get reconstructed images for display
+        current_rec_img = p_rec[5].detach().cpu().numpy()
+        next_rec_img = f_rec[5].detach().cpu().numpy()
 
-        # i += 1
-        # if i >= 3:
-        #     break
+        # break
+        plt.figure(figsize=(12, 6))
+
+        # Original present image
+        plt.subplot(2, 4, 1)
+        plt.imshow(current_img.squeeze(0), cmap="gray")
+        plt.title(f"Present: {present_label}")
+        plt.axis("off")
+
+        # Reconstructed present image
+        plt.subplot(2, 4, 2)
+        plt.imshow(current_rec_img.squeeze(0), cmap="gray")
+        plt.title(f"Present Rec")
+        plt.axis("off")
+
+        # Original future image
+        plt.subplot(2, 4, 3)
+        plt.imshow(next_img.squeeze(0), cmap="gray")
+        plt.title(f"Future: {next_label}")
+        plt.axis("off")
+
+        # Reconstructed future image
+        plt.subplot(2, 4, 4)
+        plt.imshow(next_rec_img.squeeze(0), cmap="gray")
+        plt.title(f"Future Rec")
+        plt.axis("off")
+
+        plt.tight_layout()
+        plt.show()
+
+        i += 1
+        if i >= 3:
+            break
