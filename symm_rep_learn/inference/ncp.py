@@ -5,50 +5,58 @@ from symm_rep_learn.models.ncp import NCP
 
 
 class NCPRegressor(torch.nn.Module):
-    def __init__(self, model: NCP, y_train, zy_train, lstsq=False, analytic_residual=False):
+    def __init__(self, model: NCP, y_train, zy_train):
         super(NCPRegressor, self).__init__()
-        self.model = model
-        self.lstsq = lstsq
-        self.analytic_residual = analytic_residual
+        self.ncp_model = model
         self.device = next(model.parameters()).device
         self.out_dim = zy_train.shape[-1]
 
         assert zy_train.shape[0] == y_train.shape[0], (
             "y_train and xy_train with same number of samples, got {zy_train.shape[0]} and {y_train.shape[0]}"
         )
-        assert y_train.ndim == 2, f"Y train must have shape (n_train, y_dim) got {y_train.shape}"
-        assert zy_train.ndim == 2, f"Z(Y) train must have shape (n_train, z(y)_dim) got {zy_train.ndim}"
+        # assert y_train.ndim == 2, f"Y train must have shape (n_train, y_dim) got {y_train.shape}"
+        # assert zy_train.ndim == 2, f"Z(Y) train must have shape (n_train, ...) got {zy_train.ndim}"
 
         zy_train = zy_train.to(self.device)
         y_train = y_train.to(self.device)
-
-        n_train = zy_train.shape[0]
-
+        n_samples = y_train.shape[0]
+        assert zy_train.shape[0] == n_samples, (
+            f"Z(Y) train and Y train must have same number of samples, got {zy_train.shape[0]} and {n_samples}"
+        )
         # Compute the expectation of the r.v `z(y)` from the training dataset.
-        self.mean_zy = zy_train.mean(axis=0, keepdim=True)
-        zy_train_c = zy_train - self.mean_zy
+        mean_zy = zy_train.mean(axis=0, keepdim=True)
+        self.register_buffer("mean_zy", mean_zy)
+
+        zy_shape = torch.tensor(zy_train.shape[1:])
+        self.register_buffer("zy_shape", zy_shape)
 
         # Compute the embeddings of the entire y training dataset. And the linear regression between z(y) and h(y)
-        self.Czyhy = torch.zeros((zy_train.shape[-1], model.dim_hy), device=self.device)
+        Czyhy = torch.zeros((zy_train.shape[-1], model.dim_hy), device=self.device)
 
-        hy_train = model._embedding_y(y_train)  # shape: (n_train, embedding_dim)
+        _, hy_train = self.ncp_model(y=y_train)  # shape: (n_train, embedding_dim)
 
-        if lstsq:
-            out = torch.linalg.lstsq(hy_train, zy_train_c)
-            self.Czyhy = out.solution.T
-            assert self.Czyhy.shape == (zy_train.shape[-1], hy_train.shape[-1]), f"Invalid shape {self.Czyhy.shape}"
-        else:  # Compute empirical expectation
-            self.Czyhy = (1 / n_train) * torch.einsum("by,bh->yh", zy_train_c, hy_train)
+        zy_train_c = zy_train - mean_zy  # Center the zy_train
+        zy_train_c_flat = zy_train_c.view((n_samples, -1))  # Flatten the zy_train_c for lstsq
+        out = torch.linalg.lstsq(hy_train, zy_train_c_flat)
+        Czyhy = out.solution.T
+        self.register_buffer("Czyhy", Czyhy)
+        assert self.Czyhy.shape == (np.prod(zy_train.shape[1:]), hy_train.shape[-1]), (
+            f"Invalid shape {self.Czyhy.shape}"
+        )
 
-    def forward(self, x_cond):
-        x_cond = x_cond.to(self.device)
-        fx_cond = self.model._embedding_x(x_cond)  # shape: (n_samples, embedding_dim)
-
+    def forward(self, x_cond: torch.Tensor = None, fx_cond: torch.Tensor = None):
+        assert x_cond is not None or fx_cond is not None, "Either x_cond or fx_cond must be provided."
+        device = next(self.ncp_model.parameters()).device
+        if fx_cond is None:
+            fx_cond, _ = self.ncp_model(x=x_cond.to(device))  # shape: (n_samples, embedding_dim)
+        else:
+            fx_cond = fx_cond.to(device)
+        n_samples = fx_cond.shape[0]
         # Check formula 12 from https://arxiv.org/pdf/2407.01171
-        Dr = self.model.truncated_operator
+        Dr = self.ncp_model.truncated_operator
         zy_deflated_basis_expansion = torch.einsum("bf,fh,yh->by", fx_cond, Dr, self.Czyhy)
-        zy_pred = self.mean_zy + zy_deflated_basis_expansion
-
+        zy_deflated_basis_expansion_reshaped = zy_deflated_basis_expansion.view(n_samples, *self.zy_shape)
+        zy_pred = self.mean_zy + zy_deflated_basis_expansion_reshaped
         return zy_pred
 
 

@@ -21,7 +21,7 @@ class NCP(torch.nn.Module):
         embedding_dim_y: int,
         orth_reg=0.1,  # Will be multiplied by the embedding_dim
         centering_reg=0.01,  # Penalizes probability mass distortion
-        momentum=1.0,  # 1.0 Batch stats to center the embeddings and compute covariance.
+        momentum=0.9,  # 1.0 Batch stats to center the embeddings and compute covariance.
     ):
         super(NCP, self).__init__()
 
@@ -105,6 +105,18 @@ class NCP(torch.nn.Module):
         """Return the truncated operator"""
         return self.Dr.weight  # Triggers the spectral normalization.
 
+    def orthonormality_regularization(self, fx_c: torch.Tensor, hy_c: torch.Tensor):
+        Cfx, Chy = self.data_norm_x.cov, self.data_norm_y.cov
+        fx_mean, hy_mean = self.data_norm_x.mean, self.data_norm_y.mean
+        # orthonormal_reg_fx = ||Cx - I||_F^2 + 2 ||E_p(x) f(x)||_F^2
+        orthonormal_reg_x, metrics_x = orthonormality_regularization(x=fx_c, Cx=Cfx, x_mean=fx_mean, var_name="x")
+        # orthonormal_reg_hy = ||Cy - I||_F^2 + 2 ||E_p(y) h(y)||_F^2
+        orthonormal_reg_y, metrics_y = orthonormality_regularization(x=hy_c, Cx=Chy, x_mean=hy_mean, var_name="y")
+
+        metrics = metrics_x | metrics_y  # Combine metrics from both regularizations
+
+        return orthonormal_reg_x, orthonormal_reg_y, metrics
+
     def loss(self, fx_c: torch.Tensor, hy_c: torch.Tensor):
         """TODO.
 
@@ -121,27 +133,19 @@ class NCP(torch.nn.Module):
         assert hy_c.shape[-1] == self.dim_hy, f"Expected hy (..., {self.dim_hy}), got {hy_c.shape}"
         dx = self.dim_fx
         dy = self.dim_hy
-        # Orthonormal regularization and centering penalization _________________________________________
-        Cfx, Chy = self.data_norm_x.cov, self.data_norm_y.cov
-        fx_mean, hy_mean = self.data_norm_x.mean, self.data_norm_y.mean
-        # orthonormal_reg_fx = ||Cx - I||_F^2 + 2 ||E_p(x) f(x)||_F^2
-        orthonormal_reg_x, metrics_x = orthonormality_regularization(x=fx_c, Cx=Cfx, x_mean=fx_mean, var_name="x")
-        # orthonormal_reg_hy = ||Cy - I||_F^2 + 2 ||E_p(y) h(y)||_F^2
-        orthonormal_reg_y, metrics_y = orthonormality_regularization(x=hy_c, Cx=Chy, x_mean=hy_mean, var_name="y")
-
-        metrics = metrics_x | metrics_y  # Combine metrics from both regularizations
-
+        # Orthonormal regularization _________________________________________
+        orthonormal_reg_x, orthonormal_reg_y, metrics = self.orthonormality_regularization(fx_c, hy_c)
+        # Centering penalization __________________________________________________
+        # Lagrange multiplier term for centering constraint of basis functions
+        cent_reg_x = self.data_norm_x.mean.pow(2).sum()  #  ||E_x f(x)||_F^2
+        cent_reg_y = self.data_norm_y.mean.pow(2).sum()  #  ||E_y h(y)||_F^2
+        cent_reg = cent_reg_x / dx + cent_reg_y / dy
         # Operator truncation error = ||E - E_r||_HS^2 ____________________________________________________
         # E_r = Cxy -> ||E - E_r||_HS - ||E||_HS = -2 ||Cxy||_F^2 + tr(Cxy Cy Cxy^T Cx)
         Dr = self.truncated_operator
         clora_err, loss_metrics = contrastive_low_rank_loss(fx_c, hy_c, Dr)
 
-        # Lagrange multiplier term for centering constraint of basis functions
-        cent_reg_x = fx_mean.pow(2).sum()  #  ||E_x f(x)||_F^2
-        cent_reg_y = hy_mean.pow(2).sum()  #  ||E_y h(y)||_F^2
-        cent_reg = cent_reg_x / dx + cent_reg_y / dy
-
-        metrics |= loss_metrics if loss_metrics is not None else {}
+        metrics |= loss_metrics
         # Total loss ____________________________________________________________________________________
         loss = (
             clora_err + self.gamma * (orthonormal_reg_x / dx + orthonormal_reg_y / dy) + self.gamma_centering * cent_reg

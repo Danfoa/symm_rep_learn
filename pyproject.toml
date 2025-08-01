@@ -16,6 +16,12 @@ dependencies = [
   "lightning",
   "scipy",
   "wandb",
+  "hydra-core",
+  "hydra-joblib-launcher",
+  "pandas",
+  "datasets",
+  "torchvision",
+  "matplotlib",
 ]
 
 # RUFF ___________________________________________________________________________________________________________

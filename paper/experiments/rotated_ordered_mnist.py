@@ -1,10 +1,12 @@
 """Real World Experiment of G-Equivariant Regression in Robotics."""
 
 from __future__ import annotations  # Support new typing structure in 3.8 and 3.9
-
+import time
 import logging
+import math
 import pathlib
 
+import escnn
 import hydra
 import numpy as np
 import pandas as pd
@@ -19,73 +21,45 @@ from torch.utils.data import DataLoader
 
 import paper.experiments.dynamics.ordered_mnist as ordered_mnist
 from paper.experiments.dynamics.dynamics_dataset import TrajectoryDataset
+from symm_rep_learn.inference.ncp import NCPRegressor
 from symm_rep_learn.models.equiv_ncp import ENCP
 from symm_rep_learn.models.lightning_modules import SupervisedTrainingModule, TrainingModule
 from symm_rep_learn.models.ncp import NCP
-import math
 
 log = logging.getLogger(__name__)
 
 
 def get_model(cfg: DictConfig, state_type: FieldType) -> torch.nn.Module:
     if cfg.model.lower() == "encp":  # Equivariant NCP
-        pass
-        # import escnn
-        # from escnn.nn import FieldType
-        # from symm_learning.models.emlp import EMLP
+        from symm_rep_learn.models.equiv_ncp import ENCP
 
-        # from symm_rep_learn.models.equiv_ncp import ENCP
-
-        # G = state_type.representation.group
-
-        # reg_rep = G.regular_representation
-
-        # kwargs = dict(
-        #     hidden_layers=cfg.architecture.hidden_layers,
-        #     activation=cfg.architecture.activation,
-        #     hidden_units=cfg.architecture.hidden_units,
-        #     bias=False,
-        # )
-        # if cfg.architecture.residual_encoder:
-        #     from symm_rep_learn.nn.equiv_layers import ResidualEncoder
-
-        #     lat_rep = [reg_rep] * max(1, math.ceil(cfg.architecture.embedding_dim // reg_rep.size))
-        #     lat_x_type = FieldType(
-        #         gspace=escnn.gspaces.no_base_space(G), representations=list(y_type.representations) + lat_rep
-        #     )
-        #     lat_y_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=lat_rep)
-        #     x_embedding = EMLP(in_type=state_type, out_type=lat_x_type, **kwargs)
-        #     y_embedding = ResidualEncoder(encoder=EMLP(in_type=y_type, out_type=lat_y_type, **kwargs), in_type=y_type)
-        #     assert y_embedding.out_type.size == x_embedding.out_type.size
-        # else:
-        #     lat_type = FieldType(
-        #         gspace=escnn.gspaces.no_base_space(G),
-        #         representations=[reg_rep] * max(1, math.ceil(cfg.architecture.embedding_dim // reg_rep.size)),
-        #     )
-        #     x_embedding = EMLP(in_type=state_type, out_type=lat_type, **kwargs)
-        #     y_embedding = EMLP(in_type=y_type, out_type=lat_type, **kwargs)
-        # eNCPop = ENCP(
-        #     embedding_x=x_embedding,
-        #     embedding_y=y_embedding,
-        #     gamma=cfg.gamma,
-        #     gamma_centering=cfg.gamma_centering,
-        #     learnable_change_of_basis=cfg.learnable_change_basis,
-        # )
-
-        # return eNCPop
-    elif cfg.model.lower() == "ncp":  # NCP
-        from symm_rep_learn.models.evol_op import EvolutionOperator
-
-        # Channels of the last (latent) image representation are the basis functions.
-        embedding_dim = cfg.architecture.hidden_units[-1]
-        fx = ordered_mnist.CNNEncoder(
+        fx = ordered_mnist.SO2SCNNEncoder(
             channels=cfg.architecture.hidden_units,
             batch_norm=cfg.architecture.batch_norm,
             flatten_img=cfg.flat_embedding,
         )
+        eNCPop = ENCP(
+            embedding_x=fx,
+            embedding_y=fx,
+            orth_reg=cfg.gamma,
+            centering_reg=cfg.gamma_centering,
+            momentum=cfg.momentum,
+        )
+        return eNCPop
+    elif cfg.model.lower() == "ncp":  # NCP
+        from symm_rep_learn.models.evol_op import EvolutionOperator
+
+        # Channels of the last (latent) image representation are the basis functions.
+        fx = ordered_mnist.CNNEncoderSimple(num_classes=cfg.architecture.embedding_dim)
+        # fx = ordered_mnist.CNNEncoder(
+        #     channels=cfg.architecture.hidden_units,
+        #     batch_norm=cfg.architecture.batch_norm,
+        #     flat_img=cfg.flat_embedding,
+        #     embedding_dim=cfg.architecture.embedding_dim,
+        # )
         ncp = EvolutionOperator(
             embedding_state=fx,
-            state_embedding_dim=embedding_dim,
+            state_embedding_dim=cfg.architecture.embedding_dim,
             orth_reg=cfg.gamma,
             centering_reg=cfg.gamma_centering,
             momentum=cfg.momentum,
@@ -148,7 +122,7 @@ def get_dataset(cfg: DictConfig):
     return ((train_ds, val_ds, test_ds), (sup_train_ds, sup_val_ds, sup_test_ds), state_type, oracle_classifier)
 
 
-def decoder_collect_fn(batch, ncp_model: NCP, augment: bool = False, split: str = "train"):
+def decoder_collect_fn(batch, ncp_model: NCP, augment: bool = True, split: str = "train"):
     imgs = torch.utils.data.default_collate(batch)
     imgs = ordered_mnist.pre_process_images(imgs)
 
@@ -166,7 +140,7 @@ def decoder_collect_fn(batch, ncp_model: NCP, augment: bool = False, split: str 
 
 def evolve_latent_representations(lat_imgs: torch.Tensor, ncp: NCP):
     """Evolve the latent representations in time using the NCP."""
-    next_lat_imgs = ncp.data_norm_y.mean[None] * 0 + torch.einsum("bx,xy->by", lat_imgs, ncp.truncated_operator)
+    next_lat_imgs = torch.einsum("bx,xy->by", lat_imgs, ncp.truncated_operator)
     return next_lat_imgs
 
 
@@ -188,72 +162,70 @@ def reconstruction_metrics(
     by computing the accuracy of the predicted labels.
 
     """
-    # return {}
 
-    # def rec_collect_fn(batch, augment: bool = False, split: str = "train"):
-    #     batch = torch.utils.data.default_collate(batch)
-    #     imgs = batch["image"]
-    #     imgs = ordered_mnist.pre_process_images(imgs)
-    #     labels = batch["label"]
-    #     if augment:
-    #         imgs = ordered_mnist.augment_image(imgs.squeeze(2), split=split)
-    #         if split == "test" or split == "val":  # Append aug images to original images in batch dimension
-    #             labels = torch.cat((labels, labels), dim=0)
-    #     return imgs, labels
+    def rec_collect_fn(batch, augment: bool = False, split: str = "train"):
+        batch = torch.utils.data.default_collate(batch)
+        imgs = batch["image"]
+        imgs = ordered_mnist.pre_process_images(imgs)
+        labels = batch["label"]
+        if augment:
+            imgs = ordered_mnist.augment_image(imgs.squeeze(2), split=split)
+            if split == "test" or split == "val":  # Append aug images to original images in batch dimension
+                labels = torch.cat((labels, labels), dim=0)
+        return imgs, labels
 
-    # samples = len(dataset["image"])
-    # batch_size = max(samples // 4, 128)
-    # dataloader = DataLoader(
-    #     dataset,
-    #     batch_size=batch_size,
-    #     shuffle=False,
-    #     collate_fn=lambda x: rec_collect_fn(x, augment=augment, split=split),
-    # )
+    samples = len(dataset["image"])
+    batch_size = max(samples // 4, 128)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        collate_fn=lambda x: rec_collect_fn(x, augment=augment, split=split),
+    )
 
-    # ncp_device = next(ncp.parameters()).device
-    # oracle_classifier.to(device=ncp_device)
-    # decoder.to(device=ncp_device)
+    ncp_device = next(ncp_model.parameters()).device
+    oracle_classifier.to(device=ncp_device)
+    decoder.to(device=ncp_device)
 
-    # metrics = {}
-    # for x, labels in dataloader:
-    #     batch_metrics = {}
-    #     # Get the latent representations of the images
-    #     z_pred = ncp.encode_x(x.to(device=ncp_device))  # (B * W * H,  r)
-    #     # Evolve the latent representations in time using the NCP
-    #     z_next_pred = evolve_latent_representations(z_pred, ncp)  # (B * W * H, r)
-    #     # Decode the evolved latent representations to images
-    #     decoder.to(z_next_pred.device)
-    #     x_next_pred = decoder(z_next_pred)  # (B, 1, W, H)
-    #     x_next_labels = (labels + 1) % 5
-    #     # Reconstruct the present images.
-    #     x_rec = decoder(z_pred)  # (B, 1, W, H)
-    #     x_rec_labels = labels
+    metrics = {}
+    for x, labels in dataloader:
+        batch_metrics = {}
+        # Get the latent representations of the images
+        z_pred, _ = ncp_model(x=x.to(device=ncp_device))  # (B * W * H,  r)
+        # Evolve the latent representations in time using the NCP
+        z_next_pred = evolve_latent_representations(z_pred, ncp_model)  # (B * W * H, r)
+        # Decode the evolved latent representations to images
+        decoder.to(z_next_pred.device)
+        x_next_pred = decoder(z_next_pred)  # (B, 1, W, H)
+        x_next_labels = (labels + 1) % 5
+        # Reconstruct the present images.
+        x_rec = decoder(z_pred)  # (B, 1, W, H)
+        x_rec_labels = labels
 
-    #     # Get the predicted labels using the oracle classifier
-    #     # x_next_logits_pred = oracle_classifier(x_next_pred)  # (B,)
-    #     # x_rec_logits_pred = oracle_classifier(x_rec)  # (B,)
+        # Get the predicted labels using the oracle classifier
+        x_next_logits_pred = oracle_classifier(x_next_pred)  # (B,)
+        x_rec_logits_pred = oracle_classifier(x_rec)  # (B,)
 
-    #     # Compute reconstruction loss and accuracy.
-    #     # rec_loss, rec_metrics = ordered_mnist.classification_loss_metrics(
-    #     # y_true=x_rec_labels, y_pred=x_rec_logits_pred.to(device=x_rec_labels.device)
-    #     # )
-    #     # batch_metrics["class_rec_loss"] = rec_loss.item()
-    #     # batch_metrics.update({f"rec_{k}": v for k, v in rec_metrics.items()})
-    #     # Compute the accuracy of the predicted labels
-    #     # pred_loss, next_pred_metrics = ordered_mnist.classification_loss_metrics(
-    #     # y_true=x_next_labels, y_pred=x_next_logits_pred.to(device=x_next_labels.device)
-    #     # )
-    #     # batch_metrics["class_pred_loss"] = pred_loss.item()
-    #     # batch_metrics.update({f"class_pred_{k}": v for k, v in next_pred_metrics.items()})
+        # Compute reconstruction loss and accuracy.
+        class_rec_loss, rec_metrics = ordered_mnist.classification_loss_metrics(
+            y_true=x_rec_labels, y_pred=x_rec_logits_pred.to(device=x_rec_labels.device)
+        )
+        batch_metrics["class_rec_loss"] = class_rec_loss.item()
+        batch_metrics.update({f"rec_{k}": v for k, v in rec_metrics.items()})
+        # Compute the accuracy of the predicted labels
+        pred_loss, next_pred_metrics = ordered_mnist.classification_loss_metrics(
+            y_true=x_next_labels, y_pred=x_next_logits_pred.to(device=x_next_labels.device)
+        )
+        batch_metrics["class_pred_loss"] = pred_loss.item()
+        batch_metrics.update({f"class_pred_{k}": v for k, v in next_pred_metrics.items()})
 
-    #     for key, value in batch_metrics.items():
-    #         if key not in metrics:
-    #             metrics[key] = []
-    #         metrics[key].append(value)
-    # # Average the metrics over the batches
-    # for key, value in metrics.items():
-    #     metrics[key] = np.mean(value).item()
-    # return metrics
+        for key, value in batch_metrics.items():
+            if key not in metrics:
+                metrics[key] = []
+            metrics[key].append(value)
+    # Average the metrics over the batches
+    for key, value in metrics.items():
+        metrics[key] = np.mean(value).item()
 
     if current_epoch % plot_kwargs["plot_every_n_epochs"] == 0:
         past_imgs, future_imgs = plot_kwargs["samples"]  # (B, 1, W, H) , # (B, 1, W, H)
@@ -264,9 +236,16 @@ def reconstruction_metrics(
         # Evolve the latent representations in time using the NCP
         pred_lat_future_imgs = evolve_latent_representations(lat_past_imgs, ncp_model)
         pred_future_imgs = decoder(pred_lat_future_imgs)  # (B, 1, W, H)
+
         # Get the labels of the future images
-        # pred_rec_labels = oracle_classifier(rec_past_imgs).argmax(dim=1)  # (B,)
-        # pred_futue_labels = oracle_classifier(pred_future_imgs).argmax(dim=1)  # (B,)
+        pred_rec_labels = oracle_classifier(rec_past_imgs).argmax(dim=1)  # (B,)
+        pred_future_labels = oracle_classifier(pred_future_imgs).argmax(dim=1)  # (B,)
+
+        rec_past_imgs = rec_past_imgs.tensor if isinstance(rec_past_imgs, escnn.nn.GeometricTensor) else rec_past_imgs
+        pred_future_imgs = (
+            pred_future_imgs.tensor if isinstance(pred_future_imgs, escnn.nn.GeometricTensor) else pred_future_imgs
+        )
+
         # Plot the images in a 4 x n_cols grid
         n_cols = 10
         n_rows = 4
@@ -275,16 +254,140 @@ def reconstruction_metrics(
             rec_past_imgs[:n_cols],
             future_imgs[:n_cols],
             pred_future_imgs[:n_cols],
-            # pred_futue_labels[:n_cols],
-            # pred_rec_labels[:n_cols],
-            torch.zeros(n_cols),
-            torch.zeros(n_cols),
+            pred_future_labels[:n_cols],
+            pred_rec_labels[:n_cols],
             n_rows=n_rows,
             n_cols=n_cols,
             save_path=pathlib.Path(plot_kwargs["path"]) / f"test_examples_{current_epoch:d}.png",
         )
 
-    return {}
+    return metrics
+
+
+@torch.no_grad()
+def linear_reconstruction_metrics(
+    ncp_model: NCP,
+    oracle_classifier: torch.nn.Module,
+    train_ds: torch.utils.data.Dataset,
+    dataset: torch.utils.data.Dataset,
+    augment: bool,
+    split: str,
+    plot_kwargs: dict = None,
+    current_epoch: int = 0,
+):
+    """Compute the NCP future forcasting capability using the oracle classifier of the ordered MNIST dataset.
+
+    We take images from the dataset. Compute their latent representations using the NCP encoder, and evolve them in time
+    via the approximated conditional expectation operator. We then use forcasted latent
+    representations and linearly reconstruct the images.
+
+    To train this linear decoder, we need to:
+    1. Compute the latent representations of images in the training set.
+    3. Linearly regress the original image. To do this, we need to have the expected mean image
+    """
+
+    # Generate the training embeddings.
+    train_images = []
+    ncp_device = next(ncp_model.parameters()).device
+    ncp_model.eval()
+
+    tr_dataloader = DataLoader(
+        train_ds,
+        batch_size=max(len(train_ds) // 4, 128),
+        shuffle=False,
+        collate_fn=lambda x: ordered_mnist.collate_fn(x, augment=augment, split=split),
+    )
+    for imgs, labels in tr_dataloader:
+        train_images.append(imgs)  # Use future images as training targets
+    train_images = torch.cat(train_images, dim=0)
+
+    # Train a linear regressor of images using the learned embeddings.
+    tic = time.time()
+    print("Training linear regressor on the training set...", end=" ")
+    ncp_regressor = NCPRegressor(
+        model=ncp_model,
+        y_train=train_images,
+        zy_train=train_images,  # Regress the images themselves from embeddings.
+    )
+    toc = time.time()
+    print(f"Done in : {toc - tic:.2f} seconds")
+    del train_images  # Free memory
+
+    oracle_classifier.to(device=ncp_device)
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=max(len(dataset) // 4, 128),
+        shuffle=False,
+        collate_fn=lambda x: ordered_mnist.collate_fn(x, augment=augment, split=split),
+    )
+
+    metrics = {}
+    for x, labels in dataloader:
+        x = x.to(device=ncp_device)
+        batch_metrics = {}
+        fx_cond, _ = ncp_model(x=x)  # shape: (n_samples, embedding_dim)
+        # Reconstruct the present images.
+        x_rec = ncp_regressor.mean_zy + torch.einsum("bf,df->bd", fx_cond, ncp_regressor.Czyhy).view(x.shape)
+        x_rec_labels = labels
+        # Regress next images.
+        x_next_pred = ncp_regressor(fx_cond=fx_cond)  # (B, 1, W, H)
+        x_next_labels = (labels + 1) % 5
+        x_rec, x_next_pred = torch.nn.functional.sigmoid(x_rec), torch.nn.functional.sigmoid(x_next_pred)
+        # Get the predicted labels using the oracle classifier
+        x_next_logits_pred = oracle_classifier(x_next_pred)  # (B,)
+        x_rec_logits_pred = oracle_classifier(x_rec)  # (B,)
+
+        # Compute reconstruction loss and accuracy.
+        class_rec_loss, rec_metrics = ordered_mnist.classification_loss_metrics(
+            y_true=x_rec_labels, y_pred=x_rec_logits_pred.to(device=x_rec_labels.device)
+        )
+        batch_metrics["lin_rec_loss"] = class_rec_loss.item()
+        batch_metrics.update({f"lin_rec_{k}": v for k, v in rec_metrics.items()})
+        # Compute the accuracy of the predicted labels
+        pred_loss, next_pred_metrics = ordered_mnist.classification_loss_metrics(
+            y_true=x_next_labels, y_pred=x_next_logits_pred.to(device=x_next_labels.device)
+        )
+        batch_metrics["lin_pred_loss"] = pred_loss.item()
+        batch_metrics.update({f"lin_pred_{k}": v for k, v in next_pred_metrics.items()})
+
+        for key, value in batch_metrics.items():
+            if key not in metrics:
+                metrics[key] = []
+            metrics[key].append(value)
+
+    # Average the metrics over the batches
+    for key, value in metrics.items():
+        metrics[key] = np.mean(value).item()
+
+    if current_epoch % plot_kwargs["plot_every_n_epochs"] == 0:
+        past_imgs, future_imgs = plot_kwargs["samples"]  # (B, 1, W, H) , # (B, 1, W, H)
+        fx_cond, hy_cond = ncp_model(x=past_imgs.to(device=ncp_device), y=future_imgs.to(device=ncp_device))
+        # Reconstruct the present images.
+        x_rec = ncp_regressor.mean_zy + torch.einsum("bf,df->bd", fx_cond, ncp_regressor.Czyhy).view(past_imgs.shape)
+        # Regress next images.
+        x_next_pred = ncp_regressor(fx_cond=fx_cond)  # (B, 1, W, H)
+
+        # Get the labels of the future images
+        pred_rec_labels = oracle_classifier(x_rec).argmax(dim=1)  # (B,)
+        pred_future_labels = oracle_classifier(x_next_pred).argmax(dim=1)  # (B,)
+
+        # Plot the images in a 4 x n_cols grid
+        n_cols = 10
+        n_rows = 4
+        fig = ordered_mnist.plot_predictions_images(
+            past_imgs[:n_cols],
+            x_rec[:n_cols],
+            future_imgs[:n_cols],
+            x_next_pred[:n_cols],
+            pred_future_labels[:n_cols],
+            pred_rec_labels[:n_cols],
+            n_rows=n_rows,
+            n_cols=n_cols,
+            save_path=pathlib.Path(plot_kwargs["path"]) / f"test_examples_lin_{current_epoch:d}.png",
+        )
+
+    return metrics
 
 
 @hydra.main(config_path="cfg", config_name="ordered_mnist", version_base="1.3")
@@ -310,47 +413,19 @@ def main(cfg: DictConfig):
         train_ds,
         batch_size,
         shuffle=True,
-        collate_fn=lambda x: ordered_mnist.traj_collate_fn(x, augment=cfg.dataset.augment_train, split="train"),
+        collate_fn=lambda x: ordered_mnist.traj_collate_fn(x, augment=cfg.dataset.augment, split="train"),
     )
     val_dataloader = DataLoader(
         val_ds,
         batch_size,
-        shuffle=True,
-        collate_fn=lambda x: ordered_mnist.traj_collate_fn(x, augment=cfg.dataset.augment_val, split="val"),
+        shuffle=False,
+        collate_fn=lambda x: ordered_mnist.traj_collate_fn(x, augment=cfg.dataset.augment, split="val"),
     )
     test_dataloader = DataLoader(
         test_ds,
         batch_size,
         shuffle=False,
-        collate_fn=lambda x: ordered_mnist.traj_collate_fn(x, augment=cfg.dataset.augment_test, split="test"),
-    )
-
-    # Define the Lightning module ______________________________________________________
-    lightning_module = TrainingModule(
-        model=ncp_model,
-        optimizer_fn=Adam,
-        optimizer_kwargs={"lr": cfg.optim.lr},
-        loss_fn=ncp_model.loss if hasattr(ncp_model, "loss") else None,
-        # val_metrics=lambda _: inference_metrics(
-        #     model,
-        #     x_cond=past_val,
-        #     y_gt=future_val,
-        #     y_train=future_train,
-        #     x_type=state_type,
-        #     y_type=state_type,
-        #     alpha=cfg.alpha,
-        #     lstsq=cfg.lstsq,
-        # ),
-        # test_metrics=lambda _: inference_metrics(
-        #     model,
-        #     x_cond=past_test,
-        #     y_gt=future_test,
-        #     y_train=future_train,
-        #     x_type=state_type,
-        #     y_type=state_type,
-        #     alpha=cfg.alpha,
-        #     lstsq=cfg.lstsq,
-        # ),
+        collate_fn=lambda x: ordered_mnist.traj_collate_fn(x, augment=cfg.dataset.augment, split="test"),
     )
 
     # Define the logger and callbacks
@@ -370,11 +445,43 @@ def main(cfg: DictConfig):
         mode="min",
         every_n_epochs=5,
     )
-
     # Fix for all runs independent on the train_ratio chosen. This way we compare on effective number of "epochs"
-    check_val_every_n_epoch = cfg.optim.check_val_every_n_epochs
+    check_val_every_n_epoch = 3  # max(5, int(cfg.optim.max_epochs // cfg.optim.check_val_n_times))
     effective_patience = cfg.optim.patience // check_val_every_n_epoch
     early_call = EarlyStopping(VAL_METRIC, patience=effective_patience, mode="min")
+    last_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / LAST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
+    best_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / BEST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
+
+    plot_kwargs = dict(
+        samples=next(iter(test_dataloader)), path=run_path, plot_every_n_epochs=check_val_every_n_epoch * 2
+    )
+    # Define the Lightning module ______________________________________________________
+    lightning_module = TrainingModule(
+        model=ncp_model,
+        optimizer_fn=Adam,
+        optimizer_kwargs={"lr": cfg.optim.lr},
+        loss_fn=ncp_model.loss if hasattr(ncp_model, "loss") else None,
+        val_metrics=lambda **kwargs: linear_reconstruction_metrics(
+            ncp_model=ncp_model,
+            oracle_classifier=oracle_classifier,
+            train_ds=sup_train_ds,
+            dataset=sup_val_ds,
+            augment=cfg.dataset.augment,
+            split="val",
+            plot_kwargs=plot_kwargs,
+            **kwargs,
+        ),
+        test_metrics=lambda **kwargs: linear_reconstruction_metrics(
+            ncp_model=ncp_model,
+            oracle_classifier=oracle_classifier,
+            train_ds=sup_train_ds,
+            dataset=sup_test_ds,
+            augment=cfg.dataset.augment,
+            split="test",
+            plot_kwargs=plot_kwargs,
+            **kwargs,
+        ),
+    )
 
     trainer = Trainer(
         accelerator="gpu",
@@ -389,10 +496,10 @@ def main(cfg: DictConfig):
         num_sanity_val_steps=5,
         reload_dataloaders_every_n_epochs=10,
         limit_train_batches=cfg.optim.limit_train_batches,
+        limit_val_batches=cfg.optim.limit_train_batches,
     )
 
     torch.set_float32_matmul_precision("medium")
-    last_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / LAST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
     trainer.fit(
         lightning_module,
         train_dataloaders=train_dataloader,
@@ -401,12 +508,12 @@ def main(cfg: DictConfig):
     )
 
     # Loads the best model.
-    best_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / BEST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
     test_logs = trainer.test(
         lightning_module,
         dataloaders=test_dataloader,
         ckpt_path=best_ckpt_path if best_ckpt_path.exists() else None,
     )
+
     test_metrics = test_logs[0]  # dict: metric_name -> value
     # Save the testing matrices in a csv file using pandas.
     test_metrics_path = pathlib.Path(run_path) / f"test_metrics_{trainer.current_epoch:d}.csv"
@@ -416,35 +523,51 @@ def main(cfg: DictConfig):
     # Train CNN decoder from the learned image representation. ===============================================
     # Keep the model in the target device
     ncp_model.to(device=cfg.device)
-    decoder = ordered_mnist.CNNDecoder(
-        channels=list(reversed(cfg.architecture.hidden_units)),
-        spatial_size=ncp_model._embedding_x.spatial_size,
-        flat_img=cfg.flat_embedding,
-    )
+
+    if isinstance(ncp_model, ENCP):
+        decoder = ordered_mnist.SO2SCNNDecoder(
+            in_type=ncp_model._embedding_x.out_type,
+            spatial_size=7,
+            channels=list(reversed(cfg.architecture.hidden_units)),
+            flat_img=cfg.flat_embedding,
+        )
+    else:
+        # decoder = ordered_mnist.CNNDecoder(
+        #     channels=list(reversed(cfg.architecture.hidden_units)),
+        #     spatial_size=7,  # TODO: make this dynamic
+        #     flat_img=cfg.flat_embedding,
+        #     embedding_dim=cfg.architecture.embedding_dim,
+        # )
+        decoder = ordered_mnist.CNNDecoderSimple(num_classes=cfg.architecture.embedding_dim)
 
     def img_reconstruction_loss(y, y_gt) -> tuple[torch.Tensor, dict]:
         metrics = {}
+        y = y.tensor if isinstance(y, escnn.nn.GeometricTensor) else y
+        y_gt = y_gt.tensor if isinstance(y_gt, escnn.nn.GeometricTensor) else y_gt
         # Truncate the predictions to have the range of 0, 1 using sigmoid
-        y_truncated = y  # torch.sigmoid(y)
-        mse_loss = torch.nn.functional.mse_loss(y_truncated, y_gt, reduction="mean")
+        mse_loss = torch.nn.functional.mse_loss(y, y_gt, reduction="mean")
         return mse_loss, metrics
 
     val_batch_size = cfg.optim.val_batch_size
     rec_train_dataloader = DataLoader(
-        sup_train_ds["image"], batch_size, shuffle=True, collate_fn=lambda x: decoder_collect_fn(x, ncp_model)
+        sup_train_ds["image"],
+        batch_size,
+        shuffle=True,
+        collate_fn=lambda x: decoder_collect_fn(x, ncp_model, augment=cfg.dataset.augment, split="train"),
     )
     rec_val_dataloader = DataLoader(
-        sup_val_ds["image"], val_batch_size, shuffle=True, collate_fn=lambda x: decoder_collect_fn(x, ncp_model)
+        sup_val_ds["image"],
+        val_batch_size,
+        shuffle=True,
+        collate_fn=lambda x: decoder_collect_fn(x, ncp_model, augment=cfg.dataset.augment, split="val"),
     )
     rec_test_dataloader = DataLoader(
-        sup_test_ds["image"], val_batch_size, shuffle=True, collate_fn=lambda x: decoder_collect_fn(x, ncp_model)
+        sup_test_ds["image"],
+        val_batch_size,
+        shuffle=True,
+        collate_fn=lambda x: decoder_collect_fn(x, ncp_model, augment=cfg.dataset.augment, split="test"),
     )
 
-    plot_kwargs = dict(
-        samples=next(iter(test_dataloader)),
-        path=run_path,
-        plot_every_n_epochs=max(1, int(cfg.optim.max_epochs // 5 // check_val_every_n_epoch) * check_val_every_n_epoch),
-    )
     decoder_module = SupervisedTrainingModule(
         model=decoder,
         optimizer_fn=Adam,
@@ -456,7 +579,7 @@ def main(cfg: DictConfig):
             decoder=decoder,
             oracle_classifier=oracle_classifier,
             dataset=sup_val_ds,
-            augment=cfg.dataset.augment_val,
+            augment=cfg.dataset.augment,
             split="val",
             plot_kwargs=plot_kwargs,
             **kwargs,
@@ -466,7 +589,7 @@ def main(cfg: DictConfig):
             decoder=decoder,
             oracle_classifier=oracle_classifier,
             dataset=sup_test_ds,
-            augment=cfg.dataset.augment_test,
+            augment=cfg.dataset.augment,
             split="test",
             plot_kwargs=plot_kwargs,
             **kwargs,
@@ -535,20 +658,25 @@ def main(cfg: DictConfig):
         pred_lat_future_imgs = evolve_latent_representations(lat_past_imgs, ncp_model)
         pred_future_imgs = decoder(pred_lat_future_imgs)  # (B, 1, W, H)
         # Get the labels of the future images
-        # pred_rec_labels = oracle_classifier(rec_past_imgs).argmax(dim=1)  # (B,)
-        # pred_futue_labels = oracle_classifier(pred_future_imgs).argmax(dim=1)  # (B,)
+        pred_rec_labels = oracle_classifier(rec_past_imgs).argmax(dim=1)  # (B,)
+        pred_futue_labels = oracle_classifier(pred_future_imgs).argmax(dim=1)  # (B,)
         # Plot the images in a 4 x n_cols grid
         n_cols = 10
         n_rows = 4
+
+        sample_idx = list(np.random.choice(len(past_imgs), n_cols, replace=False))
+
+        rec_past_imgs = rec_past_imgs.tensor if isinstance(rec_past_imgs, escnn.nn.GeometricTensor) else rec_past_imgs
+        pred_future_imgs = (
+            pred_future_imgs.tensor if isinstance(pred_future_imgs, escnn.nn.GeometricTensor) else pred_future_imgs
+        )
         fig = ordered_mnist.plot_predictions_images(
-            past_imgs[:n_cols],
-            rec_past_imgs[:n_cols],
-            future_imgs[:n_cols],
-            pred_future_imgs[:n_cols],
-            # pred_futue_labels[:n_cols],
-            # pred_rec_labels[:n_cols],
-            torch.zeros(n_cols),
-            torch.zeros(n_cols),
+            past_imgs[sample_idx],
+            rec_past_imgs[sample_idx],
+            future_imgs[sample_idx],
+            pred_future_imgs[sample_idx],
+            pred_futue_labels[sample_idx],
+            pred_rec_labels[sample_idx],
             n_rows=n_rows,
             n_cols=n_cols,
             save_path=pathlib.Path(run_path) / f"test_examples_{trainer.current_epoch:d}.png",

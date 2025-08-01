@@ -67,12 +67,67 @@ def make_dataset(n_classes: int, val_ratio: float = 0.2):
 
 
 # CNN Architecture
+class CNNEncoderSimple(torch.nn.Module):
+    def __init__(self, num_classes):
+        super(CNNEncoderSimple, self).__init__()
+        self.conv1 = torch.nn.Sequential(
+            torch.nn.Conv2d(in_channels=1, out_channels=16, kernel_size=5, stride=1, padding=2),
+            torch.nn.ReLU(),
+            torch.nn.MaxPool2d(kernel_size=2),
+        )
+        self.conv2 = torch.nn.Sequential(
+            torch.nn.Conv2d(16, 32, kernel_size=5, stride=1, padding=2),
+            torch.nn.ReLU(),
+            torch.nn.MaxPool2d(2),
+        )
+        # fully connected layer, output num_classes classes
+        self.out = torch.nn.Sequential(torch.nn.Linear(32 * 7 * 7, num_classes))
+        torch.torch.nn.init.orthogonal_(self.out[0].weight)
+
+    def forward(self, X):
+        X = self.conv1(X)
+        X = self.conv2(X)
+        # Flatten the output of conv2
+        X = X.view(X.size(0), -1)
+        output = self.out(X)
+        return output
+
+
+class CNNDecoderSimple(torch.nn.Module):
+    def __init__(self, num_classes=10):
+        super(CNNDecoderSimple, self).__init__()
+        self.fc = torch.nn.Sequential(torch.nn.Linear(num_classes, 32 * 7 * 7))
+
+        self.conv1 = torch.nn.Sequential(
+            torch.nn.Upsample(scale_factor=2),
+            torch.nn.ConvTranspose2d(in_channels=32, out_channels=16, kernel_size=5, stride=1, padding=2),
+            torch.nn.ReLU(),
+        )
+        self.conv2 = torch.nn.Sequential(
+            torch.nn.Upsample(scale_factor=2),
+            torch.nn.ConvTranspose2d(16, 1, 5, 1, 2),
+            torch.nn.Sigmoid(),
+        )
+
+    def forward(self, x):
+        x = self.fc(x)
+        x = x.view(x.size(0), 32, 7, 7)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        return x
+
+
+# CNN Architecture
 class CNNEncoder(torch.nn.Module):
-    def __init__(self, channels=[32, 64, 64], batch_norm: bool = False, flatten_img: bool = False):
+    def __init__(
+        self, channels=[32, 64, 64], batch_norm: bool = False, flat_img: bool = False, embedding_dim: int = 64
+    ):
         super(CNNEncoder, self).__init__()
         self.channels = channels
-        self.flatten_img = flatten_img
+        self.flatten_img = flat_img
         self.hidden_channels = channels
+        self.embedding_dim = embedding_dim
+
         # Covolutional parameters
         conv_kwargs_low_rf = dict(kernel_size=5, stride=1, padding=2, dilation=1)
         conv_kwargs_high_rf = dict(kernel_size=5, stride=1, padding=6, dilation=3)
@@ -109,10 +164,10 @@ class CNNEncoder(torch.nn.Module):
         )
         self.spatial_size = 7
 
-        if flatten_img:
+        if flat_img:
             self.head = torch.nn.Linear(
                 in_features=channels[2] * self.spatial_size * self.spatial_size,
-                out_features=channels[-1],
+                out_features=self.embedding_dim,
             )
 
     def forward(self, x: torch.Tensor):
@@ -144,11 +199,12 @@ class CNNEncoder(torch.nn.Module):
 
 # A decoder which is specular to CNNEncoder, starting with reshaping from (B*H*W, C) back to (B, C, H, W)
 class CNNDecoder(torch.nn.Module):
-    def __init__(self, spatial_size: int, channels=[32, 16], flat_img: bool = False):
+    def __init__(self, spatial_size: int, channels=[32, 16], flat_img: bool = False, embedding_dim: int = 64):
         super(CNNDecoder, self).__init__()
         self.channels = channels
         self.spatial_size = spatial_size
         self.flat_img = flat_img
+        self.embedding_dim = embedding_dim
 
         conv_kwargs_low_rf = dict(kernel_size=4, stride=2, padding=1, dilation=1)
         self.conv1 = torch.nn.Sequential(  # (F, 7, 7) -> (HC1//2, 14, 14)
@@ -163,7 +219,7 @@ class CNNDecoder(torch.nn.Module):
 
         if flat_img:
             self.head = torch.nn.Linear(
-                in_features=channels[0],
+                in_features=self.embedding_dim,
                 out_features=channels[0] * self.spatial_size * self.spatial_size,
             )
 
@@ -193,14 +249,17 @@ class CNNDecoder(torch.nn.Module):
         return x
 
 
-class SO2SCNNEncoder(torch.nn.Module):
+class SO2SCNNEncoder(escnn.nn.EquivariantModule):
     """SO(2) equivariant CNN encoder for ordered MNIST."""
 
-    def __init__(self, channels=[32, 64, 64], batch_norm: bool = False, flatten_img: bool = False):
+    def __init__(
+        self, channels=[32, 64, 64], batch_norm: bool = False, flatten_img: bool = False, embedding_dim: int = 64
+    ):
         super(SO2SCNNEncoder, self).__init__()
         self.channels = channels
         self.batch_norm = batch_norm
         self.flatten_img = flatten_img
+        self.embedding_dim = embedding_dim
         # The model is equivariant under all planar rotations
         self.r2_act_gs = escnn.gspaces.rot2dOnR2(N=-1)
         self.G = self.r2_act_gs.fibergroup
@@ -251,6 +310,7 @@ class SO2SCNNEncoder(torch.nn.Module):
             act3,
         )
 
+        self.out_type = self.conv3.out_type  # Final output type
         self.spatial_size = 7  # Output spatial size after convolutions
 
         if flatten_img:
@@ -258,43 +318,64 @@ class SO2SCNNEncoder(torch.nn.Module):
             linear_base_space = escnn.gspaces.no_base_space(self.G)
             feat_type = escnn.nn.FieldType(linear_base_space, [act3.out_type.representation] * self.spatial_size**2)
             out_rep = self.G.spectral_regular_representation(*self.G.bl_irreps(3), name="embedding_rep")
-            out_rep_multiplicity = math.ceil(channels[-1] // out_rep.size)
+            out_rep_multiplicity = math.ceil(self.embedding_dim // out_rep.size)
             self.out = escnn.nn.Linear(
                 in_type=feat_type,
                 out_type=escnn.nn.FieldType(linear_base_space, [out_rep] * out_rep_multiplicity),
                 bias=False,
             )
 
-    def forward(self, input: torch.Tensor):
-        # wrap the input tensor in a GeometricTensor
-        x = self.in_type(input)
+            self.out_type = self.out.out_type  # Final output type
+
+    def forward(self, input: torch.Tensor | escnn.nn.GeometricTensor):
+        if not isinstance(input, escnn.nn.GeometricTensor):
+            x = self.in_type(input)
+        else:
+            x = input
+        assert x.type == self.in_type
 
         x_low = self.conv1_low_rf(x)
         x_high = self.conv1_high_rf(x)
         x = torch.cat([x_low.tensor, x_high.tensor], dim=1)
-        print(f"After conv1: {x.shape}")
+        # print(f"After conv1: {x.shape}")
         x_low = self.conv2_low_rf(self.conv2_low_rf.in_type(x))
         x_high = self.conv2_high_rf(self.conv2_high_rf.in_type(x))
         x = torch.cat([x_low.tensor, x_high.tensor], dim=1)
-        print(f"After conv2: {x.shape}")
+        # print(f"After conv2: {x.shape}")
         x = self.conv3(self.conv3.in_type(x))  # Shape: (B, hidden_channels[1], 7, 7)
-        print(f"After conv3: {x.shape}")
+        # print(f"After conv3: {x.shape}")
 
         B, C, H, W = x.tensor.shape
         if self.flatten_img:  # Extract the tensor and flatten correctly for group representation
             # Shape: (B, C, H, W) -> (B, H, W, C) -> (B, H*W*C)
             # This preserves pixel-wise feature grouping for equivariant features
             x_flat = x.tensor.permute(0, 2, 3, 1).reshape(B, -1)
-            print(f"flattened: {x_flat.shape}")
+            # print(f"flattened: {x_flat.shape}")
             output = self.out(self.out.in_type(x_flat))
-            return output.tensor
+
+            # Test that we can reconstruct the original shape
+            x_rec = x_flat.view(B, H, W, C).permute(0, 3, 1, 2)
+            assert torch.allclose(x_rec, x.tensor), (
+                f"Error: Reconstructed shape {x_rec.shape} does not match original {x.tensor.shape}"
+            )
+            # Thesr the first fiber is as expectedly stored in the flat vector.
+            first_fiber = x.tensor.permute(0, 2, 3, 1)[:, 0, 0, :]
+            first_fiber_expected = x_flat[:, :C]
+            assert torch.allclose(first_fiber, first_fiber_expected), (
+                f"Error: First fiber {first_fiber.shape} does not match expected {first_fiber_expected.shape}"
+            )
+            return output
         else:
             output = x.tensor.permute(0, 2, 3, 1).contiguous().view(B * H * W, C)
             # print(f"Flattened output shape: {output.shape}")
-            return output
+            return self.out_type(output)
+
+    def evaluate_output_shape(self, input_shape):
+        B = input_shape[0]
+        return None
 
 
-class SO2SCNNDecoder(torch.nn.Module):
+class SO2SCNNDecoder(escnn.nn.EquivariantModule):
     """SO(2) equivariant CNN decoder for ordered MNIST - counterpart to SO2SCNNEncoder."""
 
     def __init__(self, in_type: escnn.nn.FieldType, spatial_size: int, channels=[32, 16], flat_img: bool = True):
@@ -340,8 +421,11 @@ class SO2SCNNDecoder(torch.nn.Module):
             act3,
         )
 
-    def forward(self, x: torch.Tensor):
-        x = self.in_type(x)  # Wrap input tensor in a GeometricTensor
+    def forward(self, x: torch.Tensor | escnn.nn.GeometricTensor):
+        if not isinstance(x, escnn.nn.GeometricTensor):
+            x = self.in_type(x)  # Wrap input tensor in a GeometricTensor
+
+        assert x.type == self.in_type
 
         # Flat embedding linear map to flatten spatial fibers
         spatial_features = self.fc(x).tensor
@@ -351,7 +435,7 @@ class SO2SCNNDecoder(torch.nn.Module):
         H, W = self.spatial_size, self.spatial_size  # Target spatial dimensions after encoder's pooling
         C = self.deconv1.in_type.size
         # Reshape to spatial format and permute to (B, C, H, W)
-        x_img = spatial_features.reshape(B, H, W, C).permute(0, 3, 1, 2)
+        x_img = spatial_features.view(B, H, W, C).permute(0, 3, 1, 2)
 
         # Apply reverse operations: each block now contains Upsample → Activation → ConvTranspose
         x_img = self.deconv1.in_type(x_img)  # Wrap input tensor in a GeometricTensor
@@ -362,9 +446,13 @@ class SO2SCNNDecoder(torch.nn.Module):
         x_img = self.inv_map(x_img)
         # print(f"After conv3: {x_img.shape}")
         # Extract final tensor
-        output = x_img.tensor
+        output = x_img
 
         return output
+
+    def evaluate_output_shape(self, input_shape):
+        B = input_shape[0]
+        return (B, 1, self.spatial_size, self.spatial_size)
 
 
 import escnn
@@ -481,10 +569,13 @@ class SO2SteerableCNN(torch.nn.Module):
             torch.nn.Linear(c, n_classes),
         )
 
-    def forward(self, input: torch.Tensor):
-        # wrap the input tensor in a GeometricTensor
-        # (associate it with the input type)
-        x = self.input_type(input)
+    def forward(self, input: torch.Tensor | escnn.nn.GeometricTensor):
+        if not isinstance(input, escnn.nn.GeometricTensor):
+            x = self.input_type(input)  # Wrap input tensor in a GeometricTensor
+        else:
+            x = input.tensor
+            x = self.input_type(x)  # Ensure the input is wrapped in the correct type
+
         # mask out the corners of the input image
         # x = self.mask(x)
 
@@ -589,7 +680,7 @@ def augment_image(image, split: str):
     return imgs
 
 
-def collate_fn(batch, split="train"):
+def collate_fn(batch, augment=True, split="train"):
     """
     Custom collate function that applies augmentation and returns both original and augmented images.
     SupervisedTrainingModule expects (x, y) format.
@@ -598,7 +689,11 @@ def collate_fn(batch, split="train"):
     labels = torch.stack([item["label"] for item in batch])
 
     images = pre_process_images(images)
-    images = augment_image(images, split=split)
+    if augment:
+        images = augment_image(images, split=split)
+        if split == "test" or split == "val":
+            # Duplicate the labels for augmented images
+            labels = torch.cat((labels, labels), dim=0)
 
     return images, labels
 
@@ -656,6 +751,10 @@ def plot_predictions_images(
 
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 2, n_rows * 2))
 
+    rec_past_imgs = rec_past_imgs.tensor if isinstance(rec_past_imgs, escnn.nn.GeometricTensor) else rec_past_imgs
+    pred_future_imgs = (
+        pred_future_imgs.tensor if isinstance(pred_future_imgs, escnn.nn.GeometricTensor) else pred_future_imgs
+    )
     # Convert tensors to numpy and ensure they're on CPU
     past_imgs = past_imgs.detach().cpu().numpy()
     rec_past_imgs = rec_past_imgs.detach().cpu().numpy()
@@ -779,12 +878,16 @@ if __name__ == "__main__":
 
     dataloader = DataLoader(ordered_ds, batch_size=128, shuffle=True, collate_fn=traj_collate_fn)
 
-    # cnn_encoder = SO2SCNNEncoder(channels=[32, 64, 128], batch_norm=True, flatten_img=True)
-    # cnn_decoder = SO2SCNNDecoder(
-    #     in_type=cnn_encoder.out.out_type, spatial_size=cnn_encoder.spatial_size, channels=[128, 64], flat_img=True
-    # )
-    cnn_encoder = CNNEncoder(channels=[8, 16, 32])
-    cnn_decoder = CNNDecoder(channels=[32, 16], spatial_size=cnn_encoder.spatial_size)
+    channels = [32, 64, 50]
+    ecnn_encoder = SO2SCNNEncoder(channels=channels, batch_norm=True, flatten_img=True)
+    ecnn_decoder = SO2SCNNDecoder(
+        in_type=ecnn_encoder.out.out_type,
+        spatial_size=ecnn_encoder.spatial_size,
+        channels=list(reversed(channels)),
+        flat_img=True,
+    )
+    cnn_encoder = CNNEncoder(channels=channels, batch_norm=True, flat_img=True)
+    cnn_decoder = CNNDecoder(channels=list(reversed(channels)), spatial_size=cnn_encoder.spatial_size, flat_img=True)
     so2_cnn_classifier = SO2SteerableCNN(n_classes=5)
 
     state_dict = torch.load(oracle_ckpt_path)["state_dict"]
@@ -798,12 +901,18 @@ if __name__ == "__main__":
     for batch_trajs in dataloader:
         present_batch, future_batch = batch_trajs
         print(f"Present: {present_batch.shape} - Future {future_batch.shape}")
+        ep_embedding = ecnn_encoder(present_batch).tensor
+        ef_embedding = ecnn_encoder(future_batch).tensor
         p_embedding = cnn_encoder(present_batch)
         f_embedding = cnn_encoder(future_batch)
-        print(f"Embedding shapes: present {p_embedding.shape}, future {f_embedding.shape}")
+        # assert ep_embedding.shape == p_embedding.shape, f"{ep_embedding.shape} != {p_embedding.shape}"
+        print(f"Embedding shapes: present {ep_embedding.shape}, future {ef_embedding.shape}")
+        ep_rec = ecnn_decoder(ep_embedding).tensor
+        ef_rec = ecnn_decoder(ef_embedding).tensor
         p_rec = cnn_decoder(p_embedding)
         f_rec = cnn_decoder(f_embedding)
-        assert present_batch.shape == p_rec.shape, f"{present_batch.shape} != {p_rec.shape}"
+        assert present_batch.shape == ep_rec.shape, f"{present_batch.shape} != {ep_rec.shape}"
+        print(f"Reconstruction e-shapes: present {ep_rec.shape}, future {ef_rec.shape}")
         print(f"Reconstruction shapes: present {p_rec.shape}, future {f_rec.shape}")
         current_img = present_batch[5].numpy()
         next_img = future_batch[5].numpy()
@@ -812,8 +921,8 @@ if __name__ == "__main__":
         next_label = so2_cnn_classifier(future_batch).argmax(dim=1)[5].item()
 
         # Get reconstructed images for display
-        current_rec_img = p_rec[5].detach().cpu().numpy()
-        next_rec_img = f_rec[5].detach().cpu().numpy()
+        current_rec_img = ep_rec[5].detach().cpu().numpy()
+        next_rec_img = ef_rec[5].detach().cpu().numpy()
 
         # break
         plt.figure(figsize=(12, 6))

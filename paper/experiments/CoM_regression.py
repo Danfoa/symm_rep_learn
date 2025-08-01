@@ -74,8 +74,8 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
         eNCPop = ENCP(
             embedding_x=x_embedding,
             embedding_y=y_embedding,
-            gamma=cfg.gamma,
-            gamma_centering=cfg.gamma_centering,
+            orth_reg=cfg.gamma,
+            centering_reg=cfg.gamma_centering,
             truncated_op_bias=cfg.truncated_op_bias,
             learnable_change_of_basis=cfg.learnable_change_basis,
         )

@@ -158,3 +158,90 @@ def orthonormality_regularization(x, Cx: Tensor = None, x_mean: Tensor = None, v
         }
 
     return orthonormality_x, metrics
+
+
+import escnn
+import symm_learning
+
+
+def symm_orthonormality_regularization(
+    x: torch.Tensor, rep_x: escnn.group.Representation, Cx: Tensor = None, x_mean: Tensor = None, var_name="x"
+):
+    """Computes orthonormality and centering regularization penalization for a batch of feature vectors.
+
+    Computes finite sample unbiased empirical estimates of the term:
+    || Vx - I ||_F^2 = || Cx - I ||_F^2 + 2 || E_p(x) f(x) ||^2
+                        = || ⊕_k Cx_k - I_r_k ||_F^2 + 2 || E_p(x) f^inv (x) ||^2
+                        = 2 || E_p(x) f^inv (x) ||^2 + Σ_k || Cx_k - I_r_k ||_F^2
+                        = 2 || E_p(x) f^inv (x) ||^2 + Σ_k || Cx_k ||_F^2 - 2tr(Cx_k) + r_k
+                        = 2 || E_p(x) f^inv (x) ||^2 + Σ_k || (Dx_k ⊗ I_ρk) ||_F^2 - 2tr(Dx_k ⊗ I_ρk) + r_k
+                        = 2 || E_p(x) f^inv (x) ||^2 + Σ_k |ρk| (||Dx_k||_F^2 - 2tr(Dx_k)) + r_k
+
+    Args:
+        x: (GeometricTensor) of shape (n_samples, r) feature vectors. Assumed to be centered if x_mean is provided.
+        Cx: (Tensor) of shape (r, r) covariance matrix of the feature vectors. If None, it is computed from x.
+        x_mean: (Tensor) of shape (1, r) mean of the feature vectors. If None, it is computed from x.
+        var_name: (str) Name of the variable for metric names (e.g., 'x' or 'y').
+
+    Returns:
+        Regularization term as a scalar tensor.
+    """
+    assert rep_x.attributes["in_isotypic_basis"], "Representation must have isotypic basis."
+
+    if x_mean is None:
+        if "invariant_orthogonal_projector" not in rep_x.attributes:
+            symm_learning.stats.var_mean(x, rep_x)  #  Compute the inv projector
+        P_inv = rep_x.attributes["invariant_orthogonal_projector"].to(x.dtype, x.device)
+        x_mean = x.mean(dim=0, keepdim=True).to(x.dtype, x.device)  # Compute mean if not provided
+        x_c = x - torch.einsum("ij,...j->...i", P_inv, x_mean)  # Centered feature vectors
+    else:
+        x_c = x  # Assume x is already centered
+
+    dim_x = x.shape[-1]  # Embedding dimension
+
+    if Cx is None:
+        Cx = symm_learning.stats.cov(x=x_c, y=x_c, rep_x=rep_x, rep_y=rep_x)
+
+    # Project embedding into the isotypic subspaces
+    #   def _orth_proj_isotypic_subspaces(self, z: GeometricTensor) -> list[torch.Tensor]:
+    # """Compute the orthogonal projection of the input tensor into the isotypic subspaces."""
+    # z_iso = [z.tensor[..., s:e] for s, e in zip(z.type.fields_start, z.type.fields_end)]
+    # return z_iso
+    # x_c_iso = [x_c[..., idx] for idx in rep_x.attributes["isotypic_subspace_dims"].values()]
+    # reps_x_iso = rep_x.attributes["isotypic_reps"].values()
+    iso_subspaces_dims = rep_x.attributes["isotypic_subspace_dims"]
+    Cx_iso_fro_2 = []
+    trCx_iso = []
+    for k, (irrep_id, rep_x_k) in enumerate(rep_x.attributes["isotypic_reps"].items()):
+        irrep_dim = rep_x_k.size // len(rep_x_k.irreps)
+        x_c_k = x_c[..., iso_subspaces_dims[irrep_id]]
+        r_xk = x_c_k.shape[-1]
+        # Flatten the realizations along irreducible subspaces, while preserving sampling from the joint dist.
+        zx = symm_learning.linalg.isotypic_signal2irreducible_subspaces(x_c_k, rep_x_k)
+        # Compute unbiased empirical estimates ||Dx_k||_F^2
+        Dx_k_fro_2 = cov_norm_squared_unbiased_estimation(zx, False)
+        # Trace terms without need of unbiased estimation
+        Dx_k = Cx[iso_subspaces_dims[irrep_id], iso_subspaces_dims[irrep_id]]
+        tr_Dx_k = torch.trace(Dx_k)  # tr(Dx_k)
+        #  ||Cx_k||_F^2 := |ρk| (||Dx_k||_F^2 - 2tr(Dx_k)) + r_k
+        Cx_k_fro_2 = irrep_dim * (Dx_k_fro_2 - 2 * tr_Dx_k) + r_xk
+        Cx_iso_fro_2.append(Cx_k_fro_2)
+        trCx_iso.append(tr_Dx_k)
+        # Cx_k_fro_2_biased = torch.linalg.matrix_norm(self.Cx(k)) ** 2
+
+    Cx_I_err_fro_2 = sum(Cx_iso_fro_2)  # ||Cx - I||_F^2 = Σ_k ||Cx_k - I_r_k||_F^2,
+    trCx = sum(trCx_iso)  # tr(Cx) = Σ_k tr(Dx_k)
+    # Cx_fro_2_biased = torch.linalg.matrix_norm(self.Cx(None)) ** 2
+
+    x_centering_loss = (x_mean**2).sum()  # ||E_p(x) (f(x_i))||^2
+
+    # ||Vx - I||_F^2 = ||Cx - I||_F^2 + 2||E_p(x) f(x)||^2
+    orthonormality_x = Cx_I_err_fro_2 + 2 * x_centering_loss
+
+    with torch.no_grad():
+        metrics = {
+            f"||mu_{var_name}||": torch.sqrt(x_centering_loss),
+            f"||V{var_name} - I||_F^2": orthonormality_x / dim_x,
+        }
+
+    return orthonormality_x, metrics
