@@ -86,17 +86,20 @@ class NCP(torch.nn.Module):
         """Return the estimated pointwise mutual dependency between the random variables x and y.
 
         Args:
-            x: (torch.Tensor) of shape (N, dx) representing the input random variable x.
-            y: (torch.Tensor) of shape (N, dy) representing the input random variable y.
+            x: (torch.Tensor) of shape (N, dx, ...) representing the input random variable x. Where `...` denote spatial/temporal dimensions if any.
+            y: (torch.Tensor) of shape (N, dy, ...) representing the input random variable y. Where `...` denote the same spatial/temporal dimensions as x.
 
         Returns:
-            k_r:  (torch.Tensor) of shape (N,) representing the approximated pointwise mutual dependency between x and
+            k_r:  (torch.Tensor) of shape (N, ...) representing the approximated pointwise mutual dependency between x and
              y defined as PMD = p(x,y)/p(x)p(y) ≈ k_r(x,y).
         """
+        assert x.ndim >= 2, "x must be at least a 2D tensor."
+        assert y.ndim >= 2, "y must be at least a 2D tensor."
+
         fx_c, hy_c = self(x, y)
 
         Dr = self.truncated_operator
-        k_r = 1 + torch.einsum("...x,xy,...y->...", fx_c, Dr, hy_c)
+        k_r = 1 + torch.einsum("bx...,xy,by...->b...", fx_c, Dr, hy_c)
 
         return k_r
 
@@ -121,16 +124,16 @@ class NCP(torch.nn.Module):
         """TODO.
 
         Args:
-            fx_c: (torch.Tensor) of shape (..., r) *centered* embedding functions of a subspace of L^2(X)
-            hy_c: (torch.Tensor) of shape (..., r) *centered* embedding functions of a subspace of L^2(Y)
+            fx_c: (torch.Tensor) of shape (batch_size,r_x, ...) *centered* embedding functions of a subspace of L^2(X)
+            hy_c: (torch.Tensor) of shape (batch_size,r_y, ...) *centered* embedding functions of a subspace of L^2(Y)
 
         Returns:
             loss: L = -2 ||Cxy||_F^2 + tr(Cxy Cx Cxy^T Cy) - 1
                 + γ(||Cx - I||_F^2 + ||Cy - I||_F^2 + ||E_p(x) f(x)||_F^2 + ||E_p(y) h(y)||_F^2)
             metrics: Scalar valued metrics to monitor during training.
         """
-        assert fx_c.shape[-1] == self.dim_fx, f"Expected fx (..., {self.dim_fx}), got {fx_c.shape}"
-        assert hy_c.shape[-1] == self.dim_hy, f"Expected hy (..., {self.dim_hy}), got {hy_c.shape}"
+        assert fx_c.shape[1] == self.dim_fx, f"Expected fx (batch_size, {self.dim_fx},...), got {fx_c.shape}"
+        assert hy_c.shape[1] == self.dim_hy, f"Expected hy (batch_size, {self.dim_hy},...), got {hy_c.shape}"
         dx = self.dim_fx
         dy = self.dim_hy
         # Orthonormal regularization _________________________________________

@@ -8,6 +8,7 @@ from torch.nn import init
 import numpy as np
 
 from paper.experiments.dynamics import ordered_mnist
+from symm_rep_learn.nn.layers import Lambda
 
 
 def conv3x3(in_channels, out_channels, stride=1, padding=1, bias=True, groups=1):
@@ -539,10 +540,8 @@ def visualize_decoder_comparison(
 
         # Linear decoder prediction (if provided)
         if plot_linear:
-            encoded_spatial = encoded.permute(0, 2, 3, 1).contiguous().view(-1, C)
-            pred_spatial_linear = torch.mm(encoded_spatial, linear_decoder)
-            pred_linear = pred_spatial_linear.view(B, H, W, 1).permute(0, 3, 1, 2)
-            predictions["linear"] = pred_linear.cpu()
+            decoded = linear_decoder(encoded)
+            predictions["linear"] = decoded.cpu()
             row_titles.append("Linear Prediction")
 
         # Nonlinear decoder prediction (if provided)
@@ -634,48 +633,6 @@ def visualize_decoder_comparison(
         return predictions
 
 
-class EvolutionOperatorEncoder(nn.Module):
-    """
-    Utility model that encodes images, applies the truncated evolution operator,
-    and unflattens back to image format for use with linear decoder training.
-    """
-
-    def __init__(self, evol_op, original_img_shape=(1, 28, 28)):
-        super().__init__()
-        self.evol_op = evol_op
-        self.original_img_shape = original_img_shape  # (C, H, W)
-
-    def forward(self, x):
-        """
-        Forward pass that evolves image features using the trained evolution operator.
-
-        Args:
-            x: Input images (B, C, H, W)
-
-        Returns:
-            evolved_imgs: Evolved images in image format (B, C, H, W)
-        """
-        # Get present image embeddings using the evolution operator's encoder
-        # evol_op(x=x, y=None) returns (fx_c, None)
-        fx_c, _ = self.evol_op(x=x, y=None)
-
-        # Apply the truncated evolution operator to evolve the features
-        # fx_c is flattened: (B*H*W, embedding_dim)
-        # truncated_operator is (embedding_dim, embedding_dim)
-        evolved_features = torch.mm(fx_c, self.evol_op.truncated_operator.T)  # (B*H*W, embedding_dim)
-
-        # Unflatten back to image format
-        # Need to determine batch size and spatial dimensions
-        C, H, W = self.original_img_shape
-        B = x.shape[0]
-        embedding_dim = evolved_features.shape[1]
-
-        # Reshape evolved features to image format: (B*H*W, embedding_dim) -> (B, embedding_dim, H, W)
-        evolved_imgs = ordered_mnist.unflatten_img(evolved_features, H, W, C=embedding_dim)
-
-        return evolved_imgs
-
-
 def train_evol_op(
     evol_op,
     dataloader,
@@ -757,9 +714,9 @@ if __name__ == "__main__":
 
     # Configuration parameters
     BATCH_SIZE = 128  # Single parameter to control all dataloaders
-    EMBEDDING_DIM = 16  # Embedding dimension for encoder-decoder
+    EMBEDDING_DIM = 32  # Embedding dimension for encoder-decoder
     DEPTH = 3  # Depth of the UNet
-    AUGMET = True  # Whether to apply data augmentation
+    AUGMENT = True  # Whether to apply data augmentation
 
     main_path = Path(__file__).parent.parent
     data_path = main_path / "data" / "ordered_mnist"
@@ -776,13 +733,13 @@ if __name__ == "__main__":
     train_dataloader = torch.utils.data.DataLoader(
         ordered_MNIST["train"],
         batch_size=BATCH_SIZE,
-        collate_fn=lambda x: ordered_mnist.collate_fn(x, augment=AUGMET),
+        collate_fn=lambda x: ordered_mnist.collate_fn(x, augment=AUGMENT),
         shuffle=True,
     )
     test_dataloader = torch.utils.data.DataLoader(
         ordered_MNIST["test"],
         batch_size=BATCH_SIZE,
-        collate_fn=lambda x: ordered_mnist.collate_fn(x, augment=AUGMET),  # No augmentation for reconstruction test
+        collate_fn=lambda x: ordered_mnist.collate_fn(x, augment=AUGMENT),  # No augmentation for reconstruction test
         shuffle=False,
     )
 
@@ -794,8 +751,8 @@ if __name__ == "__main__":
     # avg_loss = simple_reconstruction_training(model, train_dataloader, device=device)
 
     # Visualize results
-    print("Visualizing reconstruction results...")
-    visualize_reconstruction(model, test_dataloader, device=device)
+    # print("Visualizing reconstruction results...")
+    # visualize_reconstruction(model, test_dataloader, device=device)
 
     # Now test predictions of next digit images:
     print("\n" + "=" * 60)
@@ -811,13 +768,13 @@ if __name__ == "__main__":
         ordered_train_ds,
         batch_size=BATCH_SIZE,
         shuffle=True,
-        collate_fn=lambda x: ordered_mnist.traj_collate_fn(x, augment=AUGMET),
+        collate_fn=lambda x: ordered_mnist.traj_collate_fn(x, augment=AUGMENT),
     )
     ordered_test_dl = torch.utils.data.DataLoader(
         ordered_test_ds,
         batch_size=BATCH_SIZE,
         shuffle=False,
-        collate_fn=lambda x: ordered_mnist.traj_collate_fn(x, augment=AUGMET),
+        collate_fn=lambda x: ordered_mnist.traj_collate_fn(x, augment=AUGMENT),
     )
 
     # Create a new encoder-decoder model for next digit prediction
@@ -840,16 +797,12 @@ if __name__ == "__main__":
         print("COMPARING LINEAR VS NONLINEAR DECODER - LOADED TRAINED MODEL")
         print("=" * 60)
 
-        # Train linear decoder using training data
-        linear_decoder = train_linear_decoder(encoder, ordered_train_dl, device=device)
-
         visualize_decoder_comparison(
             encoder_model=encoder,
             dataloader=ordered_test_dl,
             device=device,
-            title_prefix="Loaded Trained Model",
+            title_prefix="Non-linear decoder",
             nonlinear_decoder=decoder,
-            linear_decoder=linear_decoder,
         )
     else:
         # Compare linear vs nonlinear decoder BEFORE training
@@ -910,28 +863,34 @@ if __name__ == "__main__":
 
     # Train a NCP model
 
-    from symm_rep_learn.models.evol_op import EvolutionOperator
-    from symm_rep_learn.nn.layers import Lambda
+    from symm_rep_learn.models.img_evol_op import ImgEvolutionOperator
 
-    evol_op_encoder_img = UNet(in_channels=1, out_channels=EMBEDDING_DIM, depth=DEPTH)
-    state_encoder = torch.nn.Sequential(
-        evol_op_encoder_img,
-        Lambda(lambda x: ordered_mnist.flatten_img(x)),
+    def lin_collate_fn(batch):
+        imgs, next_imgs = ordered_mnist.traj_collate_fn(batch, augment=AUGMENT)
+        return next_imgs, next_imgs
+
+    lin_train_dl = torch.utils.data.DataLoader(
+        ordered_train_ds, batch_size=BATCH_SIZE, shuffle=False, collate_fn=lin_collate_fn
     )
-    evol_op = EvolutionOperator(
-        embedding_state=state_encoder, state_embedding_dim=EMBEDDING_DIM, orth_reg=0.05, centering_reg=0.05
+
+    evol_op = ImgEvolutionOperator(
+        embedding_state=UNet(in_channels=1, out_channels=EMBEDDING_DIM, depth=DEPTH),
+        state_embedding_dim=EMBEDDING_DIM,
+        orth_reg=0.001,
+        centering_reg=0.00,
     )
-    evol_encoder = EvolutionOperatorEncoder(evol_op, original_img_shape=(1, 28, 28))
-    evol_linear_decoder = train_linear_decoder(
-        encoder_model=evol_op_encoder_img, dataloader=ordered_train_dl, device=device
+    lin_dec: torch.nn.Conv2d = evol_op.fit_linear_decoder(
+        train_dataloader=lin_train_dl,
     )
+    device = next(iter(evol_op.parameters())).device
+    cond_encoder = Lambda(func=lambda x: evol_op.conditional_expectation(x=x.to(device), hy2zy=None))
     visualize_decoder_comparison(
-        encoder_model=evol_encoder,
+        encoder_model=cond_encoder,
         dataloader=ordered_test_dl,
         device=device,
         title_prefix="[BEFORE TRAINING] Evolution Operator Analysis",
         # nonlinear_decoder=decoder,
-        linear_decoder=evol_linear_decoder,
+        linear_decoder=lin_dec,
     )
 
     train_evol_op(
@@ -943,26 +902,21 @@ if __name__ == "__main__":
         print_every=10,
     )
 
-    # Create the evolution operator encoder that applies truncated operator and unflattens
-    print("\nCreating Evolution Operator encoder for comparison...")
-    evol_encoder = EvolutionOperatorEncoder(evol_op, original_img_shape=(1, 28, 28))
-
-    # Train evolution operator linear decoder using training data
-    evol_linear_decoder = train_linear_decoder(
-        encoder_model=evol_op_encoder_img, dataloader=ordered_train_dl, device=device
+    lin_dec: torch.nn.Conv2d = evol_op.fit_linear_decoder(
+        train_dataloader=lin_train_dl,
     )
-
     # Visualize Evolution Operator + Linear Decoder performance
+
     print("\n" + "=" * 60)
     print("COMPARING EVOLUTION OPERATOR + LINEAR DECODER VS NONLINEAR DECODER")
     print("=" * 60)
     visualize_decoder_comparison(
-        encoder_model=evol_encoder,
+        encoder_model=cond_encoder,
         dataloader=ordered_test_dl,
         device=device,
         title_prefix="Evolution Operator Analysis",
         # nonlinear_decoder=decoder,
-        linear_decoder=evol_linear_decoder,
+        linear_decoder=lin_dec,
     )
 
     import matplotlib.pyplot as plt

@@ -105,7 +105,7 @@ from symm_rep_learn.mysc.statistics import cov_norm_squared_unbiased_estimation
 #     return truncation_err, metrics
 
 
-def contrastive_low_rank_loss(fx_c, hy_c, Dr) -> tuple[torch.Tensor, dict]:
+def contrastive_low_rank_loss_old(fx_c, hy_c, Dr) -> tuple[torch.Tensor, dict]:
     """Memory-efficient implementation of ||E - E_r||_HS^2, avoiding n^2 memory.
 
     This implementation uses the Gram matrix trick to compute E_p(x)p(y)[k_r(x,y)^2] without
@@ -159,6 +159,86 @@ def contrastive_low_rank_loss(fx_c, hy_c, Dr) -> tuple[torch.Tensor, dict]:
         }
 
     return truncation_err, metrics
+
+
+def contrastive_low_rank_loss(
+    fx_c: Tensor,  # (B, r_x, *spatial)
+    hy_c: Tensor,  # (B, r_y, *spatial)
+    Dr: Tensor,  # (r_x, r_y)
+) -> tuple[Tensor, dict]:
+    """Memory-efficient implementation of ||E - E_r||_HS^2, avoiding n^2 memory.
+
+    This implementation uses the Gram matrix trick to compute E_p(x)p(y)[k_r(x,y)^2] without
+    creating the full n x n kernel matrix pmd_mat. Instead of computing all pairwise kernel
+    evaluations k_r(x_i, y_j) = 1 + f(x_i)^T Dr h(y_j), we reformulate the computation using:
+
+    1. Gram matrices: Gx = f(x)^T @ f(x) (r_x x r_x) and Gy = h(y)^T @ h(y) (r_y x r_y)
+    2. Matrix operations on smaller matrices to recover the required sums
+    3. Diagonal vs off-diagonal separation to compute the correct expectation terms
+
+    Args:
+        fx_c: (Tensor) shape (n, r_x, ...), centered embedding functions f(x) for X. Where `...` denote spatial/temporal dimensions if any.
+        hy_c: (Tensor) shape (n, r_y, ...), centered embedding functions h(y) for Y. Where `...` denote the same spatial/temporal dimensions as x.
+        Dr: (Tensor) shape (r_x, r_y), representing the truncated operator.
+
+    Returns:
+        (Tensor) Low-rank approximation error loss. The loss is averaged over the spatial dimensions (...).
+    """
+
+    # ---------- shapes & convenience ----------
+    B, r_x, *spatial = fx_c.shape  # spatial may be []
+    r_y = hy_c.size(1)
+    S = fx_c[0, 0].numel()  # Product of spatial dimensions
+
+    # reshape: batch dim first, latent dim second, spatial flattened last
+    fx_flat = fx_c.reshape(B, r_x, S)  # (B, r_x, S)
+    hy_flat = hy_c.reshape(B, r_y, S)  # (B, r_y, S)
+
+    # ---------- core algebra (vectorised over S) ----------
+    # U = f · D  -> (B, r_y, S)
+    U_flat = torch.einsum("brs,rc->bcs", fx_flat, Dr)
+    s_diag = (U_flat * hy_flat).sum(dim=1)  # (B, S)
+
+    E_pxy_kr = 1.0 + s_diag.mean(dim=0)  # (S,)
+
+    # batch sums (for ∑_i,j  )
+    Fx_sum = fx_flat.sum(dim=0)  # (r_x, S)
+    Hy_sum = hy_flat.sum(dim=0)  # (r_y, S)
+    sum_s_all = (Fx_sum.t() @ Dr * Hy_sum.t()).sum(dim=1)  # (S,)
+
+    # Gram blocks, computed per-location in parallel
+    H_b = hy_flat.permute(2, 0, 1)  # (S, B, r_y)
+    U_b = U_flat.permute(2, 0, 1)  # (S, B, r_y)
+    G_H = torch.bmm(H_b.transpose(1, 2), H_b)  # (S, r_y, r_y)
+    G_U = torch.bmm(U_b.transpose(1, 2), U_b)  # (S, r_y, r_y)
+    sum_s2_all = (G_H * G_U).sum(dim=(1, 2))  # (S,)
+
+    sum_s_diag = s_diag.sum(dim=0)  # (S,)
+    sum_s2_diag = (s_diag**2).sum(dim=0)  # (S,)
+
+    n = B
+    sum_k2_all = n * n + 2.0 * sum_s_all + sum_s2_all
+    sum_k2_diag = n + 2.0 * sum_s_diag + sum_s2_diag
+    E_pxpy_k2 = (sum_k2_all - sum_k2_diag) / (n * (n - 1))
+
+    trunc_err_vec = -2.0 * E_pxy_kr + E_pxpy_k2 + 1.0  # (S,)
+
+    # ---------- reduce / reshape ----------
+    if spatial:  # e.g. (H,W,…)
+        trunc_err_map = trunc_err_vec.reshape(*spatial)
+    else:  # no spatial dims
+        trunc_err_map = trunc_err_vec  # scalar tensor len=1
+
+    loss = trunc_err_map.mean()  # scalar
+
+    # ---------- metrics ----------
+    with torch.no_grad():
+        metrics = {
+            "E_p(x,y) k_r(x,y)": E_pxy_kr.mean() - 1.0,
+            "E_p(x)p(y) k_r(x,y)^2": E_pxpy_k2.mean() - 1.0,
+        }
+
+    return loss, metrics
 
 
 def orthonormality_regularization(x, Cx: Tensor = None, x_mean: Tensor = None, var_name="x"):

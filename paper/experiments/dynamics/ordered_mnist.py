@@ -881,8 +881,8 @@ def plot_predictions_images(
     rec_past_imgs,
     future_imgs,
     pred_future_imgs,
-    pred_future_labels,
-    pred_rec_labls,
+    pred_future_labels=None,
+    pred_rec_labls=None,
     n_rows=4,
     n_cols=10,
     save_path=None,
@@ -921,8 +921,12 @@ def plot_predictions_images(
     rec_past_imgs = rec_past_imgs.detach().cpu().numpy()
     future_imgs = future_imgs.detach().cpu().numpy()
     pred_future_imgs = pred_future_imgs.detach().cpu().numpy()
-    pred_future_labels = pred_future_labels.detach().cpu().numpy()
-    pred_rec_labls = pred_rec_labls.detach().cpu().numpy()
+
+    # Handle optional labels
+    if pred_future_labels is not None:
+        pred_future_labels = pred_future_labels.detach().cpu().numpy()
+    if pred_rec_labls is not None:
+        pred_rec_labls = pred_rec_labls.detach().cpu().numpy()
 
     # Row titles
     row_titles = ["Past Images", "Reconstructed Past", "True Future", "Predicted Future"]
@@ -936,7 +940,8 @@ def plot_predictions_images(
 
         # Row 1: Reconstructed past images
         axes[1, col].imshow(rec_past_imgs[col].squeeze(), cmap="gray")
-        axes[1, col].set_title(f"Rec: {pred_rec_labls[col]}", fontsize=10)
+        if pred_rec_labls is not None:
+            axes[1, col].set_title(f"Rec: {pred_rec_labls[col]}", fontsize=10)
         axes[1, col].axis("off")
         if col == 0:
             axes[1, col].set_ylabel(row_titles[1], rotation=90, size=12)
@@ -949,7 +954,8 @@ def plot_predictions_images(
 
         # Row 3: Predicted future images with labels
         axes[3, col].imshow(pred_future_imgs[col].squeeze(), cmap="gray")
-        axes[3, col].set_title(f"Pred: {pred_future_labels[col]}", fontsize=10)
+        if pred_future_labels is not None:
+            axes[3, col].set_title(f"Pred: {pred_future_labels[col]}", fontsize=10)
         axes[3, col].axis("off")
         if col == 0:
             axes[3, col].set_ylabel(row_titles[3], rotation=90, size=12)
