@@ -1,63 +1,85 @@
 import numpy as np
 import torch
+from torch.utils.data import DataLoader
 
 from symm_rep_learn.models.ncp import NCP
 
 
 class NCPRegressor(torch.nn.Module):
-    def __init__(self, model: NCP, y_train, zy_train):
+    """A simple class wrapper to use an NCP model for regression of vector valued functions z(y)
+
+    Args:
+        model (NCP): The NCP model to use for regression.
+        data_loader (DataLoader): DataLoader providing batches tuple of samples (y, z(y)).
+        lstsq (bool): If True, use least squares to compute the regression coefficients.
+    """
+
+    def __init__(self, model: NCP, dataloader: DataLoader, lstsq=False):
         super(NCPRegressor, self).__init__()
         self.ncp_model = model
-        self.device = next(model.parameters()).device
-        self.out_dim = zy_train.shape[-1]
 
-        assert zy_train.shape[0] == y_train.shape[0], (
-            "y_train and xy_train with same number of samples, got {zy_train.shape[0]} and {y_train.shape[0]}"
-        )
-        # assert y_train.ndim == 2, f"Y train must have shape (n_train, y_dim) got {y_train.shape}"
-        # assert zy_train.ndim == 2, f"Z(Y) train must have shape (n_train, ...) got {zy_train.ndim}"
+        hy_train, zy_train = self.get_data(dataloader)
 
-        zy_train = zy_train.to(self.device)
-        y_train = y_train.to(self.device)
-        n_samples = y_train.shape[0]
-        assert zy_train.shape[0] == n_samples, (
-            f"Z(Y) train and Y train must have same number of samples, got {zy_train.shape[0]} and {n_samples}"
-        )
         # Compute the expectation of the r.v `z(y)` from the training dataset.
         mean_zy = zy_train.mean(axis=0, keepdim=True)
-        self.register_buffer("mean_zy", mean_zy)
+        self.register_buffer("mean_zy", mean_zy.to(self.device))
 
-        zy_shape = torch.tensor(zy_train.shape[1:])
-        self.register_buffer("zy_shape", zy_shape)
-
-        # Compute the embeddings of the entire y training dataset. And the linear regression between z(y) and h(y)
-        Czyhy = torch.zeros((zy_train.shape[-1], model.dim_hy), device=self.device)
-
-        _, hy_train = self.ncp_model(y=y_train)  # shape: (n_train, embedding_dim)
+        n_samples = hy_train.shape[0]
+        assert zy_train.shape[0] == n_samples, (
+            f"z(Y) train and h(Y) train must have same number of samples, got {zy_train.shape[0]} and {n_samples}"
+        )
 
         zy_train_c = zy_train - mean_zy  # Center the zy_train
-        zy_train_c_flat = zy_train_c.view((n_samples, -1))  # Flatten the zy_train_c for lstsq
-        out = torch.linalg.lstsq(hy_train, zy_train_c_flat)
-        Czyhy = out.solution.T
-        self.register_buffer("Czyhy", Czyhy)
+
+        # check no nans are present in the data
+        assert not torch.isnan(zy_train_c).any(), "NaN values found in zy_train_c"
+        assert not torch.isnan(hy_train).any(), "NaN values found in hy_train"
+
+        if lstsq:
+            out = torch.linalg.lstsq(hy_train, zy_train_c)
+            Czyhy = out.solution.T
+        else:
+            Czyhy = (1 / n_samples) * torch.einsum("by,bh->yh", zy_train_c, hy_train)
+
+        self.register_buffer("Czyhy", Czyhy.to(self.device))
         assert self.Czyhy.shape == (np.prod(zy_train.shape[1:]), hy_train.shape[-1]), (
             f"Invalid shape {self.Czyhy.shape}"
         )
 
+        # Send the model to the same device as the NCP model
+        self.to(self.device)
+
     def forward(self, x_cond: torch.Tensor = None, fx_cond: torch.Tensor = None):
         assert x_cond is not None or fx_cond is not None, "Either x_cond or fx_cond must be provided."
-        device = next(self.ncp_model.parameters()).device
         if fx_cond is None:
-            fx_cond, _ = self.ncp_model(x=x_cond.to(device))  # shape: (n_samples, embedding_dim)
+            fx_cond, _ = self.ncp_model(x=x_cond.to(self.device))  # shape: (n_samples, embedding_dim)
         else:
-            fx_cond = fx_cond.to(device)
-        n_samples = fx_cond.shape[0]
+            fx_cond = fx_cond.to(self.device)
         # Check formula 12 from https://arxiv.org/pdf/2407.01171
         Dr = self.ncp_model.truncated_operator
-        zy_deflated_basis_expansion = torch.einsum("bf,fh,yh->by", fx_cond, Dr, self.Czyhy)
-        zy_deflated_basis_expansion_reshaped = zy_deflated_basis_expansion.view(n_samples, *self.zy_shape)
-        zy_pred = self.mean_zy + zy_deflated_basis_expansion_reshaped
-        return zy_pred
+        zy_c_cond_x = torch.einsum("bf,fh,yh->by", fx_cond, Dr, self.Czyhy)
+        zy_cond_x = self.mean_zy + zy_c_cond_x
+        return zy_cond_x
+
+    @torch.no_grad()
+    def get_data(self, dataloader: DataLoader):
+        """Get the data from the DataLoader."""
+        hy_train = []
+        zy_train = []
+
+        for y, zy in dataloader:
+            _, hy = self.ncp_model(y=y.to(self.device))  # shape: (n_samples, embedding_dim)
+            hy_train.append(hy.detach().cpu())
+            zy_train.append(zy.detach().cpu())
+
+        hy_train = torch.cat(hy_train, dim=0)
+        zy_train = torch.cat(zy_train, dim=0)
+        return hy_train, zy_train
+
+    @property
+    def device(self):
+        """Return the device of the model."""
+        return next(self.ncp_model.parameters()).device
 
 
 class NCPConditionalCDF(torch.nn.Module):

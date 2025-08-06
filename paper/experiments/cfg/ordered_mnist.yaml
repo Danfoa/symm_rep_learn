@@ -10,11 +10,11 @@ device: 0  # -1 for all GPUs [0, ..., gpu_id] for a specific GPU
 profile: False
 
 # EXPERIMENT CONFIG
-model: eNCP
-gamma: 0.5                        # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
+model: NCP
+gamma: 0.05                       # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
 gamma_centering: 0.05            # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
-momentum: 0.9                   # 1.0 = batch stats for centering and Cov. 1.0 > leads to use of running average stats in the orthonormality and centering loss. 
-lstsq: true                     # Use analytic lstsq for regression of NCP models.
+momentum: 1.0                    # 1.0 = batch stats for centering and Cov. 1.0 > leads to use of running average stats in the orthonormality and centering loss. 
+lstsq: true                      # Use analytic lstsq for regression of NCP models.
 analytic_residual: false
 alpha: 0.1
 flat_embedding: True            # Use flat or spatial embedding of Image data.
@@ -27,10 +27,7 @@ dataset:
   #  Dataset splitting
   train_ratio: 0.7
   val_ratio: 0.15
-  augment: False        # Augment training data using symmetry transformations. Not useful for equiv models.
-  # augment_train: True        # Augment training data using symmetry transformations. Not useful for equiv models.
-  # augment_test: True         # This better emulates the real-world scenario in which symmetry related points have equal probability of being observed.
-  # augment_val:  True         # This better emulates the real-world scenario in which symmetry related points have equal probability of being observed.
+  augment: True        # Augment training data using symmetry transformations. Not useful for equiv models.
   #  Dataset loading
   load_to_memory: True    # Load dataset to memory for faster read and batch collection.
   device: 'cuda'           # Device to load the dataset to. 'cpu' or 'cuda'
@@ -41,8 +38,8 @@ dataset:
 architecture:
   activation: ELU             # Any torch activation
   # hidden_units: [32, 64, 128]
-  embedding_dim: 64
-  hidden_units: [16, 32, 64]
+  embedding_dim: 32
+  hidden_units: [16, 32]
   dilation: 1  
   self_adjoint: False    
   batch_norm: True   
@@ -52,12 +49,12 @@ architecture:
 optim:
   lr: 1e-3                    # Learning rate NCP train best at low lr values < 1e-3
   patience: 5                  # Epochs to wait for improvement before early stopping
-  batch_size: 128             # The higher the best
+  batch_size: 128              # The higher the best
   val_batch_size: 64          # The higher the best
-  max_epochs: 20              # Number of passes before stop training. Early stopping is used.
+  max_epochs: 50              # Number of passes before stop training. Early stopping is used.
   dl_num_workers: 0           # Number of workers for data loading
   check_val_n_times: 100
-  limit_train_batches: 0.5      
+  limit_train_batches: 1.0      
 
 exp_desc: "evol_op_dynamics"
 opt_desc: "lr=${optim.lr}_bs=${optim.batch_size}_pat=${optim.patience}"

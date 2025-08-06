@@ -14,7 +14,8 @@ main_path = Path(__file__).parent
 data_path = main_path / "data" / "ordered_mnist"
 oracle_ckpt_path = data_path / "oracle.ckpt"
 
-TRAIN_SAMPLES = {"train": 29210, "val": 1000, "test": 4900}
+# TRAIN_SAMPLES = {"train": 29210, "val": 1000, "test": 4900}
+TRAIN_SAMPLES = {"train": 1000, "val": 250, "test": 1000}
 
 
 def make_dataset(n_classes: int, val_ratio: float = 0.2):
@@ -114,6 +115,80 @@ class CNNDecoderSimple(torch.nn.Module):
         x = x.view(x.size(0), 32, 7, 7)
         x = self.conv1(x)
         x = self.conv2(x)
+        return x
+
+
+class UNetEncoder(torch.nn.Module):
+    def __init__(self, in_channels=1, out_channels=1, hidden_channels=[16, 32], flat_img=True):
+        super(UNetEncoder, self).__init__()
+        self.embedding_dim = out_channels
+        self.channels = [in_channels] + hidden_channels
+        self.n_layers = len(self.channels) - 1  # Number of encoder/decoder layers
+        self.flat_img = flat_img
+
+        # Encoder (downsampling path) _____________________________________________________________________________
+        self.encoders = torch.nn.ModuleList()
+        self.pools = torch.nn.ModuleList()
+
+        for i in range(self.n_layers):
+            self.encoders.append(
+                torch.nn.Sequential(
+                    torch.nn.Conv2d(self.channels[i], self.channels[i + 1], kernel_size=5, stride=1, padding=2),
+                    torch.nn.ReLU(inplace=True),
+                )
+            )
+            self.pools.append(torch.nn.MaxPool2d(kernel_size=2))
+
+        # Decoder (upsampling path) _______________________________________________________________________________
+        self.upconvs = torch.nn.ModuleList()
+        self.decoders = torch.nn.ModuleList()
+
+        # Decoder channels: reverse the encoder channels and add intermediate channels
+        decoder_channels = hidden_channels[::-1] + [hidden_channels[0] // 2]
+
+        for i in range(self.n_layers):
+            # Simple upsampling (no conv here, just like encoder has simple pooling)
+            self.upconvs.append(torch.nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False))
+
+            # Decoder convolution (after skip connection) - mirrors encoder structure
+            if i < self.n_layers - 1:  # Not the final layer
+                in_ch = decoder_channels[i] + self.channels[self.n_layers - i]  # upsampled + skip
+                out_ch = decoder_channels[i + 1]
+                activation = torch.nn.ReLU(inplace=True)
+            else:  # Final layer
+                in_ch = decoder_channels[i] + self.channels[self.n_layers - i]  # upsampled + skip
+                out_ch = out_channels
+                activation = torch.nn.Sigmoid()
+
+            self.decoders.append(
+                torch.nn.Sequential(
+                    torch.nn.Conv2d(in_ch, out_ch, kernel_size=5, stride=1, padding=2),
+                    activation,
+                )
+            )
+
+    def forward(self, x):
+        # Encoder path - store skip connections
+        skip_connections = []
+
+        for i in range(self.n_layers):
+            x = self.encoders[i](x)
+            skip_connections.append(x)  # Store for skip connection
+            x = self.pools[i](x)
+
+        # Decoder path with skip connections
+        for i in range(self.n_layers):
+            # Upsample
+            x = self.upconvs[i](x)
+            skip_idx = self.n_layers - 1 - i  # Reverse order: last encoder output first
+            skip = skip_connections[skip_idx]
+            x = torch.cat([x, skip], dim=1)
+            # Decoder convolution
+            x = self.decoders[i](x)
+
+        if self.flat_img:
+            # (B, out_channels, H, W) -> (B, H, W, out_channels) -> (B * H * W, out_channels)
+            x = x.permute(0, 2, 3, 1).contiguous().view(-1, self.embedding_dim)
         return x
 
 
@@ -647,28 +722,37 @@ def pre_process_images(images):
     return images
 
 
-def augment_image(image, split: str):
+def augment_image(imgs, split: str, angle: float = None):
     """
     Apply rotation augmentation to a tensor of images.
 
     Args:
         image: Tensor of shape (H, W) or (1, H, W)
+        split: Dataset split ("train", "test", "val")
+        angle: Specific rotation angle in degrees. If None, sample uniformly from 0 to 360.
 
     Returns:
         tuple: (original_image, augmented_image) both with shape (1, 29, 29)
     """
     # Ensure image is in the right format
-    if image.dim() == 2:  # (H, W)
-        image = image.unsqueeze(0)  # Add channel dimension -> (1, H, W)
     resize_up = Resize(28 * 3)  # Upsample to reduce interpolation artifacts
     resize_down = Resize(28)  # Downsample back to 28x28
-    rotate = RandomRotation(degrees=(0, 360), interpolation=InterpolationMode.BILINEAR)
 
-    original = image
+    if angle is not None:
+        # Use specific angle
+        from torchvision.transforms.functional import rotate
 
-    # Create augmented image with random rotation
+        rotate_fn = lambda x: rotate(x, angle, interpolation=InterpolationMode.BILINEAR)
+    else:
+        import kornia
+
+        rotate_fn = kornia.augmentation.RandomRotation(degrees=(0, 360), p=1.0, keepdim=True)
+
+    original = imgs
+
+    # Create augmented image with rotation
     img_upsampled = resize_up(original)
-    img_rotated = rotate(img_upsampled)
+    img_rotated = rotate_fn(img_upsampled)
     augmented = resize_down(img_rotated)
 
     if split == "test" or split == "val":  # Append aug images to original images in batch dimension
@@ -678,6 +762,79 @@ def augment_image(image, split: str):
         imgs = augmented.squeeze(2)
 
     return imgs
+
+
+def flatten_img(img: torch.Tensor) -> torch.Tensor:
+    """
+    Flatten image preserving spatial structure.
+
+    Args:
+        img: (B, C, H, W) - batch of images with C channels
+
+    Returns:
+        x: (B*H*W, C) - flattened where each row is one pixel's features
+           Spatial locations are grouped: [batch0_pixel(0,0), batch1_pixel(0,0), ..., batch0_pixel(0,1), ...]
+    """
+    B, C, H, W = img.shape
+    # Permute to (H, W, B, C) then flatten to (H*W*B, C)
+    # This groups all batch samples for each spatial location together
+    x = img.permute(2, 3, 0, 1).contiguous().view(-1, C)
+    return x
+
+
+def unflatten_img(x: torch.Tensor, H: int, W: int, C) -> torch.Tensor:
+    """
+    Unflatten preserving spatial structure.
+
+    Args:
+        x: (B*H*W, C) - flattened features
+        H, W: spatial dimensions
+        C: number of channels
+
+    Returns:
+        img: (B, C, H, W) - reconstructed image batch
+    """
+    T, C = x.shape
+    assert T % (H * W) == 0, f"Expected T to be divisible by {H * W}, got {T}"
+    B = T // (H * W)  # Calculate batch size
+    # Reshape to (H, W, B, C) then permute to (B, C, H, W)
+    img = x.view(H, W, B, C).permute(2, 3, 0, 1)
+    return img
+
+
+def flatten_img_spatial_first(img: torch.Tensor) -> torch.Tensor:
+    """
+    Alternative flattening that keeps batch samples together for each spatial location.
+
+    Args:
+        img: (B, C, H, W) - batch of images
+
+    Returns:
+        x: (B*H*W, C) - flattened where spatial locations are grouped within each batch:
+           [batch0_pixel(0,0), batch0_pixel(0,1), ..., batch1_pixel(0,0), batch1_pixel(0,1), ...]
+    """
+    B, C, H, W = img.shape
+    # Reshape to (B*H*W, C) - this keeps batch samples together
+    x = img.permute(0, 2, 3, 1).contiguous().view(-1, C)
+    return x
+
+
+def unflatten_img_spatial_first(x: torch.Tensor, H: int, W: int, C: int, B: int) -> torch.Tensor:
+    """
+    Unflatten for spatial_first flattening.
+
+    Args:
+        x: (B*H*W, C) - flattened features
+        H, W: spatial dimensions
+        C: number of channels
+        B: batch size
+
+    Returns:
+        img: (B, C, H, W) - reconstructed image batch
+    """
+    # Reshape to (B, H, W, C) then permute to (B, C, H, W)
+    img = x.view(B, H, W, C).permute(0, 3, 1, 2)
+    return img
 
 
 def collate_fn(batch, augment=True, split="train"):
@@ -712,6 +869,10 @@ def traj_collate_fn(batch, augment: bool = True, split: str = "train"):
         imgs = imgs.squeeze(2)
 
     present_image, future_image = imgs[:, [0]], imgs[:, [1]]
+
+    # Ignore future image. Make the future image be 45 degrees rotated version of the present image.
+    future_image = augment_image(present_image, split="train", angle=45.0)
+
     return present_image, future_image
 
 
@@ -900,6 +1061,12 @@ if __name__ == "__main__":
     i = 0
     for batch_trajs in dataloader:
         present_batch, future_batch = batch_trajs
+
+        x = present_batch
+        x_flat = flatten_img(x)
+        x_rec = unflatten_img(x_flat, H=x.shape[2], W=x.shape[3], C=x.shape[1])
+        assert torch.allclose(x, x_rec), f"Reconstruction failed: {x.shape} != {x_rec.shape}"
+
         print(f"Present: {present_batch.shape} - Future {future_batch.shape}")
         ep_embedding = ecnn_encoder(present_batch).tensor
         ef_embedding = ecnn_encoder(future_batch).tensor
