@@ -149,11 +149,11 @@ class ResidualEncoder(torch.nn.Module):
 
     def forward(self, input: torch.Tensor):
         embedding = self.encoder(input)
-        out = torch.cat([input, embedding], dim=-1)
+        out = torch.cat([input, embedding], dim=1)
         return out
 
     def decode(self, encoded_x: torch.Tensor):
-        x = encoded_x[..., self.residual_dims]
+        x = encoded_x[:, self.residual_dims, ...]
         return x
 
     @property

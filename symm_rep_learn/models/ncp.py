@@ -25,10 +25,10 @@ class NCP(torch.nn.Module):
     ):
         super(NCP, self).__init__()
 
-        assert orth_reg > 0 or centering_reg > 0, (
-            "If you desire to train NCP without orthonormal regularization, set `centering_reg` to a positive value, "
-            "since this is a constraint of the optimization problem penalized via a lagrangian multiplier."
-        )
+        # assert orth_reg > 0 or centering_reg > 0, (
+        #     "If you desire to train NCP without orthonormal regularization, set `centering_reg` to a positive value, "
+        #     "since this is a constraint of the optimization problem penalized via a lagrangian multiplier."
+        # )
 
         self.gamma = orth_reg
         self.gamma_centering = centering_reg
@@ -42,8 +42,8 @@ class NCP(torch.nn.Module):
         # Initialize the parameters of the low-rank approximation of the operator
         self.Dr = torch.nn.Linear(in_features=self.dim_hy, out_features=self.dim_fx, bias=False)
         # Initialization close to identity. Full rank operator.
-        with torch.no_grad():
-            self.Dr.weight.data = torch.eye(self.dim_fx, self.dim_hy) + 1e-4 * torch.randn(self.dim_fx, self.dim_hy)
+        # with torch.no_grad():
+        #     self.Dr.weight.data = torch.eye(self.dim_fx, self.dim_hy) + 1e-4 * torch.randn(self.dim_fx, self.dim_hy)
         # Ensure the truncated operator has spectral norm maximum of 1
         torch.nn.utils.parametrizations.spectral_norm(module=self.Dr, name="weight")
 
@@ -147,6 +147,7 @@ class NCP(torch.nn.Module):
         # E_r = Cxy -> ||E - E_r||_HS - ||E||_HS = -2 ||Cxy||_F^2 + tr(Cxy Cy Cxy^T Cx)
         Dr = self.truncated_operator
         clora_err, loss_metrics = contrastive_low_rank_loss(fx_c, hy_c, Dr)
+        clora_err = clora_err.mean()
 
         metrics |= loss_metrics
         # Total loss ____________________________________________________________________________________
@@ -156,7 +157,7 @@ class NCP(torch.nn.Module):
         # Logging metrics _______________________________________________________________________________
         with torch.no_grad():
             metrics |= {
-                "||k(x,y) - k_r(x,y)||": clora_err.detach().item(),
+                "||k(x,y) - k_r(x,y)||": clora_err.mean().detach().item(),
             }
         return loss, metrics
 

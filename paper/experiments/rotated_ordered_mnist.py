@@ -20,14 +20,14 @@ from omegaconf import DictConfig, OmegaConf
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 
-from paper.experiments.dynamics.model.unet import UNet
 import paper.experiments.dynamics.ordered_mnist as ordered_mnist
 from paper.experiments.dynamics.dynamics_dataset import TrajectoryDataset
+from paper.experiments.dynamics.model.unet import UNet
 from symm_rep_learn.inference.ncp import NCPRegressor
 from symm_rep_learn.models.equiv_ncp import ENCP
 from symm_rep_learn.models.lightning_modules import SupervisedTrainingModule, TrainingModule
 from symm_rep_learn.models.ncp import NCP
-from symm_rep_learn.nn.layers import Lambda
+from symm_rep_learn.nn.layers import Lambda, ResidualEncoder
 
 log = logging.getLogger(__name__)
 
@@ -57,8 +57,12 @@ def get_model(cfg: DictConfig, state_type: FieldType) -> torch.nn.Module:
         # fx = ordered_mnist.UNetEncoder(
         #     out_channels=cfg.architecture.embedding_dim, hidden_channels=cfg.architecture.hidden_units[:2]
         # )
+        embedding_dim = cfg.architecture.embedding_dim
         fx = UNet(in_channels=1, out_channels=cfg.architecture.embedding_dim)
 
+        if cfg.optim.regression_loss:
+            fx = ResidualEncoder(fx, in_dim=1)  # Append Gray-scale image to the latent representation
+            embedding_dim += 1  # Increase the embedding dimension by 1 for the residual image
         # fx = ordered_mnist.CNNEncoder(
         #     channels=cfg.architecture.hidden_units,
         #     batch_norm=cfg.architecture.batch_norm,
@@ -67,7 +71,7 @@ def get_model(cfg: DictConfig, state_type: FieldType) -> torch.nn.Module:
         # )
         ncp = ImgEvolutionOperator(
             embedding_state=fx,
-            state_embedding_dim=cfg.architecture.embedding_dim,
+            state_embedding_dim=embedding_dim,
             orth_reg=cfg.gamma,
             centering_reg=cfg.gamma_centering,
             momentum=cfg.momentum,
@@ -283,7 +287,7 @@ def linear_reconstruction_metrics(
     lin_dec = ncp_model.fit_linear_decoder(train_dataloader=train_dl)
 
     metrics = {}
-    for imgs, next_imgs in eval_dl:
+    for batch_idx, (imgs, next_imgs) in enumerate(eval_dl):
         batch_metrics = {}
         z_imgs, z_next_imgs_pred = evolve_images(imgs, ncp_model)
         _, z_next_imgs_gt = ncp_model(y=next_imgs.to(device=ncp_device))
@@ -297,7 +301,7 @@ def linear_reconstruction_metrics(
         batch_metrics["lin_rec_err"] = torch.nn.functional.mse_loss(
             input=rec_imgs.cpu(), target=imgs.cpu(), reduction="mean"
         ).item()
-        batch_metrics["pred_err"] = torch.nn.functional.mse_loss(
+        batch_metrics["lin_pred_err"] = torch.nn.functional.mse_loss(
             input=pred_next_imgs.cpu(), target=next_imgs.cpu(), reduction="mean"
         ).item()
 
@@ -307,7 +311,7 @@ def linear_reconstruction_metrics(
             metrics[key].append(value)
 
         # Optional plotting:
-        if plot or current_epoch % plot_kwargs["plot_every_n_epochs"] == 0:
+        if (plot or current_epoch % plot_kwargs["plot_every_n_epochs"] == 0) and batch_idx == 0:
             # Plot the images in a 4 x n_cols grid
             n_cols = 10
             n_rows = 4
@@ -377,7 +381,7 @@ def main(cfg: DictConfig):
     logger = WandbLogger(save_dir=run_path, project=cfg.proj_name, log_model=False, config=run_cfg)
     # logger.watch(model, log="gradients")
     BEST_CKPT_NAME, LAST_CKPT_NAME = "best", ModelCheckpoint.CHECKPOINT_NAME_LAST
-    VAL_METRIC = "||k(x,y) - k_r(x,y)||/val"  # Best low-rank approximation.
+    VAL_METRIC = "||k(x,y) - k_r(x,y)||/val" if not cfg.optim.regression_loss else "loss/val"
     ckpt_call = ModelCheckpoint(
         dirpath=run_path,
         filename=BEST_CKPT_NAME,
@@ -402,7 +406,7 @@ def main(cfg: DictConfig):
         model=ncp_model,
         optimizer_fn=Adam,
         optimizer_kwargs={"lr": cfg.optim.lr},
-        loss_fn=ncp_model.loss if hasattr(ncp_model, "loss") else None,
+        loss_fn=ncp_model.loss if not cfg.optim.regression_loss else ncp_model.regression_loss,
         val_metrics=lambda **kwargs: linear_reconstruction_metrics(
             ncp_model=ncp_model,
             oracle_classifier=oracle_classifier,

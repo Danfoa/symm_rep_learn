@@ -6,6 +6,7 @@ import logging
 import torch
 
 from symm_rep_learn.models.ncp import NCP
+from symm_rep_learn.nn.losses import contrastive_low_rank_loss
 
 log = logging.getLogger(__name__)
 
@@ -69,8 +70,11 @@ class ImgEvolutionOperator(NCP):
             state_traj = torch.cat([x, y], dim=0) if y is not None else x
 
         # fstate = self._embedding_x(state_traj)
-        fstate_c = self._embedding_x(state_traj)
-        # fstate_c = self.data_norm_x(fstate)
+        fstate = self._embedding_x(state_traj)
+        fstate_flat = fstate.permute(0, 2, 3, 1).reshape(-1, self.dim_fx)  # Flatten the state embeddings
+        _ = self.data_norm_x(fstate_flat)  # Center the embeddings
+        mean = self.data_norm_x.mean  # Get the mean of the embeddings
+        fstate_c = fstate - mean[..., None, None]  # Center the embeddings
 
         # Separate past and next image embeddings
         fx_c = fstate_c[:x_samples]
@@ -139,3 +143,50 @@ class ImgEvolutionOperator(NCP):
             # Decode to the target variable
             zy_cond_x = hy2zy(hy_cond_x)
             return zy_cond_x  # (B, z(y | x), H, W) - conditional expectation of the target variable given x
+
+    def evolve_latent_state(self, fx_c: torch.Tensor):
+        """Evolve the latent state fx_c using the truncated operator Dr.
+
+        Args:
+            fx_c (torch.Tensor): Centered latent state of shape (B, r_x, H, W).
+
+        Returns:
+            torch.Tensor: Evolved latent state of shape (B, r_y, H, W).
+        """
+        Dr = self.truncated_operator
+        hy_c = torch.nn.functional.conv2d(
+            input=fx_c,
+            weight=(Dr.T)[..., None, None],  # (r_y, r_x, 1, 1),
+            bias=None,
+            stride=1,
+        )
+        return hy_c
+
+    def regression_loss(self, fx_c: torch.Tensor, hy_c: torch.Tensor):
+        """TODO.
+
+        Args:
+            fx_c: (torch.Tensor) of shape (batch_size,r_x, H, W) *centered* embedding functions of a subspace of L^2(X)
+            hy_c: (torch.Tensor) of shape (batch_size,r_y, H, W) *centered* embedding functions of a subspace of L^2(Y)
+
+        Returns:
+            MSE loss: || hy_c - Dr @ fx_c ||_F^2
+        """
+        hy_c_pred = self.evolve_latent_state(fx_c)
+
+        # Compute the MSE loss
+        mse_loss = torch.nn.functional.mse_loss(input=hy_c_pred[:, 0, :, :], target=hy_c[:, 0, :, :], reduction="mean")
+
+        fx_c_flat = fx_c.permute(0, 2, 3, 1).reshape(-1, self.dim_fx)  # Flatten the state embeddings
+        hy_c_flat = hy_c.permute(0, 2, 3, 1).reshape(-1, self.dim_hy)
+        orthonormal_reg_x, orthonormal_reg_y, metrics = self.orthonormality_regularization(fx_c_flat, hy_c_flat)
+
+        loss = mse_loss + self.gamma * (orthonormal_reg_x / self.dim_fx + orthonormal_reg_y / self.dim_hy)
+
+        metrics["mse_loss"] = mse_loss.item()
+        with torch.no_grad():
+            clora_err, loss_metrics = contrastive_low_rank_loss(fx_c, hy_c, self.truncated_operator)
+            metrics |= loss_metrics
+            metrics["||k(x,y) - k_r(x,y)||"] = clora_err.mean().detach().item()
+
+        return loss, metrics

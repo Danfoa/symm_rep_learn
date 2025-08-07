@@ -1,108 +1,42 @@
+import numpy as np
 import torch
 from torch import Tensor
 
 from symm_rep_learn.mysc.statistics import cov_norm_squared_unbiased_estimation
 
-# class CLoRaLoss(torch.nn.Module):
-#     """Contrastive Low-Rank Approximation Loss.
 
-#     Computes an estimate of the Hilbert-Schmidt norm of the difference between a conditional expectation operator
-#     :math:`E` and its low-rank (*matrix*) approximation :math:`E_r`. The loss is computed via the kernel function
-#     that defines the linear-integral operator.
+def contrastive_low_rank_loss_memory_heavy(fx_c, hy_c, Dr) -> tuple[Tensor, dict]:
+    """Implementation of ||E - E_r||_HS^2, while assuming E_r is a full matrix.
 
-#     The loss is defined as:
-#     .. math::
-#         || E - \mathbf{E}_r ||_{HS}^2 \leq -2 \mathbb{E}_p(x,y)[k_r(x,y)] + \mathbb{E}_p(x)\mathbb{E}_p(y)[k_r(x,y)^2]
+    Args:
+        fx_c: (Tensor) of shape (n_samples, r_x) centered embedding functions spanning a subspace of L^2(X).
+        hy_c: (Tensor) of shape (n_samples, r_y) centered embedding functions spanning a subspace of L^2(Y).
+        Dr: (Tensor) of shape (r_x, r_y) representing the truncated operator.
 
-#     TODO.
-#     """
+    Returns:
+        (Tensor) Low-rank approximation error loss.
+        (dict) Metrics to monitor during training.
+    """
+    metrics = {}
+    n_samples = fx_c.shape[0]
+    # k_r(x,y) = 1 + f(x)^T Dr h(y)
+    # truncated_err = -2 * E_p(x,y)[k_r(x,y)] + E_p(x)p(y)[k_r(x,y)^2]
+    # TODO: This incurs in O(n^2) memory complextity, which wont scale for large n_samples.
+    pmd_mat = 1 + torch.einsum("nx,xy,my->nm", fx_c, Dr, hy_c)  # (n_samples, n_samples)
+    # E_p(x,y)[k_r(x,y)] = diag(pmd_mat).mean()
+    E_pxy_kr = torch.diag(pmd_mat).mean()
+    pmd_squared = pmd_mat**2
+    # E_p(x)p(y)[k_r(x,y)^2]  # Note we remove the samples from the joint in the diagonal
+    E_px_py_kr = (pmd_squared.sum() - pmd_squared.diag().sum()) / (n_samples * (n_samples - 1))
+    truncation_err = (-2 * E_pxy_kr) + (E_px_py_kr) + 1
 
-#     def __init__(self, orthogonality_reg: float, centering_reg: float):
-#         super().__init__()
-#         self.gamma = orthogonality_reg
-#         self.beta = centering_reg
+    with torch.no_grad():
+        metrics |= {
+            "E_p(x)p(y) k_r(x,y)^2": E_px_py_kr.detach() - 1,
+            "E_p(x,y) k_r(x,y)": E_pxy_kr.detach() - 1,
+        }
 
-#     def forward(
-#         self,
-#         Dr: Tensor,
-#         fx_c: Tensor,
-#         hy_c: Tensor,
-#         fx_mean: Tensor,
-#         hy_mean: Tensor,
-#         Cfx: Tensor,
-#         Chy: Tensor,
-#     ):
-#         """TODO.
-
-#         Args:
-#             fx_c: (Tensor) of shape (..., r) *centered* embedding functions of a subspace of L^2(X)
-#             hy_c: (Tensor) of shape (..., r) *centered* embedding functions of a subspace of L^2(Y)
-
-#         Returns:
-#             loss: ||E - E_r||_HS^2 <= -2 E_p(x,y)[k_r(x,y)] + E_p(x)p(y)[k_r(x,y)^2]
-#             metrics: Scalar valued metrics to monitor during training.
-#         """
-#         assert Dr.shape == (fx_c.shape[-1], hy_c.shape[-1])
-#         assert Cfx.shape == (fx_c.shape[-1], fx_c.shape[-1])
-#         assert Chy.shape == (hy_c.shape[-1], hy_c.shape[-1])
-
-#         # Orthonormal regularization and centering penalization _________________________________________
-#         # orthonormal_reg_fx = ||Cx - I||_F^2 + 2 ||E_p(x) f(x)||_F^2
-#         orthonormal_reg_x, metrics_x = orthonormality_regularization(x=fx_c, Cx=Cfx, x_mean=fx_mean, var_name="x")
-#         # orthonormal_reg_hy = ||Cy - I||_F^2 + 2 ||E_p(y) h(y)||_F^2
-#         orthonormal_reg_y, metrics_y = orthonormality_regularization(x=hy_c, Cx=Chy, x_mean=hy_mean, var_name="y")
-
-#         metrics = metrics_x | metrics_y  # Combine metrics from both regularizations
-
-#         # Operator truncation error = ||E - E_r||_HS^2 ____________________________________________________
-#         # E_r = Cxy -> ||E - E_r||_HS - ||E||_HS = -2 ||Cxy||_F^2 + tr(Cxy Cy Cxy^T Cx)
-#         clora_err, loss_metrics = contrastive_low_rank_loss(fx_c, hy_c, Dr)
-
-#         metrics |= loss_metrics if loss_metrics is not None else {}
-#         # Total loss ____________________________________________________________________________________
-#         dx = self.embedding_dim_x
-#         dy = self.embedding_dim_y
-#         loss = clora_err + self.gamma * (orthonormal_reg_x / dx + orthonormal_reg_y / dy)
-#         # Logging metrics _______________________________________________________________________________
-#         with torch.no_grad():
-#             metrics |= {
-#                 "||E - E_r(x,y)||_HS": clora_err.detach().item(),
-#             }
-#         return loss, metrics
-
-
-# def contrastive_low_rank_loss(fx_c, hy_c, Dr) -> tuple[Tensor, dict]:
-#     """Implementation of ||E - E_r||_HS^2, while assuming E_r is a full matrix.
-
-#     Args:
-#         fx_c: (Tensor) of shape (n_samples, r_x) centered embedding functions spanning a subspace of L^2(X).
-#         hy_c: (Tensor) of shape (n_samples, r_y) centered embedding functions spanning a subspace of L^2(Y).
-#         Dr: (Tensor) of shape (r_x, r_y) representing the truncated operator.
-
-#     Returns:
-#         (Tensor) Low-rank approximation error loss.
-#         (dict) Metrics to monitor during training.
-#     """
-#     metrics = {}
-#     n_samples = fx_c.shape[0]
-#     # k_r(x,y) = 1 + f(x)^T Dr h(y)
-#     # truncated_err = -2 * E_p(x,y)[k_r(x,y)] + E_p(x)p(y)[k_r(x,y)^2]
-#     # TODO: This incurs in O(n^2) memory complextity, which wont scale for large n_samples.
-#     pmd_mat = 1 + torch.einsum("nx,xy,my->nm", fx_c, Dr, hy_c)  # (n_samples, n_samples)
-#     # E_p(x,y)[k_r(x,y)] = diag(pmd_mat).mean()
-#     E_pxy_kr = torch.diag(pmd_mat).mean()
-#     pmd_squared = pmd_mat**2
-#     # E_p(x)p(y)[k_r(x,y)^2]  # Note we remove the samples from the joint in the diagonal
-#     E_px_py_kr = (pmd_squared.sum() - pmd_squared.diag().sum()) / (n_samples * (n_samples - 1))
-#     truncation_err = (-2 * E_pxy_kr) + (E_px_py_kr) + 1
-
-#     with torch.no_grad():
-#         metrics |= {
-#             "E_p(x)p(y) k_r(x,y)^2": E_px_py_kr.detach() - 1,
-#             "E_p(x,y) k_r(x,y)": E_pxy_kr.detach() - 1,
-#         }
-
-#     return truncation_err, metrics
+    return truncation_err, metrics
 
 
 def contrastive_low_rank_loss_old(fx_c, hy_c, Dr) -> tuple[torch.Tensor, dict]:
@@ -223,13 +157,11 @@ def contrastive_low_rank_loss(
 
     trunc_err_vec = -2.0 * E_pxy_kr + E_pxpy_k2 + 1.0  # (S,)
 
-    # ---------- reduce / reshape ----------
+    # ---------- reshape to spatial dimensions ----------
     if spatial:  # e.g. (H,W,…)
-        trunc_err_map = trunc_err_vec.reshape(*spatial)
+        loss = trunc_err_vec.reshape(*spatial)  # Returns tensor of shape spatial
     else:  # no spatial dims
-        trunc_err_map = trunc_err_vec  # scalar tensor len=1
-
-    loss = trunc_err_map.mean()  # scalar
+        loss = trunc_err_vec.squeeze()  # scalar tensor
 
     # ---------- metrics ----------
     with torch.no_grad():
@@ -385,151 +317,49 @@ def symm_orthonormality_regularization(
     return orthonormality_x, metrics
 
 
-# if __name__ == "__main__":
-#     import time
-#     import tracemalloc
-#     import gc
+if __name__ == "__main__":
+    print("Testing spatial loss function: each location should match non-spatial loss")
+    print("=" * 65)
 
-#     print("Testing contrastive_low_rank_loss vs contrastive_low_rank_loss2")
-#     print("=" * 60)
+    # Fixed parameters
+    B, r_x, r_y = 128, 8, 6
+    torch.manual_seed(42)
 
-#     # Test parameters - including larger sizes to better show memory differences
-#     n_samples_list = [100, 500, 1000, 2000, 5000]
-#     r_x, r_y = 10, 8
+    # Test 1: Compare spatial (3x4) with individual non-spatial computations
+    spatial_shape = (3, 4)
+    total_spatial = spatial_shape[0] * spatial_shape[1]
 
-#     results = []  # Store results for analysis
+    # Generate data
+    base_data_x = torch.randn(B, r_x, total_spatial, dtype=torch.float32)
+    base_data_y = torch.randn(B, r_y, total_spatial, dtype=torch.float32)
+    Dr = torch.randn(r_x, r_y, dtype=torch.float32)
 
-#     for n_samples in n_samples_list:
-#         print(f"\nTesting with n_samples={n_samples}, r_x={r_x}, r_y={r_y}")
-#         print("-" * 50)
+    # Reshape to spatial
+    fx_spatial = base_data_x.reshape(B, r_x, *spatial_shape)  # (B, r_x, 3, 4)
+    hy_spatial = base_data_y.reshape(B, r_y, *spatial_shape)  # (B, r_y, 3, 4)
 
-#         # Generate random test data
-#         torch.manual_seed(42)  # For reproducibility
-#         fx_c = torch.randn(n_samples, r_x, dtype=torch.float32)
-#         hy_c = torch.randn(n_samples, r_y, dtype=torch.float32)
-#         Dr = torch.randn(r_x, r_y, dtype=torch.float32)
+    # Get spatial loss (should return tensor of shape (3, 4))
+    spatial_losses, _ = contrastive_low_rank_loss(fx_spatial, hy_spatial, Dr)
 
-#         # Calculate theoretical memory usage for pmd_mat in original function
-#         pmd_mat_size_mb = (n_samples * n_samples * 4) / (1024 * 1024)  # 4 bytes per float32
+    print(f"Spatial losses shape: {spatial_losses.shape}")
+    print(f"Expected shape: {spatial_shape}")
 
-#         # Test function 1 (original) with manual memory tracking
-#         gc.collect()
-#         torch.cuda.empty_cache() if torch.cuda.is_available() else None
+    # Compute individual losses for each spatial location
+    individual_losses = torch.zeros(*spatial_shape)
+    tolerance = 1e-6
+    all_match = True
 
-#         print("Testing contrastive_low_rank_loss (original)...")
-#         start_time = time.perf_counter()
+    for i in range(spatial_shape[0]):
+        for j in range(spatial_shape[1]):
+            # Extract data for this spatial location
+            idx = i * spatial_shape[1] + j
+            fx_single = base_data_x[:, :, idx]  # (B, r_x)
+            hy_single = base_data_y[:, :, idx]  # (B, r_y)
 
-#         # Manual memory tracking - measure tensor sizes
-#         initial_tensors = len([obj for obj in gc.get_objects() if torch.is_tensor(obj)])
+            # Compute loss using non-spatial function
+            single_loss, _ = contrastive_low_rank_loss_memory_heavy(fx_single, hy_single, Dr)
+            individual_losses[i, j] = single_loss.item()
 
-#         loss1, metrics1 = contrastive_low_rank_loss(fx_c, hy_c, Dr)
-
-#         end_time = time.perf_counter()
-#         final_tensors = len([obj for obj in gc.get_objects() if torch.is_tensor(obj)])
-
-#         runtime1 = end_time - start_time
-
-#         # Test function 2 (memory-efficient)
-#         gc.collect()
-#         torch.cuda.empty_cache() if torch.cuda.is_available() else None
-
-#         print("Testing contrastive_low_rank_loss2 (memory-efficient)...")
-#         start_time = time.perf_counter()
-
-#         loss2, metrics2 = contrastive_low_rank_loss2(fx_c, hy_c, Dr)
-
-#         end_time = time.perf_counter()
-#         runtime2 = end_time - start_time
-
-#         # Compare results
-#         loss_diff = torch.abs(loss1 - loss2).item()
-#         metrics1_E_pxy = metrics1["E_p(x,y) k_r(x,y)"]
-#         metrics2_E_pxy = metrics2["E_p(x,y) k_r(x,y)"]
-#         metrics1_E_pxpy = metrics1["E_p(x)p(y) k_r(x,y)^2"]
-#         metrics2_E_pxpy = metrics2["E_p(x)p(y) k_r(x,y)^2"]
-
-#         metric_diff_pxy = torch.abs(metrics1_E_pxy - metrics2_E_pxy).item()
-#         metric_diff_pxpy = torch.abs(metrics1_E_pxpy - metrics2_E_pxpy).item()
-
-#         # Print results
-#         print("Loss values:")
-#         print(f"  Original:       {loss1.item():.8f}")
-#         print(f"  Memory-eff:     {loss2.item():.8f}")
-#         print(f"  Absolute diff:  {loss_diff:.2e}")
-#         print(f"  Relative diff:  {loss_diff / abs(loss1.item()):.2e}")
-
-#         print("Metrics comparison:")
-#         print(f"  E_p(x,y) diff:     {metric_diff_pxy:.2e}")
-#         print(f"  E_p(x)p(y) diff:   {metric_diff_pxpy:.2e}")
-
-#         print("Runtime:")
-#         print(f"  Original:       {runtime1 * 1000:.3f} ms")
-#         print(f"  Memory-eff:     {runtime2 * 1000:.3f} ms")
-#         print(f"  Speedup:        {runtime1 / runtime2:.2f}x")
-
-#         print("Memory complexity:")
-#         print(f"  Theoretical pmd_mat size: {pmd_mat_size_mb:.2f} MB")
-#         print(f"  O(n²) scaling factor:     {n_samples**2 / 100**2:.1f}x vs n=100")
-
-#         # Check if results are close enough
-#         tolerance = 2e-5  # Slightly relaxed tolerance for larger n
-#         if loss_diff < tolerance and metric_diff_pxy < tolerance and metric_diff_pxpy < tolerance:
-#             print("✅ Results match within tolerance!")
-#         else:
-#             print("❌ Results differ beyond tolerance!")
-#             print(f"   (tolerance: {tolerance:.1e})")
-
-#         # Store results
-#         results.append(
-#             {
-#                 "n_samples": n_samples,
-#                 "runtime1": runtime1,
-#                 "runtime2": runtime2,
-#                 "speedup": runtime1 / runtime2,
-#                 "pmd_mat_size_mb": pmd_mat_size_mb,
-#                 "loss_diff": loss_diff,
-#                 "matches": loss_diff < tolerance and metric_diff_pxy < tolerance and metric_diff_pxpy < tolerance,
-#             }
-#         )
-
-#     print("\n" + "=" * 70)
-#     print("SUMMARY - Memory and Runtime Scaling Analysis")
-#     print("=" * 70)
-
-#     print("\nMemory Complexity Analysis:")
-#     print("Original function creates pmd_mat of size (n_samples × n_samples)")
-#     print("Memory-efficient function avoids this O(n²) matrix")
-#     print("-" * 50)
-#     print(f"{'n_samples':>10} {'pmd_mat (MB)':>12} {'O(n²) scaling':>15}")
-#     print("-" * 50)
-#     for result in results:
-#         n = result["n_samples"]
-#         scaling = n**2 / results[0]["n_samples"] ** 2
-#         print(f"{n:>10} {result['pmd_mat_size_mb']:>12.2f} {scaling:>15.1f}x")
-
-#     print("\nRuntime Performance Analysis:")
-#     print("-" * 50)
-#     print(f"{'n_samples':>10} {'Original (ms)':>15} {'Efficient (ms)':>15} {'Speedup':>10}")
-#     print("-" * 50)
-#     for result in results:
-#         print(
-#             f"{result['n_samples']:>10} {result['runtime1'] * 1000:>15.2f} {result['runtime2'] * 1000:>15.2f} {result['speedup']:>10.1f}x"
-#         )
-
-#     print("\nAccuracy Analysis:")
-#     print("-" * 30)
-#     print(f"{'n_samples':>10} {'Loss diff':>12} {'Match':>8}")
-#     print("-" * 30)
-#     for result in results:
-#         match_str = "✅" if result["matches"] else "❌"
-#         print(f"{result['n_samples']:>10} {result['loss_diff']:>12.2e} {match_str:>8}")
-
-#     print(f"\nConclusion:")
-#     print(f"• Memory-efficient version avoids O(n²) memory allocation")
-#     print(
-#         f"• Speedup ranges from {min(r['speedup'] for r in results):.1f}x to {max(r['speedup'] for r in results):.1f}x"
-#     )
-#     print(f"• Numerical accuracy maintained (max diff: {max(r['loss_diff'] for r in results):.2e})")
-#     print(
-#         f"• For n=5000: pmd_mat would require {results[-1]['pmd_mat_size_mb']:.0f} MB vs ~0.5 MB for efficient version"
-#     )
+            # Compare with spatial loss at this location
+            spatial_loss_val = spatial_losses[i, j].item()
+            assert np.isclose(single_loss, spatial_loss_val, atol=1e-5, rtol=1e-5)
