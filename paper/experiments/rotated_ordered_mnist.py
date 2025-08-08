@@ -23,6 +23,7 @@ from torch.utils.data import DataLoader
 import paper.experiments.dynamics.ordered_mnist as ordered_mnist
 from paper.experiments.dynamics.dynamics_dataset import TrajectoryDataset
 from paper.experiments.dynamics.model.unet import UNet
+from paper.experiments.train_utils import get_train_logger_and_callbacks
 from symm_rep_learn.inference.ncp import NCPRegressor
 from symm_rep_learn.models.equiv_ncp import ENCP
 from symm_rep_learn.models.lightning_modules import SupervisedTrainingModule, TrainingModule
@@ -50,26 +51,16 @@ def get_model(cfg: DictConfig, state_type: FieldType) -> torch.nn.Module:
         )
         return eNCPop
     elif cfg.model.lower() == "ncp":  # NCP
-        from symm_rep_learn.models.img_evol_op import ImgEvolutionOperator
+        from symm_rep_learn.models.evol_op import EvolOp2D
 
         # Channels of the last (latent) image representation are the basis functions.
-        # fx = ordered_mnist.CNNEncoderSimple(num_classes=cfg.architecture.embedding_dim)
-        # fx = ordered_mnist.UNetEncoder(
-        #     out_channels=cfg.architecture.embedding_dim, hidden_channels=cfg.architecture.hidden_units[:2]
-        # )
         embedding_dim = cfg.architecture.embedding_dim
         fx = UNet(in_channels=1, out_channels=cfg.architecture.embedding_dim)
 
         if cfg.architecture.residual_encoder:
             fx = ResidualEncoder(fx, in_dim=1)  # Append Gray-scale image to the latent representation
             embedding_dim += 1  # Increase the embedding dimension by 1 for the residual image
-        # fx = ordered_mnist.CNNEncoder(
-        #     channels=cfg.architecture.hidden_units,
-        #     batch_norm=cfg.architecture.batch_norm,
-        #     flat_img=cfg.flat_embedding,
-        #     embedding_dim=cfg.architecture.embedding_dim,
-        # )
-        ncp = ImgEvolutionOperator(
+        ncp = EvolOp2D(
             embedding_state=fx,
             state_embedding_dim=embedding_dim,
             orth_reg=cfg.gamma,
@@ -374,24 +365,9 @@ def main(cfg: DictConfig):
     # Define the logger and callbacks
     run_path = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
     log.info(f"Run path: {run_path}")
-    run_cfg = OmegaConf.to_container(cfg, resolve=True)
-    logger = WandbLogger(save_dir=run_path, project=cfg.proj_name, log_model=False, config=run_cfg)
-    # logger.watch(model, log="gradients")
-    BEST_CKPT_NAME, LAST_CKPT_NAME = "best", ModelCheckpoint.CHECKPOINT_NAME_LAST
     VAL_METRIC = "||k(x,y) - k_r(x,y)||/val" if not cfg.optim.regression_loss else "loss/val"
-    ckpt_call = ModelCheckpoint(
-        dirpath=run_path,
-        filename=BEST_CKPT_NAME,
-        monitor=VAL_METRIC,
-        save_top_k=1,
-        save_last=True,
-        mode="min",
-        every_n_epochs=5,
-    )
-    # Fix for all runs independent on the train_ratio chosen. This way we compare on effective number of "epochs"
-    check_val_every_n_epoch = 5  # max(5, int(cfg.optim.max_epochs // cfg.optim.check_val_n_times))
-    effective_patience = cfg.optim.patience // check_val_every_n_epoch
-    early_call = EarlyStopping(VAL_METRIC, patience=effective_patience, mode="min")
+    ckpt_call, early_call, logger = get_train_logger_and_callbacks(run_path, cfg, VAL_METRIC)
+    BEST_CKPT_NAME, LAST_CKPT_NAME = "best", ModelCheckpoint.CHECKPOINT_NAME_LAST
     last_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / LAST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
     best_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / BEST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
 

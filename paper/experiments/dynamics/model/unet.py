@@ -863,7 +863,7 @@ if __name__ == "__main__":
 
     # Train a NCP model
 
-    from symm_rep_learn.models.img_evol_op import ImgEvolutionOperator
+    from symm_rep_learn.models.evol_op import EvolOp2D
 
     def lin_collate_fn(batch):
         imgs, next_imgs = ordered_mnist.traj_collate_fn(batch, augment=AUGMENT)
@@ -873,7 +873,7 @@ if __name__ == "__main__":
         ordered_train_ds, batch_size=BATCH_SIZE, shuffle=False, collate_fn=lin_collate_fn
     )
 
-    evol_op = ImgEvolutionOperator(
+    evol_op = EvolOp2D(
         embedding_state=UNet(in_channels=1, out_channels=EMBEDDING_DIM, depth=DEPTH),
         state_embedding_dim=EMBEDDING_DIM,
         orth_reg=0.001,

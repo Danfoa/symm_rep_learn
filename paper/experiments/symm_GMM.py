@@ -103,7 +103,7 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
 
         return drf
     elif cfg.model.lower() == "idrf":  # Density Ratio Fitting
-        from symm_rep_learn.models.inv_density_ratio_fitting import InvDRF
+        from symm_rep_learn.models.density_ratio_fitting import InvDRF
         from symm_rep_learn.mysc.utils import class_from_name
 
         xy_reps = x_type.representations + y_type.representations
