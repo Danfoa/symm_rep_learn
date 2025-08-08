@@ -2,12 +2,69 @@ import math
 
 import torch
 from escnn.nn import FieldType, GeometricTensor
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import default_collate
+
+from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
+from lightning.pytorch.loggers import WandbLogger
 
 from symm_rep_learn.inference.ncp import NCPConditionalCDF, NCPRegressor
 from symm_rep_learn.models.multivariateCQR import get_coverage, get_relaxed_coverage, get_set_size
 from symm_rep_learn.models.ncp import NCP
+
+
+def get_train_logger_and_callbacks(
+    run_path: str, cfg: DictConfig, val_metric: str
+) -> tuple[ModelCheckpoint, EarlyStopping, int]:
+    """
+    Create ModelCheckpoint and EarlyStopping callbacks for training.
+
+    Parameters:
+    -----------
+    run_path : str
+        Directory path where checkpoints will be saved
+    cfg : DictConfig
+        Configuration object containing optimization settings
+    val_metric : str
+        Validation metric to monitor for checkpointing and early stopping
+
+    Returns:
+    --------
+    tuple[ModelCheckpoint, EarlyStopping, WandbLogger]
+        Configured checkpoint and early stopping callbacks, and logger
+    """
+
+    logger = WandbLogger(
+        save_dir=run_path, project=cfg.proj_name, log_model=False, config=OmegaConf.to_container(cfg, resolve=True)
+    )
+
+    BEST_CKPT_NAME = "best"
+
+    ckpt_call = ModelCheckpoint(
+        dirpath=run_path,
+        filename=BEST_CKPT_NAME,
+        monitor=val_metric,
+        save_top_k=1,
+        save_last=True,
+        mode="min",
+        every_n_epochs=5,
+    )
+
+    assert cfg.optim.check_val_every_n_epoch < cfg.optim.max_epochs, (
+        f"check_val_every_n_epoch {cfg.optim.check_val_every_n_epoch} must be less than max_epochs {cfg.optim.max_epochs}"
+    )
+    assert cfg.optim.patience * cfg.optim.check_val_every_n_epoch <= cfg.optim.max_epochs, (
+        f"patience {cfg.optim.patience} * check_val_every_n_epoch {cfg.optim.check_val_every_n_epoch} must be less than max_epochs {cfg.optim.max_epochs}"
+    )
+
+    # Fix for all runs independent on the train_ratio chosen. This way we compare on effective number of "epochs"
+    check_val_every_n_epoch = (
+        cfg.optim.check_val_every_n_epoch
+    )  # max(5, int(cfg.optim.max_epochs // cfg.optim.check_val_n_times))
+    effective_patience = cfg.optim.patience // check_val_every_n_epoch
+    early_call = EarlyStopping(val_metric, patience=effective_patience, mode="min")
+
+    return ckpt_call, early_call, logger
 
 
 def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:

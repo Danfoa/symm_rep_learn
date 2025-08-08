@@ -5,17 +5,15 @@ proj_name: "evol_op"
 exp_name: "test"
 
 seed: -1
-debug: False
+debug: True
 device: 0  # -1 for all GPUs [0, ..., gpu_id] for a specific GPU
 profile: False
 
 # EXPERIMENT CONFIG
-model: NCP
-gamma: 1                        # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
-gamma_centering: 0.5            # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
-momentum: 0.5                   # 1.0 = batch stats for centering and Cov. 1.0 > leads to use of running average stats in the orthonormality and centering loss. 
-lstsq: true                     # Use analytic lstsq for regression of NCP models.
-analytic_residual: false
+model: EvolOp
+gamma: 0.1                       # Weight of the NCP regularization loss term. 
+gamma_centering: 0.01            # Weight of the NCP regularization loss term. 
+momentum: 1.0                    # 1.0 = batch stats for centering and Cov. < 1.0 leads to use of running average stats in the orthonormality and centering loss. 
 alpha: 0.1
 
 
@@ -25,46 +23,42 @@ dataset:
   past_frames: 1       # Number of time-frames of observations for x -> (x_frames, x_obs_dim)
   future_frames: 1       # Number of time-frames to consider for y -> (y_frames, y_obs_dim)
   #  Data-augmentation
-  augment_train: True       # Augment training data using symmetry transformations. Not useful for equiv models.
-  augment_test: True         # This better emulates the real-world scenario in which symmetry related points have equal probability of being observed.
-  augment_val:  True         # This better emulates the real-world scenario in which symmetry related points have equal probability of being observed.
+  augment: True       # Augment training data using symmetry transformations. Not useful for equiv models.
   #  Dataset splitting
   train_ratio: 0.7
   val_ratio: 0.15
   #  Dataset loading
-  load_to_memory: True    # Load dataset to memory for faster read and batch collection.
   device: 'cuda'           # Device to load the dataset to. 'cpu' or 'cuda'
   # System parameters Thomas Attractor
   b: 0.19
-  noise_scale: 0.0
-  n_trajectories: 100
+  noise_scale: 0.5
+  n_trajectories: 150
   traj_time_horizon: 10
-  dt: 0.01
+  dt: 0.05
   time_lag: 1
   seed: 10                # Seed to dataset generation
 
 # Architecture of the neural network
 architecture:
-  hidden_layers: 2
-  hidden_units: 64
+  hidden_units: [32,32]
   embedding_dim: 32
   activation: ELU             # Any torch activation
   residual_encoder: False     # Introduce target regression variables in L2(Y)
-  residual_encoder_x: false   # Introduce target regression variables in L2(Y)
-#  bias: True
+  self_adjoint: False         
 
 # OPTIMIZATION CONFIG
 optim:
-  lr: 1e-4                    # Learning rate NCP train best at low lr values < 1e-3
-  patience: 50                # Epochs to wait for improvement before early stopping
+  lr: 1e-3                    # Learning rate NCP train best at low lr values < 1e-3
+  patience: 40                # Epochs to wait for improvement before early stopping
   batch_size: 2048            # The higher the best
   max_epochs: 200             # Number of passes before stop training. Early stopping is used.
   dl_num_workers: 0           # Number of workers for data loading
+  regression_loss: False      # MSE / CLoRa Loss
+  check_val_every_n_epoch: 5  # Check validation loss every n epochs
 
-
-exp_desc: "evol_op_dynamics"
-opt_desc: "lr=${optim.lr}_bs=${optim.batch_size}_pat=${optim.patience}"
-model_desc: "${model}_hu=${architecture.hidden_units}_hl=${architecture.hidden_layers}_act=${architecture.activation}_resY=${architecture.residual_encoder}_lstsq=${lstsq}"
+exp_desc: "evol_op"
+opt_desc: "lr=${optim.lr}_bs=${optim.batch_size}_eph=${optim.max_epochs}_pat=${optim.patience}"
+model_desc: "${model}_hu=${architecture.hidden_units}_act=${architecture.activation}_res=${architecture.residual_encoder}"
 run_desc: "${exp_desc}_${opt_desc}_${model_desc}"
 
 hydra:
@@ -90,15 +84,12 @@ hydra:
           - seed
           - dataset.path
           - exp_name
-          - robot_name
           - proj_name
-          - max_epochs
-          - architecture.hidden_units
-          - architecture.hidden_layers
-          - architecture.activation
-          - architecture.residual_encoder
-          - lstsq
           - model
           - optim.lr
           - optim.batch_size
           - optim.max_epochs
+          - optim.patience
+          - architecture.hidden_units
+          - architecture.activation
+          - architecture.residual_encoder

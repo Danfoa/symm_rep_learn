@@ -4,6 +4,9 @@ import numpy as np
 import torch
 
 ArrayLike = np.ndarray | torch.Tensor
+import logging
+
+log = logging.getLogger(__name__)
 
 
 class TrajectoryDataset(torch.utils.data.Dataset):

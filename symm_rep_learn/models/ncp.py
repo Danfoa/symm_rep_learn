@@ -164,10 +164,10 @@ class NCP(torch.nn.Module):
 
     def conditional_expectation(self, x: torch.Tensor = None, hy2zy: torch.nn.Linear = None):
         """Compute conditional expectation :math:`\mathbb{E}_{p(y|x)}[h(y)]` or :math:`\mathbb{E}_{p(y|x)}[z(y)]`.
-        
+
         Args:
             x (torch.Tensor): Input state tensor of shape (B, |X|).
-            hy2zy (torch.nn.Linear): Optional linear decoder from h(y) to z(y) (see `fit_linear_decoder`). 
+            hy2zy (torch.nn.Linear): Optional linear decoder from h(y) to z(y) (see `fit_linear_decoder`).
                 If None, returns h(y) expectation.
 
         Returns:
@@ -182,8 +182,8 @@ class NCP(torch.nn.Module):
         else:
             # Decode to the target variable
             zy_cond_x = hy2zy(hy_cond_x)
-            return zy_cond_x  
-    
+            return zy_cond_x
+
     def fit_linear_decoder(
         self,
         train_dataloader: torch.utils.data.DataLoader,
@@ -194,7 +194,7 @@ class NCP(torch.nn.Module):
         Args:
             train_dataloader (torch.utils.data.DataLoader): DataLoader yielding (y, z(y)) pairs.
             ridge_reg (float): Ridge regularization parameter for least squares.
-        
+
         Returns:
             torch.nn.Linear: Linear decoder mapping h(y) embeddings to target z(y).
         """
@@ -203,7 +203,9 @@ class NCP(torch.nn.Module):
         hy_train = []
         zy_train = []
 
-        assert len(next(iter(train_dataloader))) == 2, f"Expected DataLoader to yield (y, z(y)), got {next(iter(train_dataloader))} items."
+        assert len(next(iter(train_dataloader))) == 2, (
+            f"Expected DataLoader to yield (y, z(y)), got {next(iter(train_dataloader))} items."
+        )
         for y, zy in train_dataloader:
             _, hy = self(y=y.to(device))  # shape: (n_samples, embedding_dim)
             hy_train.append(hy.detach().cpu())

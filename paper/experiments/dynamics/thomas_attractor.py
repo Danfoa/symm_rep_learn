@@ -354,7 +354,7 @@ def example_usage():
     """
     np.set_printoptions(precision=3, suppress=True)
     # Create Thomas attractor instance with noise
-    thomas = ThomasAttractor(b=0.19, noise_scale=0.0)
+    thomas = ThomasAttractor(b=0.19, noise_scale=0.5)
     rep_S = thomas.get_state_symmetry_rep()
 
     # Generate a single trajectory
@@ -366,7 +366,7 @@ def example_usage():
     print(f"Trajectory shape: {trajectory.shape}")
 
     # Generate a dataset using the original method
-    T = 10
+    T = 20
     N = 70
 
     initial_states = thomas.generate_random_initial_conditions(
@@ -379,17 +379,17 @@ def example_usage():
     G_init = np.concatenate(G_init, axis=0)
 
     time_arrays, trajectory_arrays = thomas.generate_dataset(
-        n_trajectories=N, trajectory_length=T, dt=0.01, seed=42, initial_conditions=G_init
+        n_trajectories=N, trajectory_length=T, dt=0.05, seed=42, initial_conditions=G_init
     )
+    print(f"Generated {len(time_arrays)} trajectories with shape {trajectory_arrays[0].shape}")
 
-    print(f"Generated dataset with {len(trajectory_arrays)} trajectories")
-    print(f"Each trajectory has {len(trajectory_arrays[0])} points")
 
-    # Create and show 3D plot
+    # # Create and show 3D plot
     fig = thomas.plot_trajectories_3d(
         time_arrays=time_arrays, trajectory_arrays=trajectory_arrays, title="Thomas Attractor with Noise"
     )
-    fig.show()
+    fig.show(renderer="browser")  # Force browser renderer
+
 
 
 if __name__ == "__main__":

@@ -5,6 +5,21 @@ import numpy as np
 import torch
 from scipy import stats
 
+def act_name_to_torch(act_name: str):
+    act_name = act_name.lower()
+    if act_name == "relu":
+        return torch.nn.ReLU()
+    elif act_name == "elu":
+        return torch.nn.ELU()
+    elif act_name == "leakyrelu":
+        return torch.nn.LeakyReLU()
+    elif act_name == "tanh":
+        return torch.nn.Tanh()
+    elif act_name == "sigmoid":
+        return torch.nn.Sigmoid()
+    else:
+        raise ValueError(f"Unknown activation function: {act_name}.")
+    
 
 def to_np(x):
     return x.detach().cpu().numpy()
