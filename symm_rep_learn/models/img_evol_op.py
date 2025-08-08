@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import logging
+import math
 
 import torch
 
 from symm_rep_learn.models.ncp import NCP
+from symm_rep_learn.nn.layers import ResidualEncoder
 from symm_rep_learn.nn.losses import contrastive_low_rank_loss
 
 log = logging.getLogger(__name__)
@@ -48,6 +50,9 @@ class ImgEvolutionOperator(NCP):
             # Then apply spectral norm
             param_zoo.spectral_norm(self.Dr, name="weight")
 
+        if not isinstance(self._embedding_x, ResidualEncoder):
+            self._trainable_lin_dec = torch.nn.Conv2d(in_channels=self.dim_fx, out_channels=1, kernel_size=1)
+
     def forward(self, x: torch.Tensor = None, y: torch.Tensor = None):
         """Compute the embedding of the present and next images
 
@@ -82,9 +87,15 @@ class ImgEvolutionOperator(NCP):
 
         return fx_c, hy_c
 
+    # def loss(self, fx_c: torch.Tensor, hy_c: torch.Tensor, *args, **kwargs):
+    #     fx_c_flat = fx_c.permute(0, 2, 3, 1).reshape(-1, self.dim_fx)
+    #     hy_c_flat = hy_c.permute(0, 2, 3, 1).reshape(-1, self.dim_hy)
+    #     return super().loss(fx_c_flat, hy_c_flat, *args, **kwargs)
+
     def fit_linear_decoder(
         self,
         train_dataloader: torch.utils.data.DataLoader,
+        ridge_reg: float = 1e-3,
     ) -> torch.nn.Conv2d:
         device = next(self.parameters()).device
         # Get the training data to fit the linear decoder _____________________________________________
@@ -103,13 +114,22 @@ class ImgEvolutionOperator(NCP):
         zy_mean = zy_train.mean(axis=[0] + list(range(2, zy_train.ndim)), keepdim=False)
         zy_train_c = zy_train - zy_mean  # (B, z(y), H, W)
 
-        # Fit a linear map from h(y) to z_c(y) using least squares ____________________________________
-        # TODO: Add regularization.
-        # Flatten the tensors for linear regression
-        hy_train_flat = hy_train.permute(0, 2, 3, 1).reshape(-1, hy_train.shape[1])  # (B*H*W, r_y)
-        zy_train_c_flat = zy_train_c.permute(0, 2, 3, 1).reshape(-1, zy_train_c.shape[1])  # (B*H*W, z(y))
-        out = torch.linalg.lstsq(hy_train_flat, zy_train_c_flat)
-        Czyhy = out.solution.T  # (z(y), r_y)
+        # Fit a linear map from h(y) to z_c(y) using least squares with ridge regularization _________
+        hy_flat = hy_train.permute(0, 2, 3, 1).reshape(-1, self.dim_hy)  # X, (N, r_y = |h(y)|)
+        zy_c_flat = zy_train_c.permute(0, 2, 3, 1).reshape(-1, zy_train_c.shape[1])  # Y, (N, |z(y)|)
+
+        if ridge_reg > 0.0:
+            dim_hy = hy_flat.shape[1]
+            dim_zy = zy_c_flat.shape[1]
+
+            eye = torch.eye(dim_hy, device=hy_flat.device, dtype=hy_flat.dtype)
+            X_aug = torch.cat([hy_flat, math.sqrt(ridge_reg) * eye], dim=0)  # (N+d, d)
+            Y_aug = torch.cat(
+                [zy_c_flat, torch.zeros(dim_hy, dim_zy, device=hy_flat.device, dtype=hy_flat.dtype)], dim=0
+            )
+            Czyhy = torch.linalg.lstsq(X_aug, Y_aug).solution.T  # (|z(y)|, r_y)
+        else:
+            Czyhy = torch.linalg.lstsq(hy_flat, zy_c_flat).solution.T  # (|z(y)|, r_y)
 
         # Create the linear image decoder in the form of a Conv2D layer with a 1x1 kernel ____________
         linear_decoder = torch.nn.Conv2d(
@@ -128,14 +148,14 @@ class ImgEvolutionOperator(NCP):
     def conditional_expectation(self, x: torch.Tensor = None, hy2zy: torch.nn.Conv2d = None):
         """Compute the conditional expectation of the target variable z(y | x) given the present state x.
         Args:
-            x (torch.Tensor): Input state tensor of shape (B, r_x, H, W).
+            x (torch.Tensor): Input state tensor of shape (B, |X|, H, W).
             hy2zy (torch.nn.Conv2d): Linear map from h(y) to z(y). Computed using `fit_linear_decoder`.
         Returns:
             torch.Tensor: Conditional expectation of the target variable z(y | x) of shape (B, |z(y)|, H, W).
         """
-        fx, _ = self(x=x, y=None)  # fx: (B, r_x, H, W)
+        fx_c, _ = self(x=x, y=None)  # fx: (B, r_x, H, W)
         # Evolve state observations
-        hy_cond_x = torch.einsum("bxhw,xy->byhw", fx, self.truncated_operator)
+        hy_cond_x = self.evolve_latent_state(fx_c)  # (B, r_y, H, W)
 
         if hy2zy is None:
             return hy_cond_x
@@ -162,7 +182,7 @@ class ImgEvolutionOperator(NCP):
         )
         return hy_c
 
-    def regression_loss(self, fx_c: torch.Tensor, hy_c: torch.Tensor):
+    def regression_loss(self, fx_c: torch.Tensor, hy_c: torch.Tensor, x: torch.Tensor, y: torch.Tensor = None):
         """TODO.
 
         Args:
@@ -174,8 +194,16 @@ class ImgEvolutionOperator(NCP):
         """
         hy_c_pred = self.evolve_latent_state(fx_c)
 
-        # Compute the MSE loss
-        mse_loss = torch.nn.functional.mse_loss(input=hy_c_pred[:, 0, :, :], target=hy_c[:, 0, :, :], reduction="mean")
+        if isinstance(self._embedding_x, ResidualEncoder):
+            # Compute the MSE loss
+            residual_dims = self._embedding_x.residual_dims
+            mse_loss = torch.nn.functional.mse_loss(
+                input=hy_c_pred[:, residual_dims, :, :], target=hy_c[:, residual_dims, :, :], reduction="mean"
+            )
+        else:
+            assert y is not None, "y must be provided when using a non-residual encoder."
+            y_pred = self._trainable_lin_dec(hy_c_pred)
+            mse_loss = torch.nn.functional.mse_loss(input=y_pred, target=y, reduction="mean")
 
         fx_c_flat = fx_c.permute(0, 2, 3, 1).reshape(-1, self.dim_fx)  # Flatten the state embeddings
         hy_c_flat = hy_c.permute(0, 2, 3, 1).reshape(-1, self.dim_hy)

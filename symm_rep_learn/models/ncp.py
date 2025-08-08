@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 
 import torch
 from symm_learning.nn import DataNorm
@@ -21,7 +22,7 @@ class NCP(torch.nn.Module):
         embedding_dim_y: int,
         orth_reg=0.1,  # Will be multiplied by the embedding_dim
         centering_reg=0.01,  # Penalizes probability mass distortion
-        momentum=0.9,  # 1.0 Batch stats to center the embeddings and compute covariance.
+        momentum=0.99,  # 1.0 Batch stats to center the embeddings and compute covariance.
     ):
         super(NCP, self).__init__()
 
@@ -42,8 +43,8 @@ class NCP(torch.nn.Module):
         # Initialize the parameters of the low-rank approximation of the operator
         self.Dr = torch.nn.Linear(in_features=self.dim_hy, out_features=self.dim_fx, bias=False)
         # Initialization close to identity. Full rank operator.
-        # with torch.no_grad():
-        #     self.Dr.weight.data = torch.eye(self.dim_fx, self.dim_hy) + 1e-4 * torch.randn(self.dim_fx, self.dim_hy)
+        with torch.no_grad():
+            self.Dr.weight.data = torch.eye(self.dim_fx, self.dim_hy) + 1e-4 * torch.randn(self.dim_fx, self.dim_hy)
         # Ensure the truncated operator has spectral norm maximum of 1
         torch.nn.utils.parametrizations.spectral_norm(module=self.Dr, name="weight")
 
@@ -120,7 +121,7 @@ class NCP(torch.nn.Module):
 
         return orthonormal_reg_x, orthonormal_reg_y, metrics
 
-    def loss(self, fx_c: torch.Tensor, hy_c: torch.Tensor):
+    def loss(self, fx_c: torch.Tensor, hy_c: torch.Tensor, *args, **kwargs):
         """TODO.
 
         Args:
@@ -157,9 +158,87 @@ class NCP(torch.nn.Module):
         # Logging metrics _______________________________________________________________________________
         with torch.no_grad():
             metrics |= {
-                "||k(x,y) - k_r(x,y)||": clora_err.mean().detach().item(),
+                "||k(x,y) - k_r(x,y)||": clora_err.detach().item(),
             }
         return loss, metrics
+
+    def conditional_expectation(self, x: torch.Tensor = None, hy2zy: torch.nn.Linear = None):
+        """Compute conditional expectation :math:`\mathbb{E}_{p(y|x)}[h(y)]` or :math:`\mathbb{E}_{p(y|x)}[z(y)]`.
+        
+        Args:
+            x (torch.Tensor): Input state tensor of shape (B, |X|).
+            hy2zy (torch.nn.Linear): Optional linear decoder from h(y) to z(y). If None, returns h(y) expectation.
+            
+        Returns:
+            torch.Tensor: Conditional expectation in h(y) space (B, r_y) or z(y) space (B, |z(y)|).
+        """
+        fx, _ = self(x=x, y=None)  # fx: (B, r_x, H, W)
+        # Evolve state observations
+        hy_cond_x = torch.einsum("bx,xy->by", fx, self.truncated_operator)
+
+        if hy2zy is None:
+            return hy_cond_x
+        else:
+            # Decode to the target variable
+            zy_cond_x = hy2zy(hy_cond_x)
+            return zy_cond_x  
+    
+    def fit_linear_decoder(
+        self,
+        train_dataloader: torch.utils.data.DataLoader,
+        ridge_reg: float = 1e-3,
+    ) -> torch.nn.Linear:
+        """Fit linear map :math:`h(y) \mapsto z(y)` using ridge regression on training data.
+
+        Args:
+            train_dataloader (torch.utils.data.DataLoader): DataLoader yielding (y, z(y)) pairs.
+            ridge_reg (float): Ridge regularization parameter for least squares.
+        
+        Returns:
+            torch.nn.Linear: Linear decoder mapping h(y) embeddings to target z(y).
+        """
+        device = next(self.parameters()).device
+        # Get the training data to fit the linear decoder _____________________________________________
+        hy_train = []
+        zy_train = []
+
+        assert len(next(iter(train_dataloader))) == 2, f"Expected DataLoader to yield (y, z(y)), got {next(iter(train_dataloader))} items."
+        for y, zy in train_dataloader:
+            _, hy = self(y=y.to(device))  # shape: (n_samples, embedding_dim)
+            hy_train.append(hy.detach().cpu())
+            zy_train.append(zy.detach().cpu())
+        hy_train = torch.cat(hy_train, dim=0)  # (B, r_y = |h(y)|)
+        zy_train = torch.cat(zy_train, dim=0)  # (B, z(y))
+
+        # Center the target variable __________________________________________________________________
+        zy_mean = zy_train.mean(axis=0, keepdim=True)  # (1, z(y))
+        zy_c_train = zy_train - zy_mean  # (B, z(y))
+
+        # Fit a linear map from h(y) to z_c(y) using least squares with ridge regularization _________
+        if ridge_reg > 0.0:
+            dim_hy = hy_train.shape[1]
+            dim_zy = zy_c_train.shape[1]
+
+            eye = torch.eye(dim_hy, device=hy_train.device, dtype=hy_train.dtype)
+            X_aug = torch.cat([hy_train, math.sqrt(ridge_reg) * eye], dim=0)  # (N+d, d)
+            Y_aug = torch.cat(
+                [zy_c_train, torch.zeros(dim_hy, dim_zy, device=hy_train.device, dtype=hy_train.dtype)], dim=0
+            )
+            Czyhy = torch.linalg.lstsq(X_aug, Y_aug).solution.T  # (|z(y)|, r_y)
+        else:
+            Czyhy = torch.linalg.lstsq(hy_train, zy_c_train).solution.T
+
+        # Create the linear image decoder in the form of a Linear layer ________________________________________________
+        linear_decoder = torch.nn.Linear(
+            in_features=hy_train.shape[1],
+            out_features=zy_c_train.shape[1],
+            bias=True,
+        )
+        linear_decoder.eval()
+        linear_decoder.weight.data = Czyhy  # Linear map
+        linear_decoder.bias.data = zy_mean.squeeze(0)  # Add mean as bias
+
+        return linear_decoder.to(device)
 
 
 if __name__ == "__main__":
