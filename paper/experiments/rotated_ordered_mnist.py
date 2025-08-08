@@ -60,7 +60,7 @@ def get_model(cfg: DictConfig, state_type: FieldType) -> torch.nn.Module:
         embedding_dim = cfg.architecture.embedding_dim
         fx = UNet(in_channels=1, out_channels=cfg.architecture.embedding_dim)
 
-        if cfg.optim.regression_loss:
+        if cfg.architecture.residual_encoder:
             fx = ResidualEncoder(fx, in_dim=1)  # Append Gray-scale image to the latent representation
             embedding_dim += 1  # Increase the embedding dimension by 1 for the residual image
         # fx = ordered_mnist.CNNEncoder(
@@ -145,10 +145,10 @@ def decoder_collect_fn(batch, augment: bool = True, split: str = "train"):
 def evolve_images(imgs: torch.Tensor, ncp_model: NCP):
     """Evolve images using NCP model."""
     device = next(ncp_model.parameters()).device
-    fx, _ = ncp_model(x=imgs.to(device), y=None)  # fx: (B, r_x, H, W)
+    fx_c, _ = ncp_model(x=imgs.to(device), y=None)  # fx: (B, r_x, H, W)
     # Evolve state observations
-    hy_cond_x = torch.einsum("bxhw,xy->byhw", fx, ncp_model.truncated_operator)
-    return fx, hy_cond_x  # fx: (B, r_x, H, W), hy_cond_x: (B, r_y, H, W)
+    hy_cond_x = ncp_model.evolve_latent_state(fx_c=fx_c)
+    return fx_c, hy_cond_x  # fx: (B, r_x, H, W), hy_cond_x: (B, r_y, H, W)
 
 
 def classify_images(imgs: torch.Tensor, ncp_model: NCP, oracle_classifier: torch.nn.Module, decoder: torch.nn.Module):
@@ -274,9 +274,6 @@ def linear_reconstruction_metrics(
     ncp_model.eval()
 
     # Compute the training data for the linear regressor.
-    encoded_features = []
-    target_values = []
-
     train_dl = DataLoader(
         train_ds,
         batch_size=max(len(train_ds) // 4, 128),
@@ -364,7 +361,7 @@ def main(cfg: DictConfig):
     val_dataloader = DataLoader(
         val_ds,
         batch_size,
-        shuffle=False,
+        shuffle=True,
         collate_fn=lambda x: ordered_mnist.traj_collate_fn(x, augment=cfg.dataset.augment, split="val"),
     )
     test_dataloader = DataLoader(
@@ -392,14 +389,14 @@ def main(cfg: DictConfig):
         every_n_epochs=5,
     )
     # Fix for all runs independent on the train_ratio chosen. This way we compare on effective number of "epochs"
-    check_val_every_n_epoch = 1  # max(5, int(cfg.optim.max_epochs // cfg.optim.check_val_n_times))
+    check_val_every_n_epoch = 5  # max(5, int(cfg.optim.max_epochs // cfg.optim.check_val_n_times))
     effective_patience = cfg.optim.patience // check_val_every_n_epoch
     early_call = EarlyStopping(VAL_METRIC, patience=effective_patience, mode="min")
     last_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / LAST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
     best_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / BEST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
 
     plot_kwargs = dict(
-        samples=next(iter(test_dataloader)), path=run_path, plot_every_n_epochs=check_val_every_n_epoch * 10
+        samples=next(iter(test_dataloader)), path=run_path, plot_every_n_epochs=check_val_every_n_epoch * 2
     )
     # Define the Lightning module ______________________________________________________
     lightning_module = TrainingModule(
@@ -440,7 +437,7 @@ def main(cfg: DictConfig):
         callbacks=[ckpt_call, early_call],
         fast_dev_run=5 if cfg.debug else False,
         num_sanity_val_steps=5,
-        reload_dataloaders_every_n_epochs=10,
+        reload_dataloaders_every_n_epochs=5,
         limit_train_batches=cfg.optim.limit_train_batches,
         limit_val_batches=cfg.optim.limit_train_batches,
     )

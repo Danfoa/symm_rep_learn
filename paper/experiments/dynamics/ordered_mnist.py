@@ -3,6 +3,7 @@ from pathlib import Path
 
 import escnn
 import lightning
+import numpy as np
 import torch
 from datasets import DatasetDict, interleave_datasets, load_dataset, load_from_disk
 from torch.utils.data import DataLoader
@@ -15,7 +16,7 @@ data_path = main_path / "data" / "ordered_mnist"
 oracle_ckpt_path = data_path / "oracle.ckpt"
 
 # TRAIN_SAMPLES = {"train": 29210, "val": 1000, "test": 4900}
-TRAIN_SAMPLES = {"train": 1000, "val": 250, "test": 1000}
+TRAIN_SAMPLES = {"train": 5000, "val": 250, "test": 1000}
 
 
 def make_dataset(n_classes: int, val_ratio: float = 0.2):
@@ -871,7 +872,8 @@ def traj_collate_fn(batch, augment: bool = True, split: str = "train"):
     present_image, future_image = imgs[:, [0]], imgs[:, [1]]
 
     # Ignore future image. Make the future image be 45 degrees rotated version of the present image.
-    future_image = augment_image(present_image, split="train", angle=45.0)
+    rand_angle = 30 + np.random.randint(-5, 5)  # Random angle around 30 degrees
+    future_image = augment_image(present_image, split="train", angle=rand_angle)
 
     return present_image, future_image
 

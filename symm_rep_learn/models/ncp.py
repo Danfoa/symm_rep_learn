@@ -167,8 +167,9 @@ class NCP(torch.nn.Module):
         
         Args:
             x (torch.Tensor): Input state tensor of shape (B, |X|).
-            hy2zy (torch.nn.Linear): Optional linear decoder from h(y) to z(y). If None, returns h(y) expectation.
-            
+            hy2zy (torch.nn.Linear): Optional linear decoder from h(y) to z(y) (see `fit_linear_decoder`). 
+                If None, returns h(y) expectation.
+
         Returns:
             torch.Tensor: Conditional expectation in h(y) space (B, r_y) or z(y) space (B, |z(y)|).
         """

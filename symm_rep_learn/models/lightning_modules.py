@@ -54,14 +54,18 @@ class TrainingModule(lightning.LightningModule):
     def on_train_start(self) -> None:
         self._n_train_samples *= 0
 
+    def get_loss_and_metrics(self, out, batch):
+        if isinstance(out, tuple):
+            loss, metrics = self.loss_fn(*out, *batch)
+        elif isinstance(out, dict):
+            loss, metrics = self.loss_fn(**out, **batch)
+        else:
+            loss, metrics = self.loss_fn(out, *batch)
+        return loss, metrics
+
     def training_step(self, batch, batch_idx):
         out = self.model(*batch)
-        if isinstance(out, tuple):
-            loss, metrics = self.loss_fn(*out)
-        elif isinstance(out, dict):
-            loss, metrics = self.loss_fn(**out)
-        else:
-            loss, metrics = self.loss_fn(out)
+        loss, metrics = self.get_loss_and_metrics(out, batch)
 
         batch_dim = self.get_batch_dim(batch)
         self._n_train_samples += batch_dim
@@ -73,12 +77,7 @@ class TrainingModule(lightning.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         out = self.model(*batch)
-        if isinstance(out, tuple):
-            loss, metrics = self.loss_fn(*out)
-        elif isinstance(out, dict):
-            loss, metrics = self.loss_fn(**out)
-        else:
-            loss, metrics = self.loss_fn(out)
+        loss, metrics = self.get_loss_and_metrics(out, batch)
 
         all_metrics = {"loss": loss} | metrics
         self.log_metrics(all_metrics, suffix="val", batch_size=self.get_batch_dim(batch))
@@ -86,12 +85,7 @@ class TrainingModule(lightning.LightningModule):
 
     def test_step(self, batch, batch_idx):
         out = self.model(*batch)
-        if isinstance(out, tuple):
-            loss, metrics = self.loss_fn(*out)
-        elif isinstance(out, dict):
-            loss, metrics = self.loss_fn(**out)
-        else:
-            loss, metrics = self.loss_fn(out)
+        loss, metrics = self.get_loss_and_metrics(out, batch)
 
         batch_dim = self.get_batch_dim(batch)
         all_metrics = {"loss": loss} | metrics

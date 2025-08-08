@@ -14,10 +14,6 @@ model: NCP
 gamma: 0.001                       # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
 gamma_centering: 0.00            # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
 momentum: 1.0                    # 1.0 = batch stats for centering and Cov. 1.0 > leads to use of running average stats in the orthonormality and centering loss. 
-lstsq: true                      # Use analytic lstsq for regression of NCP models.
-analytic_residual: false
-alpha: 0.1
-flat_embedding: True            # Use flat or spatial embedding of Image data.
 
 
 dataset:
@@ -49,10 +45,10 @@ architecture:
 # OPTIMIZATION CONFIG
 optim:
   lr: 1e-3                    # Learning rate NCP train best at low lr values < 1e-3
-  patience: 10                # Epochs to wait for improvement before early stopping
+  patience: 50                # Epochs to wait for improvement before early stopping
   batch_size: 128             # The higher the best
   val_batch_size: 64          # The higher the best
-  max_epochs: 50              # Number of passes before stop training. Early stopping is used.
+  max_epochs: 5              # Number of passes before stop training. Early stopping is used.
   dl_num_workers: 0           # Number of workers for data loading
   check_val_n_times: 100
   limit_train_batches: 1.0      
@@ -92,7 +88,6 @@ hydra:
           - architecture.hidden_units
           - architecture.hidden_layers
           - architecture.activation
-          - architecture.residual_encoder
           - lstsq
           - model
           - optim.lr
