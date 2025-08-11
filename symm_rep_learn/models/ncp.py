@@ -163,7 +163,7 @@ class NCP(torch.nn.Module):
         return loss, metrics
 
     def conditional_expectation(self, x: torch.Tensor = None, hy2zy: torch.nn.Linear = None):
-        """Compute conditional expectation :math:`\mathbb{E}_{p(y|x)}[h(y)]` or :math:`\mathbb{E}_{p(y|x)}[z(y)]`.
+        r"""Compute conditional expectation :math:`\mathbb{E}_{p(y|x)}[h(y)]` or :math:`\mathbb{E}_{p(y|x)}[z(y)]`.
 
         Args:
             x (torch.Tensor): Input state tensor of shape (B, |X|).
@@ -189,7 +189,7 @@ class NCP(torch.nn.Module):
         train_dataloader: torch.utils.data.DataLoader,
         ridge_reg: float = 1e-3,
     ) -> torch.nn.Linear:
-        """Fit linear map :math:`h(y) \mapsto z(y)` using ridge regression on training data.
+        r"""Fit linear map :math:`h(y) \mapsto z(y)` using ridge regression on training data.
 
         Args:
             train_dataloader (torch.utils.data.DataLoader): DataLoader yielding (y, z(y)) pairs.

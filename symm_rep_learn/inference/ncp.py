@@ -5,98 +5,24 @@ from torch.utils.data import DataLoader
 from symm_rep_learn.models.ncp import NCP
 
 
-class NCPRegressor(torch.nn.Module):
-    """A simple class wrapper to use an NCP model for regression of vector valued functions z(y)
-
-    Args:
-        model (NCP): The NCP model to use for regression.
-        data_loader (DataLoader): DataLoader providing batches tuple of samples (y, z(y)).
-        lstsq (bool): If True, use least squares to compute the regression coefficients.
-    """
-
-    def __init__(self, model: NCP, dataloader: DataLoader, lstsq=False):
-        super(NCPRegressor, self).__init__()
-        self.ncp_model = model
-
-        hy_train, zy_train = self.get_data(dataloader)
-
-        # Compute the expectation of the r.v `z(y)` from the training dataset.
-        mean_zy = zy_train.mean(axis=0, keepdim=True)
-        self.register_buffer("mean_zy", mean_zy.to(self.device))
-
-        n_samples = hy_train.shape[0]
-        assert zy_train.shape[0] == n_samples, (
-            f"z(Y) train and h(Y) train must have same number of samples, got {zy_train.shape[0]} and {n_samples}"
-        )
-
-        zy_train_c = zy_train - mean_zy  # Center the zy_train
-
-        # check no nans are present in the data
-        assert not torch.isnan(zy_train_c).any(), "NaN values found in zy_train_c"
-        assert not torch.isnan(hy_train).any(), "NaN values found in hy_train"
-
-        if lstsq:
-            out = torch.linalg.lstsq(hy_train, zy_train_c)
-            Czyhy = out.solution.T
-        else:
-            Czyhy = (1 / n_samples) * torch.einsum("by,bh->yh", zy_train_c, hy_train)
-
-        self.register_buffer("Czyhy", Czyhy.to(self.device))
-        assert self.Czyhy.shape == (np.prod(zy_train.shape[1:]), hy_train.shape[-1]), (
-            f"Invalid shape {self.Czyhy.shape}"
-        )
-
-        # Send the model to the same device as the NCP model
-        self.to(self.device)
-
-    def forward(self, x_cond: torch.Tensor = None, fx_cond: torch.Tensor = None):
-        assert x_cond is not None or fx_cond is not None, "Either x_cond or fx_cond must be provided."
-        if fx_cond is None:
-            fx_cond, _ = self.ncp_model(x=x_cond.to(self.device))  # shape: (n_samples, embedding_dim)
-        else:
-            fx_cond = fx_cond.to(self.device)
-        # Check formula 12 from https://arxiv.org/pdf/2407.01171
-        Dr = self.ncp_model.truncated_operator
-        zy_c_cond_x = torch.einsum("bf,fh,yh->by", fx_cond, Dr, self.Czyhy)
-        zy_cond_x = self.mean_zy + zy_c_cond_x
-        return zy_cond_x
-
-    @torch.no_grad()
-    def get_data(self, dataloader: DataLoader):
-        """Get the data from the DataLoader."""
-        hy_train = []
-        zy_train = []
-
-        for y, zy in dataloader:
-            _, hy = self.ncp_model(y=y.to(self.device))  # shape: (n_samples, embedding_dim)
-            hy_train.append(hy.detach().cpu())
-            zy_train.append(zy.detach().cpu())
-
-        hy_train = torch.cat(hy_train, dim=0)
-        zy_train = torch.cat(zy_train, dim=0)
-        return hy_train, zy_train
-
-    @property
-    def device(self):
-        """Return the device of the model."""
-        return next(self.ncp_model.parameters()).device
-
-
 class NCPConditionalCDF(torch.nn.Module):
-    def __init__(self, model: NCP, y_train, support_discretization_points=500, **ncp_regressor_kwargs):
+    def __init__(self, model: NCP, y_train, support_discretization_points=500, ridge_reg=None):
         super(NCPConditionalCDF, self).__init__()
-
+        self.ncp_model = model
         assert y_train.ndim == 2, f"Y train must have shape (n_train, y_dim) {y_train.ndim}"
 
         y_min, y_max = torch.min(y_train, dim=0).values, torch.max(y_train, dim=0).values
         self.discretization_points = support_discretization_points
-        # self.support_obs -> (discret_points, y_dim)
+
+        # Compute the marginal support of each scalar dimension of the random variable _______________________
         self.support_obs = np.linspace(y_min.numpy(), y_max.numpy(), self.discretization_points)
+
+        # Indicator functions ________________________________________________________________________________
         # Compute the indicator function of (y_i <= y_i') for each y_i' in the discretized support of y_i
         # cdf_obs_ind -> (n_samples, discretization_points, y_dim)
         cdf_obs_ind = (y_train.detach().cpu().numpy()[:, None, :] <= self.support_obs[None, :, :]).astype(int)
 
-        # Estimate the CDF
+        # Estimate the CDF ___________________________________________________________________________________
         self.marginal_CDF = cdf_obs_ind.mean(axis=0)  # (discretization_points,) -> F(y') -> P(Y <= y')
         cdf_obs_ind_c = torch.tensor(cdf_obs_ind - self.marginal_CDF, dtype=torch.float32)
         n_samples, _, n_dim = cdf_obs_ind_c.shape
@@ -104,9 +30,17 @@ class NCPConditionalCDF(torch.nn.Module):
         self.n_obs_dims = y_train.shape[1]
 
         # Compute the conditional indicator sets per each y' in the support given X=x.
-        self.ccdf_regressor = NCPRegressor(
-            model=model, y_train=y_train, zy_train=cdf_obs_ind_c_flat, **ncp_regressor_kwargs
+        y_zy_dataloader = DataLoader(
+            dataset=torch.utils.data.TensorDataset(y_train, cdf_obs_ind_c_flat),
+            batch_size=1024,
+            shuffle=False,
+            drop_last=False,
         )
+        self.ccdf_lin_decoder: torch.nn.Linear = model.fit_linear_decoder(
+            train_dataloader=y_zy_dataloader, ridge_reg=ridge_reg
+        )
+        # Ignore fitted bias
+        self.ccdf_lin_decoder.bias = torch.nn.Parameter(torch.zeros(self.ccdf_lin_decoder.bias.shape))
 
     def forward(self, x_cond: torch.Tensor):
         """Predicts the Conditional Cumulative Distribution Function of the random variable Y given X=x.
@@ -117,10 +51,14 @@ class NCPConditionalCDF(torch.nn.Module):
             ccdf: (numpy.ndarray): The predicted Conditional Cumulative Distribution Function of shape
             (n_cond_points, discretization_points, y_dim) or (discretization_points, y_dim) if x_cond is a single point.
         """
+        device = next(self.ncp_model.parameters()).device
+        self.to(device)
+
         if x_cond.ndim == 1:
             x_cond = x_cond[None, :]
 
-        deflated_ccdf_pred = self.ccdf_regressor(x_cond=x_cond).detach().cpu().numpy()
+        deflated_ccdf_pred = self.ncp_model.conditional_expectation(x_cond.to(device), hy2zy=self.ccdf_lin_decoder)
+        deflated_ccdf_pred = deflated_ccdf_pred.detach().cpu().numpy()  # (n_cond_points, discretization_points * y_dim)
         # print(deflated_ccdf_pred.shape)
         n_cond_points, _ = deflated_ccdf_pred.shape
         deflated_ccdf_pred = deflated_ccdf_pred.reshape((n_cond_points, self.discretization_points, self.n_obs_dims))
