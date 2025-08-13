@@ -52,12 +52,12 @@ class NCPConditionalCDF(torch.nn.Module):
         self.discretizer_kwargs = discretizer_kwargs or {}
 
         # Build a robust, monotone support per dimension (shape: (m, d_y)) _____________________________
-        self.support_obs = self._build_support(y_train=y_train, m=self.discretization_points)
+        self.discretized_support = self._build_support(y_train=y_train, m=self.discretization_points)
 
         # Indicator functions __________________________________________________________________________
         # Compute the indicator function of (y_i <= y_i') for each y_i' in the discretized support of y_i
         # cdf_obs_ind -> (n_samples, discretization_points, y_dim)
-        cdf_obs_ind = (y_train.detach().cpu().numpy()[:, None, :] <= self.support_obs[None, :, :]).astype(int)
+        cdf_obs_ind = (y_train.detach().cpu().numpy()[:, None, :] <= self.discretized_support[None, :, :]).astype(int)
 
         # Estimate the CDF _____________________________________________________________________________
         self.marginal_CDF = cdf_obs_ind.mean(axis=0)  # (m, d_y) -> F(y') -> P(Y <= y')
@@ -74,7 +74,7 @@ class NCPConditionalCDF(torch.nn.Module):
             drop_last=False,
         )
         self.ccdf_lin_decoder: torch.nn.Linear = model.fit_linear_decoder(
-            train_dataloader=y_zy_dataloader, ridge_reg=ridge_reg
+            train_dataloader=y_zy_dataloader, ridge_reg=ridge_reg, lstsq=False
         )
         # Ignore fitted bias
         self.ccdf_lin_decoder.bias = torch.nn.Parameter(torch.zeros(self.ccdf_lin_decoder.bias.shape))
@@ -254,13 +254,15 @@ class NCPConditionalCDF(torch.nn.Module):
             if dim_ccdf.ndim == 2:  # Multiple conditioning points:
                 q_low_per_x, q_high_per_ = [], []
                 for x_cond_idx in range(dim_ccdf.shape[0]):
-                    low_qx, high_qx = self.find_best_quantile(self.support_obs[..., dim], dim_ccdf[x_cond_idx], alpha)
+                    low_qx, high_qx = self.find_best_quantile(
+                        self.discretized_support[..., dim], dim_ccdf[x_cond_idx], alpha
+                    )
                     q_low_per_x.append(low_qx)
                     q_high_per_.append(high_qx)
                 q_low.append(np.asarray(q_low_per_x))
                 q_high.append(np.asarray(q_high_per_))
             elif dim_ccdf.ndim == 1:
-                low_qx, high_qx = self.find_best_quantile(self.support_obs[..., dim], dim_ccdf, alpha)
+                low_qx, high_qx = self.find_best_quantile(self.discretized_support[..., dim], dim_ccdf, alpha)
                 q_low.append(low_qx)
                 q_high.append(high_qx)
             else:
@@ -285,7 +287,7 @@ class NCPConditionalCDF(torch.nn.Module):
             return x_support[0], x_support[-1]
         # Enforce monotonicity defensively
         x_support = np.maximum.accumulate(x_support)
-        cdf_x = np.clip(np.maximum.accumulate(cdf_x), 0.0, 1.0)
+        # cdf_x = np.clip(np.maximum.accumulate(cdf_x), 0.0, 1.0)
 
         t0 = 0
         t1 = 1

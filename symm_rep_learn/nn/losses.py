@@ -39,62 +39,6 @@ def contrastive_low_rank_loss_memory_heavy(fx_c, hy_c, Dr) -> tuple[Tensor, dict
     return truncation_err, metrics
 
 
-def contrastive_low_rank_loss_old(fx_c, hy_c, Dr) -> tuple[torch.Tensor, dict]:
-    """Memory-efficient implementation of ||E - E_r||_HS^2, avoiding n^2 memory.
-
-    This implementation uses the Gram matrix trick to compute E_p(x)p(y)[k_r(x,y)^2] without
-    creating the full n x n kernel matrix pmd_mat. Instead of computing all pairwise kernel
-    evaluations k_r(x_i, y_j) = 1 + f(x_i)^T Dr h(y_j), we reformulate the computation using:
-
-    1. Gram matrices: Gx = f(x)^T @ f(x) (r_x x r_x) and Gy = h(y)^T @ h(y) (r_y x r_y)
-    2. Matrix operations on smaller matrices to recover the required sums
-    3. Diagonal vs off-diagonal separation to compute the correct expectation terms
-
-    Args:
-        fx_c: (Tensor) shape (n, r_x), centered embedding functions f(x) for X.
-        hy_c: (Tensor) shape (n, r_y), centered embedding functions h(y) for Y.
-        Dr: (Tensor) shape (r_x, r_y), representing the truncated operator.
-
-    Returns:
-        (Tensor) Low-rank approximation error loss.
-        (dict) Metrics to monitor during training.
-    """
-    n_samples = fx_c.shape[0]
-    U = fx_c @ Dr  # (n, r_y)
-    s_diag = torch.sum(U * hy_c, dim=1)  # (n,)
-
-    # E_p(x,y)[k_r(x,y)]
-    E_pxy_kr = 1.0 + s_diag.mean()
-
-    # For E_p(x)p(y)[k_r(x,y)^2], compute using Gram matrix trick
-    Fx_sum = fx_c.sum(dim=0)  # (r_x,)
-    Hy_sum = hy_c.sum(dim=0)  # (r_y,)
-    sum_s_all = Fx_sum @ Dr @ Hy_sum  # scalar
-
-    Gx = fx_c.T @ fx_c  # (r_x, r_x)
-    Gy = hy_c.T @ hy_c  # (r_y, r_y)
-    DrT_Dr = Dr.T @ Gx @ Dr  # (r_y, r_y)
-    sum_s2_all = torch.sum(DrT_Dr * Gy)  # tr(Gy @ Dr^T Gx Dr)
-
-    sum_s_diag = s_diag.sum()
-    sum_s2_diag = torch.sum(s_diag**2)
-
-    sum_k2_all = n_samples**2 + 2.0 * sum_s_all + sum_s2_all
-    sum_k2_diag = n_samples + 2.0 * sum_s_diag + sum_s2_diag
-    sum_k2_off = sum_k2_all - sum_k2_diag
-
-    E_pxpy_k2 = sum_k2_off / (n_samples * (n_samples - 1))
-    truncation_err = -2.0 * E_pxy_kr + E_pxpy_k2 + 1.0
-
-    with torch.no_grad():
-        metrics = {
-            "E_p(x)p(y) k_r(x,y)^2": E_pxpy_k2 - 1,
-            "E_p(x,y) k_r(x,y)": E_pxy_kr - 1,
-        }
-
-    return truncation_err, metrics
-
-
 def contrastive_low_rank_loss(
     fx_c: Tensor,  # (B, r_x, *spatial)
     hy_c: Tensor,  # (B, r_y, *spatial)
@@ -166,8 +110,8 @@ def contrastive_low_rank_loss(
     # ---------- metrics ----------
     with torch.no_grad():
         metrics = {
-            "E_p(x,y) k_r(x,y)": E_pxy_kr.mean() - 1.0,
-            "E_p(x)p(y) k_r(x,y)^2": E_pxpy_k2.mean() - 1.0,
+            "E_p(x,y) k_r(x,y)": (E_pxy_kr.mean() - 1.0).cpu().item(),
+            "E_p(x)p(y) k_r(x,y)^2": (E_pxpy_k2.mean() - 1.0).cpu().item(),
         }
 
     return loss, metrics
@@ -326,8 +270,8 @@ if __name__ == "__main__":
     torch.manual_seed(42)
 
     # Test 1: Compare spatial (3x4) with individual non-spatial computations
-    spatial_shape = (3, 4)
-    total_spatial = spatial_shape[0] * spatial_shape[1]
+    spatial_shape = (10, 50)
+    total_spatial = np.prod(spatial_shape)  # Total number of spatial locations (3 * 4 * 10 = 120)
 
     # Generate data
     base_data_x = torch.randn(B, r_x, total_spatial, dtype=torch.float32)
@@ -363,3 +307,5 @@ if __name__ == "__main__":
             # Compare with spatial loss at this location
             spatial_loss_val = spatial_losses[i, j].item()
             assert np.isclose(single_loss, spatial_loss_val, atol=1e-5, rtol=1e-5)
+
+    print("All spatial locations match individual non-spatial computations.")

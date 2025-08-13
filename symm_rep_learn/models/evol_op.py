@@ -41,8 +41,6 @@ class EvolOp1D(NCP):
         )
 
         self.self_adjoint = self_adjoint
-        # Remove/deregister unnecessary modules
-        self.data_norm_y = self.data_norm_x
 
         if self.self_adjoint:  # Truncated operator is self-adjoint
             # Deregister spectral norm
@@ -72,11 +70,16 @@ class EvolOp1D(NCP):
             state_traj = torch.cat([x, y], dim=0) if y is not None else x
 
         fstate = self._embedding_x(state_traj)
-        fstate_c = self.data_norm_x(fstate)  # Center the embeddings
 
+        fx = fstate[:x_samples]  # Centered latent state of shape (B, r_x)
+        hy = fstate[x_samples:] if y is not None else None  # Next state embedding
         # Separate past and next image embeddings
-        fx_c = fstate_c[:x_samples]
-        hy_c = fstate_c[x_samples:] if y is not None else None
+        fx_c = self.data_norm_x(fx)  # Center the embeddings
+        if y is not None:
+            hy_c_gt = self.data_norm_y(hy)
+            hy_c = torch.nn.functional.linear(hy_c_gt, self.truncated_operator)
+        else:
+            hy_c = None
 
         return fx_c, hy_c
 

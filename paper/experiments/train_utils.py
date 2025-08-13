@@ -2,13 +2,12 @@ import math
 
 import torch
 from escnn.nn import FieldType, GeometricTensor
+from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
+from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import default_collate
 
-from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
-from lightning.pytorch.loggers import WandbLogger
-
-from symm_rep_learn.inference.ncp import NCPConditionalCDF, NCPRegressor
+from symm_rep_learn.inference.ncp import NCPConditionalCDF
 from symm_rep_learn.models.multivariateCQR import get_coverage, get_relaxed_coverage, get_set_size
 from symm_rep_learn.models.ncp import NCP
 

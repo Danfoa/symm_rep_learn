@@ -173,9 +173,9 @@ class NCP(torch.nn.Module):
         Returns:
             torch.Tensor: Conditional expectation in h(y) space (B, r_y) or z(y) space (B, |z(y)|).
         """
-        fx, _ = self(x=x, y=None)  # fx: (B, r_x, H, W)
+        fx_c, _ = self(x=x, y=None)  # fx: (B, r_x, H, W)
         # Evolve state observations
-        hy_cond_x = torch.einsum("bx,xy->by", fx, self.truncated_operator)
+        hy_cond_x = torch.einsum("bx,xy->by", fx_c, self.truncated_operator)
 
         if hy2zy is None:
             return hy_cond_x
@@ -188,50 +188,62 @@ class NCP(torch.nn.Module):
         self,
         train_dataloader: torch.utils.data.DataLoader,
         ridge_reg: float = 1e-3,
+        lstsq: bool = True,
     ) -> torch.nn.Linear:
-        r"""Fit linear map :math:`h(y) \mapsto z(y)` using ridge regression on training data.
+        r"""Fit linear map :math:`h(y) \mapsto z(y)` using training data.
+
+        Two estimation modes are now supported:
+        - lstsq=True (default): solve (ridge) least squares to obtain W = argmin ||Z_c - H W^T||^2 + ridge_reg||W||^2.
+        - lstsq=False: use the low-variance plug-in cross moment (covariance) estimator W = E[ z_c h^T ] (i.e. sample
+          cross-covariance) which is optimal when Cov(h) \approx I due to the model's orthonormal regularization.
 
         Args:
-            train_dataloader (torch.utils.data.DataLoader): DataLoader yielding (y, z(y)) pairs.
-            ridge_reg (float): Ridge regularization parameter for least squares.
+            train_dataloader (torch.utils.data.DataLoader): Yields (y, z(y)) pairs.
+            ridge_reg (float): Ridge regularization parameter (ignored when lstsq=False).
+            lstsq (bool): If False, return covariance estimator without solving a linear system.
 
         Returns:
             torch.nn.Linear: Linear decoder mapping h(y) embeddings to target z(y).
         """
         device = next(self.parameters()).device
-        # Get the training data to fit the linear decoder _____________________________________________
+        # Collect training embeddings -----------------------------------------------------------------
         hy_train = []
         zy_train = []
 
-        assert len(next(iter(train_dataloader))) == 2, (
-            f"Expected DataLoader to yield (y, z(y)), got {next(iter(train_dataloader))} items."
-        )
-        for y, zy in train_dataloader:
-            _, hy = self(y=y.to(device))  # shape: (n_samples, embedding_dim)
+        first_batch = next(iter(train_dataloader))
+        assert len(first_batch) == 2, f"Expected DataLoader to yield (y, z(y)), got {len(first_batch)} items."
+        # Re-iterate including the first batch --------------------------------------------------------
+        for y, zy in [first_batch, *list(train_dataloader)[1:]]:
+            _, hy = self(y=y.to(device))  # centered h_c(y)
             hy_train.append(hy.detach().cpu())
             zy_train.append(zy.detach().cpu())
-        hy_train = torch.cat(hy_train, dim=0)  # (B, r_y = |h(y)|)
-        zy_train = torch.cat(zy_train, dim=0)  # (B, z(y))
+        hy_train = torch.cat(hy_train, dim=0)  # (N, r_y)
+        zy_train = torch.cat(zy_train, dim=0)  # (N, |z|)
 
-        # Center the target variable __________________________________________________________________
-        zy_mean = zy_train.mean(axis=0, keepdim=True)  # (1, z(y))
-        zy_c_train = zy_train - zy_mean  # (B, z(y))
+        # Center target -------------------------------------------------------------------------------
+        zy_mean = zy_train.mean(axis=0, keepdim=True)  # (1, |z|)
+        zy_c_train = zy_train - zy_mean  # (N, |z|)
 
-        # Fit a linear map from h(y) to z_c(y) using least squares with ridge regularization _________
-        if ridge_reg > 0.0:
-            dim_hy = hy_train.shape[1]
-            dim_zy = zy_c_train.shape[1]
-
-            eye = torch.eye(dim_hy, device=hy_train.device, dtype=hy_train.dtype)
-            X_aug = torch.cat([hy_train, math.sqrt(ridge_reg) * eye], dim=0)  # (N+d, d)
-            Y_aug = torch.cat(
-                [zy_c_train, torch.zeros(dim_hy, dim_zy, device=hy_train.device, dtype=hy_train.dtype)], dim=0
-            )
-            Czyhy = torch.linalg.lstsq(X_aug, Y_aug).solution.T  # (|z(y)|, r_y)
+        if not lstsq:
+            # Simple cross-covariance estimator: W = E[z_c h^T]
+            n = hy_train.shape[0]
+            Czyhy = (zy_c_train.T @ hy_train) / n  # (|z|, r_y)
         else:
-            Czyhy = torch.linalg.lstsq(hy_train, zy_c_train).solution.T
+            # Least squares / ridge regression -------------------------------------------------------
+            raise ValueError("This does not work properly, use lstsq=False instead.")
+            if ridge_reg > 0.0:
+                dim_hy = hy_train.shape[1]
+                dim_zy = zy_c_train.shape[1]
+                eye = torch.eye(dim_hy, device=hy_train.device, dtype=hy_train.dtype)
+                X_aug = torch.cat([hy_train, math.sqrt(ridge_reg) * eye], dim=0)  # (N+d, d)
+                Y_aug = torch.cat(
+                    [zy_c_train, torch.zeros(dim_hy, dim_zy, device=hy_train.device, dtype=hy_train.dtype)], dim=0
+                )
+                Czyhy = torch.linalg.lstsq(X_aug, Y_aug).solution.T  # (|z|, r_y)
+            else:
+                Czyhy = torch.linalg.lstsq(hy_train, zy_c_train).solution.T  # (|z|, r_y)
 
-        # Create the linear image decoder in the form of a Linear layer ________________________________________________
+        # Build decoder layer -------------------------------------------------------------------------
         linear_decoder = torch.nn.Linear(
             in_features=hy_train.shape[1],
             out_features=zy_c_train.shape[1],
@@ -239,7 +251,7 @@ class NCP(torch.nn.Module):
         )
         linear_decoder.eval()
         linear_decoder.weight.data = Czyhy  # Linear map
-        linear_decoder.bias.data = zy_mean.squeeze(0)  # Add mean as bias
+        linear_decoder.bias.data = zy_mean.squeeze(0)  # Mean as bias
 
         return linear_decoder.to(device)
 
