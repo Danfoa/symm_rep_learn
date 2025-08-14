@@ -52,7 +52,9 @@ class NCPConditionalCDF(torch.nn.Module):
         self.discretizer_kwargs = discretizer_kwargs or {}
 
         # Build a robust, monotone support per dimension (shape: (m, d_y)) _____________________________
-        self.discretized_support = self._build_support(y_train=y_train, m=self.discretization_points)
+        self.discretized_support = self._build_support(
+            y_train=y_train, n_discretization_points=self.discretization_points
+        )
 
         # Indicator functions __________________________________________________________________________
         # Compute the indicator function of (y_i <= y_i') for each y_i' in the discretized support of y_i
@@ -79,15 +81,17 @@ class NCPConditionalCDF(torch.nn.Module):
         # Ignore fitted bias
         self.ccdf_lin_decoder.bias = torch.nn.Parameter(torch.zeros(self.ccdf_lin_decoder.bias.shape))
 
-    def _build_support(self, y_train: torch.Tensor, m: int) -> np.ndarray:
+    def _build_support(self, y_train: torch.Tensor, n_discretization_points: int) -> np.ndarray:
         """Construct a monotone support grid of shape ``(m, d_y)`` according to the chosen strategy.
 
         Ensures each column is non-decreasing. Robust defaults are used to mitigate outliers.
         """
-        assert m >= 2, f"support_discretization_points must be >= 2, got {m}"
+        assert n_discretization_points >= 2, (
+            f"support_discretization_points must be >= 2, got {n_discretization_points}"
+        )
         y_np = y_train.detach().cpu().numpy()
         n, d = y_np.shape
-        support = np.empty((m, d), dtype=float)
+        support = np.empty((n_discretization_points, d), dtype=float)
 
         strategy = (self.support_strategy or "linspace").lower()
         kwargs = dict(self.discretizer_kwargs) if self.discretizer_kwargs is not None else {}
@@ -102,7 +106,7 @@ class NCPConditionalCDF(torch.nn.Module):
                 col_max = np.max(col)
                 q_lo = np.quantile(col, eps)
                 q_hi = np.quantile(col, 1.0 - eps)
-                s = np.linspace(q_lo, q_hi, m)
+                s = np.linspace(q_lo, q_hi, n_discretization_points)
                 # Include original min/max at the ends without changing length
                 s[0] = col_min
                 s[-1] = col_max
@@ -110,14 +114,10 @@ class NCPConditionalCDF(torch.nn.Module):
                 support[:, j] = s
 
         elif strategy == "kbins_discretizer":
-            try:
-                from sklearn.preprocessing import KBinsDiscretizer
-            except Exception as e:
-                raise ImportError(
-                    "KBinsDiscretizer strategy requires scikit-learn. Install scikit-learn or choose another strategy."
-                ) from e
+            from sklearn.preprocessing import KBinsDiscretizer
+
             kbd_kwargs = {
-                "n_bins": m,
+                "n_bins": n_discretization_points,
                 "encode": "ordinal",
                 "strategy": kwargs.get("strategy", "quantile"),
             }
@@ -130,47 +130,55 @@ class NCPConditionalCDF(torch.nn.Module):
                 # Use right edges as thresholds -> m points
                 s = edges[1:].astype(float)
                 # Handle potential duplicates by falling back to empirical quantiles
-                if np.unique(s).size < m:
-                    q = np.arange(1, m + 1) / m
+                if np.unique(s).size < n_discretization_points:
+                    q = np.arange(1, n_discretization_points + 1) / n_discretization_points
                     s = np.quantile(col.ravel(), q)
                 s = self._enforce_strict_monotone(s)
                 support[:, j] = s
 
         elif strategy == "quantile_transformer":
-            try:
-                from sklearn.preprocessing import QuantileTransformer
-            except Exception as e:
-                raise ImportError(
-                    "QuantileTransformer strategy requires scikit-learn. Install scikit-learn or choose another strategy."
-                ) from e
-            # Prefer uniform so we can grid in [0,1] without extra dependencies
-            qt_defaults = {
-                "n_quantiles": min(1000, n),
-                "output_distribution": kwargs.get("output_distribution", "uniform"),
-                "subsample": n,
-                "random_state": kwargs.get("random_state", None),
-            }
+            from sklearn.preprocessing import QuantileTransformer
+
+            out_distribution = kwargs.get("output_distribution", "normal")
+            qt_defaults = dict(
+                n_quantiles=n_discretization_points,
+                output_distribution=out_distribution,
+                subsample=n,  # use all data
+                random_state=kwargs.get("random_state", None),
+            )
+            # Fit once on the full (n, d) data matrix; features are transformed independently
+            qt = QuantileTransformer(**qt_defaults)
+            qt.fit(y_np)
+            if out_distribution == "uniform":
+                # Grid uniformly in (0,1) with clipping to avoid extremal instabilities
+                u_eps = float(kwargs.get("u_eps", 1e-5))
+                u = np.linspace(u_eps, 1.0 - u_eps, n_discretization_points)
+                U = np.tile(u.reshape(-1, 1), (1, d))  # (m, d)
+                S = qt.inverse_transform(U)  # (m, d) in original units per feature
+            elif out_distribution == "normal":
+                # Grid linearly in normal space within [-n_std, n_std], then invert to original units
+                n_std = float(kwargs.get("n_std", 3.0))
+                z = np.linspace(-n_std, n_std, n_discretization_points)
+                Z = np.tile(z.reshape(-1, 1), (1, d))  # (m, d)
+                S = qt.inverse_transform(Z)  # (m, d)
+            else:
+                raise NotImplementedError(
+                    f"Output distribution '{out_distribution}' not supported. Use 'uniform' or 'normal'."
+                )
+
+            # Enforce strict monotonicity per feature
             for j in range(d):
-                col = y_np[:, j].reshape(-1, 1)
-                qt = QuantileTransformer(**qt_defaults)
-                qt.fit(col)
-                # Use a clipped uniform grid in [0,1] to avoid extremal instabilities
-                u_eps = float(kwargs.get("u_eps", 1e-4))
-                u = np.linspace(u_eps, 1.0 - u_eps, m)
-                if qt_defaults["output_distribution"] == "uniform":
-                    s = qt.inverse_transform(u.reshape(-1, 1)).ravel()
-                else:
-                    raise NotImplementedError(
-                        f"Output distribution '{qt_defaults['output_distribution']}' not supported."
-                    )
-                s = self._enforce_strict_monotone(s)
-                support[:, j] = s
+                support[:, j] = self._enforce_strict_monotone(S[:, j])
 
         else:
             raise ValueError(
                 f"Unknown support_strategy '{self.support_strategy}'. Choose from 'linspace', 'kbins_discretizer', 'quantile_transformer'."
             )
 
+        # Final sanity check: ensure we return exactly m points per dimension
+        assert support.shape == (n_discretization_points, d), (
+            f"Built support has shape {support.shape}, expected {(n_discretization_points, d)}"
+        )
         return support
 
     def _enforce_strict_monotone(self, s: np.ndarray) -> np.ndarray:
@@ -248,28 +256,16 @@ class NCPConditionalCDF(torch.nn.Module):
         """
         assert alpha is None or 0 < alpha <= 1, f"Alpha must be in the range (0, 1] got {alpha}"
         ccdf = self.forward(x_cond)
-        q_low, q_high = [], []
-        for dim in range(self.n_obs_dims):
-            dim_ccdf = ccdf[..., dim]  # (n_train_points, discretization_points)
-            if dim_ccdf.ndim == 2:  # Multiple conditioning points:
-                q_low_per_x, q_high_per_ = [], []
-                for x_cond_idx in range(dim_ccdf.shape[0]):
-                    low_qx, high_qx = self.find_best_quantile(
-                        self.discretized_support[..., dim], dim_ccdf[x_cond_idx], alpha
-                    )
-                    q_low_per_x.append(low_qx)
-                    q_high_per_.append(high_qx)
-                q_low.append(np.asarray(q_low_per_x))
-                q_high.append(np.asarray(q_high_per_))
-            elif dim_ccdf.ndim == 1:
-                low_qx, high_qx = self.find_best_quantile(self.discretized_support[..., dim], dim_ccdf, alpha)
-                q_low.append(low_qx)
-                q_high.append(high_qx)
-            else:
-                raise ValueError(f"Invalid shape {dim_ccdf.shape}")
-        q_low = np.asarray(q_low).T
-        q_high = np.asarray(q_high).T
-        return q_low, q_high
+        # Vectorized path -----------------------------------------------------------------------------
+        if ccdf.ndim == 3:
+            q_low, q_high = self.find_best_quantile_batched(self.discretized_support, ccdf, alpha)
+            return q_low, q_high
+        elif ccdf.ndim == 2:
+            # Single conditioning point; still use batched for consistency
+            q_low_b, q_high_b = self.find_best_quantile_batched(self.discretized_support, ccdf[None, ...], alpha)
+            return q_low_b[0], q_high_b[0]
+        else:
+            raise ValueError(f"Invalid ccdf shape {ccdf.shape}")
 
     @staticmethod
     def find_best_quantile(x_support, cdf_x, alpha):
@@ -314,3 +310,100 @@ class NCPConditionalCDF(torch.nn.Module):
                 # increase right edge
                 t1 += 1
         return x_support[best_t0], x_support[best_t1]
+
+    @staticmethod
+    def find_best_quantile_batched(x_support: np.ndarray, cdf: np.ndarray, alpha: float):
+        r"""Vectorized shortest-interval quantiles for many conditioning points and dimensions.
+
+        Args:
+            x_support: array of shape (m, d)
+            cdf: array of shape (n, m, d) or (m, d)
+            alpha: miscoverage level in (0,1]
+
+        Returns:
+            (q_low, q_high): arrays of shape (n, d) (or squeezed to (d,) if n==1 when caller handles it).
+        """
+        assert 0 < alpha <= 1, f"alpha must be in (0,1], got {alpha}"
+        x_support = np.asarray(x_support)
+        cdf = np.asarray(cdf)
+        assert x_support.ndim == 2, f"x_support must be (m,d), got {x_support.shape}"
+        if cdf.ndim == 2:
+            cdf = cdf[None, ...]
+        assert cdf.ndim == 3, f"cdf must be (n,m,d), got {cdf.shape}"
+        n, m, d = cdf.shape
+        assert x_support.shape == (m, d), f"support shape {x_support.shape} != {(m, d)}"
+
+        # Torch implementation using batched searchsorted along m -------------------------------------
+        C = torch.from_numpy(cdf.astype(np.float32))  # (n,m,d)
+        S = torch.from_numpy(x_support.astype(np.float32))  # (m,d)
+        p = 1.0 - float(alpha)
+        # Permute to (n,d,m) to treat last dim as search axis
+        C_ndm = C.permute(0, 2, 1).contiguous()  # (n,d,m)
+        T = (C_ndm + p).clamp(max=1.0)  # (n,d,m)
+        # searchsorted requires sorted input along last dim; assume ccdf is monotone along m
+        idx_raw = torch.searchsorted(C_ndm, T, right=False)  # (n,d,m), values in [0, m]
+        idx_clamped = idx_raw.clamp(max=m - 1)
+
+        # Feasibility: C[idx] - C[t0] >= p and idx < m
+        C_right = torch.gather(C_ndm, dim=2, index=idx_clamped)
+        C_left = C_ndm  # broadcast over t0 axis
+        feasible = (idx_raw < m) & ((C_right - C_left) >= (p - 1e-12))
+
+        # Widths: xR - xL
+        S_T = S.t()  # (d,m)
+        S_T_exp = S_T.unsqueeze(0).expand(n, -1, -1)  # (n,d,m)
+        xR = torch.gather(S_T_exp, dim=2, index=idx_clamped)  # (n,d,m)
+        xL = S_T_exp  # (n,d,m) where column t0 is left point
+        widths = xR - xL  # (n,d,m)
+        widths[~feasible] = float("inf")
+
+        # Argmin over left index t0
+        best_t0 = torch.argmin(widths, dim=2)  # (n,d)
+        best_t1 = torch.gather(idx_clamped, 2, best_t0.unsqueeze(-1)).squeeze(-1)  # (n,d)
+
+        # Fallback for cases with no feasible interval: choose full span [0, m-1]
+        any_feasible = feasible.any(dim=2)  # (n,d)
+        if not torch.all(any_feasible):
+            default_t0 = torch.zeros_like(best_t0)
+            default_t1 = (m - 1) * torch.ones_like(best_t1)
+            best_t0 = torch.where(any_feasible, best_t0, default_t0)
+            best_t1 = torch.where(any_feasible, best_t1, default_t1)
+
+        q_low = torch.gather(S_T_exp, 2, best_t0.unsqueeze(-1)).squeeze(-1)  # (n,d)
+        q_high = torch.gather(S_T_exp, 2, best_t1.unsqueeze(-1)).squeeze(-1)  # (n,d)
+
+        return q_low.cpu().numpy(), q_high.cpu().numpy()
+
+
+if __name__ == "__main__":
+    # Minimal tests: vectorized vs non-vectorized agree for multiple conditioning points and dims
+    rng = np.random.default_rng(0)
+    n, m, d = 7, 57, 3
+    # Build strictly increasing support per dim
+    S = np.sort(rng.normal(size=(m, d)), axis=0)
+    # Ensure strictly increasing by adding tiny steps if needed
+    for j in range(d):
+        S[:, j] = np.maximum.accumulate(S[:, j])
+        for i in range(1, m):
+            if S[i, j] <= S[i - 1, j]:
+                S[i, j] = S[i - 1, j] + 1e-8
+    # Build monotone CDFs in [0,1]
+    raw = rng.random(size=(n, m, d))
+    raw.sort(axis=1)
+    C = np.clip(raw, 0.0, 1.0)
+
+    alpha = 0.2
+    # Vectorized
+    ql_v, qh_v = NCPConditionalCDF.find_best_quantile_batched(S, C, alpha)
+
+    # Non-vectorized baseline
+    ql_b = np.zeros((n, d))
+    qh_b = np.zeros((n, d))
+    for i in range(n):
+        for j in range(d):
+            ql_b[i, j], qh_b[i, j] = NCPConditionalCDF.find_best_quantile(S[:, j], C[i, :, j], alpha)
+
+    # Compare
+    assert np.allclose(ql_v, ql_b, atol=1e-6), f"q_low mismatch\nvec={ql_v}\nbase={ql_b}"
+    assert np.allclose(qh_v, qh_b, atol=1e-6), f"q_high mismatch\nvec={qh_v}\nbase={qh_b}"
+    print("Vectorized and baseline quantiles match for all test cases.")
