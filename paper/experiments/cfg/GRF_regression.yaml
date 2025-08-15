@@ -16,19 +16,15 @@ robot_name: aliengo  # aliengo / mini_cheetah / a1 / anymal_c
 # MODEL CONFIG
 model: NCP
 truncated_op_bias: 'full_rank'  # 'Cxy' or 'diag' or 'svals'
-gamma: 25                       # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
+gamma: 1                        # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
 gamma_centering: 0.0           # Weight of the NCP regularization loss term. NCP train best at low gamma values < 0.01
-learnable_change_basis: false   # Learnable change of basis to the Isotypic basis
-lstsq: true                     # Use analytic lstsq for regression of NCP models.
-analytic_residual: false
+momentum: 0.995
 
 dataset:
-#  path: "paper/experiments/grf_regression/datasets/forward+rotate/${robot_name}/terrain=perlin/lin_vel=(0.0, 3.0) ang_vel=(-0.5, 0.5) friction=(0.9, 1.0)/ep=50_steps=1249.h5"
-#  path: "paper/experiments/grf_regression_uc/datasets/forward/${robot_name}/terrain=flat/lin_vel=(0.0, 0.0) ang_vel=(-0.0, 0.0) friction=(0.9, 1.0)/ep=25_steps=1249.h5"
-  path: 'data/aliengo/perlin/lin_vel=(0.0, 0.0) ang_vel=(-1.4, 1.4) friction=(0.7, 1.0)/ep=50_steps=2499.h5'
+  path: 'data/aliengo/perlin/lin_vel=(-1.5, 1.5) ang_vel=(-0.5, 0.5) friction=(0.7, 1.0)/ep=100_steps=1249.h5'
   # Observations that will be concatenated to compose y and x, given y = NN(x)
   x_obs: ['qpos_js', 'qvel_js', 'base_lin_acc:base', 'base_lin_vel:base', 'base_lin_vel_err:base', 'base_ang_vel:base', 'base_ang_vel_err:base', 'gravity_vector:base', 'feet_vel:base', 'tau_ctrl_setpoint']
-  y_obs: ['work', 'kinetic_energy', 'contact_forces:base']
+  y_obs: ['work', 'contact_forces:base', 'feet_vel_rel:base']
   mode: 'static'    # 'static' | 'time_series'. See ProprioceptiveDataset for more details.
   x_frames: 1       # Number of time-frames of observations for x -> (x_frames, x_obs_dim)
   y_frames: 1       # Number of time-frames to consider for y -> (y_frames, y_obs_dim)
@@ -45,27 +41,25 @@ dataset:
 
 # Architecture of the neural network
 architecture:
-  hidden_layers: 4
-  hidden_units: 512
+  hidden_units: [512,512,512,512]  # List of hidden layer sizes. If a single int is provided, it is used for all layers.
   embedding_dim: 128
   activation: ELU           # Any torch activation
-  iter_whitening: false     # BatchNorm that also decorrelates the features. See Algorithm 1 of https://arxiv.org/abs/1904.03441
-  residual_encoder: False   # Introduce target regression variables in L2(Y)
-  residual_encoder_x: false   # Introduce target regression variables in L2(Y)
+  residual_encoder_x: False   # Introduce target regression variables in L2(Y)
+  residual_encoder_y: False   # Introduce target regression variables in L2(Y)
 #  bias: True
 
 # OPTIMIZATION CONFIG
 optim:
   lr: 5e-4                    # Learning rate NCP train best at low lr values < 1e-3
-  patience: 25                # Epochs to wait for improvement before early stopping
+  patience: 25                # Number of Val checks to wait for improvement before early stopping
   batch_size: 2048            # The higher the best
   max_epochs: 800             # Number of passes before stop training. Early stopping is used.
   dl_num_workers: 0           # Number of workers for data loading
-
+  check_val_every_n_epoch: 5 #
 
 exp_desc: "robot=${robot_name}"
 opt_desc: "lr=${optim.lr}_bs=${optim.batch_size}_pat=${optim.patience}"
-model_desc: "${model}_hu=${architecture.hidden_units}_hl=${architecture.hidden_layers}_act=${architecture.activation}_resY=${architecture.residual_encoder}_lstsq=${lstsq}"
+model_desc: "${model}_hu=${architecture.hidden_units}_act=${architecture.activation}_resY=${architecture.residual_encoder}_momentum=${momentum}_gamma=${gamma}_gamma_centering=${gamma_centering}_trunc_op_bias=${truncated_op_bias}"
 run_desc: "${exp_desc}_${opt_desc}_${model_desc}"
 
 hydra:
@@ -98,8 +92,13 @@ hydra:
           - architecture.hidden_layers
           - architecture.activation
           - architecture.residual_encoder
-          - lstsq
           - model
           - optim.lr
           - optim.batch_size
           - optim.max_epochs
+          # --- ensure all fields used in run_desc are excluded ---
+          - optim.patience
+          - momentum
+          - gamma
+          - gamma_centering
+          - truncated_op_bias

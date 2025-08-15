@@ -19,6 +19,7 @@ from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from morpho_symm.data.DynamicsRecording import DynamicsRecording
 from omegaconf import DictConfig, OmegaConf
+from symm_learning.models import EMLP, MLP
 from symm_learning.stats import invariant_orthogonal_projector
 from torch.optim import Adam
 from torch.utils.data import DataLoader, TensorDataset, default_collate
@@ -26,8 +27,6 @@ from torch.utils.data import DataLoader, TensorDataset, default_collate
 from symm_rep_learn.models.equiv_ncp import ENCP
 from symm_rep_learn.models.lightning_modules import SupervisedTrainingModule, TrainingModule
 from symm_rep_learn.models.ncp import NCP
-from symm_rep_learn.nn.equiv_layers import EMLP
-from symm_rep_learn.nn.layers import MLP
 
 log = logging.getLogger(__name__)
 
@@ -39,94 +38,80 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
 
     if cfg.model.lower() == "encp":  # Equivariant NCP
         from escnn.nn import FieldType
-
         from symm_rep_learn.models.equiv_ncp import ENCP
-        from symm_rep_learn.nn.equiv_layers import EMLP
 
         G = x_type.representation.group
-
         reg_rep = G.regular_representation
 
-        kwargs = dict(
-            hidden_layers=cfg.architecture.hidden_layers,
-            activation=cfg.architecture.activation,
-            hidden_units=cfg.architecture.hidden_units,
-            bias=False,
-        )
-        if cfg.architecture.residual_encoder:
-            from symm_rep_learn.nn.equiv_layers import EMLP, ResidualEncoder
+        # Common latent type (k copies of regular rep)
+        k = max(1, math.ceil(cfg.architecture.embedding_dim // reg_rep.size))
+        lat_rep = [reg_rep] * k
+        lat_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=lat_rep)
 
-            lat_rep = [reg_rep] * max(1, math.ceil(cfg.architecture.embedding_dim // reg_rep.size))
-            lat_x_type = FieldType(
-                gspace=escnn.gspaces.no_base_space(G), representations=list(y_type.representations) + lat_rep
-            )
-            lat_y_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=lat_rep)
-            x_embedding = EMLP(in_type=x_type, out_type=lat_x_type, **kwargs)
-            y_embedding = ResidualEncoder(encoder=EMLP(in_type=y_type, out_type=lat_y_type, **kwargs), in_type=y_type)
-            assert y_embedding.out_type.size == x_embedding.out_type.size
+        kwargs = dict(hidden_units=cfg.architecture.hidden_units, activation=cfg.architecture.activation, bias=True)
+
+        if cfg.architecture.residual_encoder_y:
+            from symm_rep_learn.nn.layers import ResidualEncoder
+            y_embedding = ResidualEncoder(encoder=EMLP(in_type=y_type, out_type=lat_type, **kwargs), in_type=y_type)
         else:
-            lat_type = FieldType(
-                gspace=escnn.gspaces.no_base_space(G),
-                representations=[reg_rep] * max(1, math.ceil(cfg.architecture.embedding_dim // reg_rep.size)),
-            )
-            x_embedding = EMLP(in_type=x_type, out_type=lat_type, **kwargs)
             y_embedding = EMLP(in_type=y_type, out_type=lat_type, **kwargs)
+
+        if cfg.architecture.residual_encoder_x:
+            from symm_rep_learn.nn.equiv_layers import ResidualEncoder
+            x_embedding = ResidualEncoder(encoder=EMLP(in_type=x_type, out_type=lat_type, **kwargs), in_type=x_type)
+        else:
+            x_embedding = EMLP(in_type=x_type, out_type=lat_type, **kwargs)
+
+        assert y_embedding.out_type.size == x_embedding.out_type.size
         eNCPop = ENCP(
             embedding_x=x_embedding,
             embedding_y=y_embedding,
             orth_reg=cfg.gamma,
             centering_reg=cfg.gamma_centering,
-            truncated_op_bias=cfg.truncated_op_bias,
-            learnable_change_of_basis=cfg.learnable_change_basis,
+            momentum=cfg.momentum,
         )
-
         return eNCPop
+
     elif cfg.model.lower() == "ncp":  # NCP
         from symm_rep_learn.models.ncp import NCP
         from symm_rep_learn.mysc.utils import class_from_name
-        from symm_rep_learn.nn.layers import MLP
+        from symm_rep_learn.nn.layers import ResidualEncoder  # non-equivariant
 
         activation = class_from_name("torch.nn", cfg.architecture.activation)
         kwargs = dict(
-            output_shape=embedding_dim,
-            n_hidden=cfg.architecture.hidden_layers,
-            layer_size=cfg.architecture.hidden_units,
-            activation=activation,
-            bias=False,
-            iterative_whitening=cfg.architecture.iter_whitening,
+            out_dim=embedding_dim,
+            hidden_units=cfg.architecture.hidden_units,
+            activation=activation(),
+            bias=True,
         )
+        cfg.architecture.residual_encoder_x = bool(getattr(cfg.architecture, "residual_encoder_x", False))
+        cfg.architecture.residual_encoder_y = bool(getattr(cfg.architecture, "residual_encoder_y", False))
+
         if cfg.architecture.residual_encoder_x:
-            from symm_rep_learn.nn.layers import MLP, ResidualEncoder
-
             dim_free_embedding = embedding_dim - dim_x
-            fx = ResidualEncoder(
-                encoder=MLP(input_shape=dim_x, **kwargs | {"output_shape": dim_free_embedding}), in_dim=dim_x
-            )
+            fx = ResidualEncoder(encoder=MLP(in_dim=dim_x, **(kwargs | {"out_dim": dim_free_embedding})), in_dim=dim_x)
         else:
-            fx = MLP(input_shape=dim_x, **kwargs)
-        if cfg.architecture.residual_encoder:
-            from symm_rep_learn.nn.layers import MLP, ResidualEncoder
+            fx = MLP(in_dim=dim_x, **kwargs)
 
+        if cfg.architecture.residual_encoder_y:
             dim_free_embedding = embedding_dim - dim_y
-            fy = ResidualEncoder(
-                encoder=MLP(input_shape=dim_y, **kwargs | {"output_shape": dim_free_embedding}), in_dim=dim_y
-            )
+            fy = ResidualEncoder(encoder=MLP(in_dim=dim_y, **(kwargs | {"out_dim": dim_free_embedding})), in_dim=dim_y)
         else:
-            fy = MLP(input_shape=dim_y, **kwargs)
+            fy = MLP(in_dim=dim_y, **kwargs)
+
         ncp = NCP(
             embedding_x=fx,
             embedding_y=fy,
-            embedding_dim=embedding_dim,
+            embedding_dim_x=embedding_dim,
+            embedding_dim_y=embedding_dim,
             orth_reg=cfg.gamma,
             centering_reg=cfg.gamma_centering,
-            truncated_op_bias=cfg.truncated_op_bias,
-            learnable_change_basis=cfg.learnable_change_basis,
+            momentum=cfg.momentum,
         )
         return ncp
 
     elif cfg.model.lower() == "mlp":
         from symm_rep_learn.mysc.utils import class_from_name
-        from symm_rep_learn.nn.layers import MLP
 
         activation = class_from_name("torch.nn", cfg.architecture.activation)
         n_h_layers = cfg.architecture.hidden_layers
@@ -140,8 +125,6 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
         )
         return mlp
     elif cfg.model.lower() == "emlp":
-        from symm_rep_learn.nn.equiv_layers import EMLP
-
         n_h_layers = cfg.architecture.hidden_layers
         emlp = EMLP(
             in_type=x_type,

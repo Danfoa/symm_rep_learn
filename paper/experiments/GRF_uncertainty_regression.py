@@ -15,15 +15,15 @@ from escnn.group import directsum
 from escnn.nn import FieldType, GeometricTensor
 from gym_quadruped.utils.quadruped_utils import configure_observation_space_representations
 from lightning import Trainer, seed_everything
-from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
-from lightning.pytorch.loggers import WandbLogger
-from omegaconf import DictConfig, OmegaConf
+from lightning.pytorch.callbacks import ModelCheckpoint
+from omegaconf import DictConfig
 from plotly.subplots import make_subplots
 from torch.optim import Adam
 from torch.utils.data import DataLoader, default_collate
 
 from paper.experiments.CoM_regression import get_model
 from paper.experiments.grf_regression_uc.proprioceptive_datasets import ProprioceptiveDataset
+from paper.experiments.train_utils import get_train_logger_and_callbacks
 from symm_rep_learn.inference.encp import ENCPConditionalCDF
 from symm_rep_learn.inference.ncp import NCPConditionalCDF
 from symm_rep_learn.models.equiv_ncp import ENCP
@@ -55,6 +55,12 @@ def plot_gt_and_quantiles(
     time_0=0,
     row_offset=0,
     col_offset=0,
+    # --- new optional args for discretization overlay ---
+    discretized_support=None,
+    show_support_lines=True,
+    support_line_color="rgba(200,200,200,0.5)",
+    support_line_width=1.0,
+    round_decimals=12,
 ):
     """Plots predictions vs ground truth per dimension with shared legend group using Plotly.
 
@@ -65,6 +71,8 @@ def plot_gt_and_quantiles(
         title_prefix (str): Fallback prefix for subplot titles.
         subtitles (list of str): Optional list of titles per dimension.
         title (str): Title of the entire figure.
+        discretized_support (np.ndarray): Optional support grid (m, dim) in the same units as gt.
+        show_support_lines (bool): Whether to draw horizontal lines at each support level.
     """
     gt = gt.cpu().numpy() if hasattr(gt, "cpu") else gt
     q_low = q_low.cpu().numpy() if hasattr(q_low, "cpu") else q_low
@@ -119,6 +127,41 @@ def plot_gt_and_quantiles(
             row=row,
             col=col,
         )
+
+        # Horizontal discretization lines at support levels (efficient multi-segment trace)
+        if show_support_lines and discretized_support is not None:
+            S = discretized_support
+            if S.ndim == 1:
+                S = S[:, None]
+            if S.shape[1] == dim:
+                s_i = S[:, i]
+            else:
+                # If provided dim doesn't match, try to broadcast last column
+                idx = min(i, S.shape[1] - 1)
+                s_i = S[:, idx]
+            # Unique rounded support to avoid overplotting identical levels
+            s_unique = np.unique(np.round(s_i.astype(float), decimals=round_decimals))
+            if s_unique.size > 0:
+                x0 = (time[0] + time_0) if time.size > 0 else time_0
+                x1 = (time[-1] + time_0) if time.size > 0 else (time_0 + 1)
+                xs = []
+                ys = []
+                for s in s_unique:
+                    xs.extend([x0, x1, None])
+                    ys.extend([s, s, None])
+                fig.add_trace(
+                    go.Scatter(
+                        x=np.array(xs),
+                        y=np.array(ys),
+                        mode="lines",
+                        line=dict(color=support_line_color, width=support_line_width),
+                        name="support",
+                        legendgroup="support",
+                        showlegend=False,
+                    ),
+                    row=row,
+                    col=col,
+                )
 
         outliers = (gt[:, i] < q_low[:, i]) | (gt[:, i] > q_high[:, i])
         fig.add_trace(
@@ -234,21 +277,21 @@ def get_uc_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
 
 def get_proprioceptive_data(cfg: DictConfig):
     #
-    datasets_path = pathlib.Path(__file__).parent / "grf_regression_uc" / "datasets"
+    # local_path = pathlib.Path(__file__).parent / "grf_regression_uc" / "datasets"
     # test_file = 'data/aliengo/perlin/lin_vel=(0.0, 0.0) ang_vel=(-0.7, 0.7) friction=(1.0, 1.0)/ep=50_steps=2499.h5'
     # test_file = (
     #     'tests/mini_cheetah/perlin/lin_vel=(0.0, 0.0) ang_vel=(-0.7, 0.7) friction=(1.0, 1.0)/ep=5_steps=2499.h5'
     # 'data/aliengo/perlin/lin_vel=(0.0, 0.0) ang_vel=(-1.4, 1.4) friction=(0.7, 1.0)/ep=50_steps=2499.h5'
     # )
     # if not data_path.exists():
-    datasets_path.mkdir(parents=True, exist_ok=True)
+    # local_path.mkdir(parents=True, exist_ok=True)
     from huggingface_hub import hf_hub_download
 
     data_path = hf_hub_download(
         repo_id="DLS-IIT/quadruped_locomotion",
         repo_type="dataset",
         filename=cfg.dataset.path,
-        local_dir=str(datasets_path),
+        # local_dir=str(local_path),
     )
 
     # You can also load data to a Torch dataset and use it for your learning projects
@@ -281,7 +324,7 @@ def get_proprioceptive_data(cfg: DictConfig):
 
     # Compute the mean and variance of the observations ---------------------------------------------------------------
     is_equiv_model = cfg.model.lower() == "emlp" or cfg.model.lower() == "encp"
-    train_ds.compute_obs_moments(obs_reps=obs_reps if is_equiv_model else None)
+    train_ds.compute_obs_moments(obs_reps=obs_reps)
     train_ds.shuffle()
 
     y_obs_dims = {}
@@ -339,7 +382,15 @@ def get_proprioceptive_data(cfg: DictConfig):
 
 @torch.no_grad()
 def uncertainty_metrics(
-    model, x_cond, y, y_train, x_type, y_type, alpha: float = 0.05, lstsq: bool = True, y_obs_dims: dict = None
+    model,
+    x_cond,
+    y,
+    y_train,
+    x_type,
+    y_type,
+    alpha: float = 0.05,
+    y_obs_dims: dict = None,
+    current_epoch: int = None,
 ):
     """Args:
         model: NCP or ENCP model.
@@ -361,12 +412,10 @@ def uncertainty_metrics(
     y = torch.cat(y_transformed, dim=0)
 
     if isinstance(model, ENCP):
-        encp_ccdf = ENCPConditionalCDF(
-            model=model, y_train=y_type(y_train), support_discretization_points=100, lstsq=lstsq
-        )
+        encp_ccdf = ENCPConditionalCDF(model=model, y_train=y_type(y_train), support_discretization_points=100)
         q_low, q_high = encp_ccdf.conditional_quantiles(x_cond=x_type(x_cond), alpha=alpha)
     elif isinstance(model, NCP):
-        ncp_ccdf = NCPConditionalCDF(model=model, y_train=y_train, support_discretization_points=100, lstsq=lstsq)
+        ncp_ccdf = NCPConditionalCDF(model=model, y_train=y_train, support_discretization_points=100)
         q_low, q_high = ncp_ccdf.conditional_quantiles(x_cond=x_cond, alpha=alpha)
     else:
         raise ValueError(f"Model type {type(model)} not supported.")
@@ -496,9 +545,11 @@ def main(cfg: DictConfig):
             optimizer_fn=Adam,
             optimizer_kwargs={"lr": cfg.optim.lr},
             loss_fn=model.loss,
-            val_metrics=lambda _: cqr_uncertainty_metrics(model, x_val, x_type, y_val, y_type, y_obs_dims=y_obs_dims),
-            test_metrics=lambda _: cqr_uncertainty_metrics(
-                model, x_test, x_type, y_test, y_type, y_obs_dims=y_obs_dims
+            val_metrics=lambda **kwargs: cqr_uncertainty_metrics(
+                model, x_val, x_type, y_val, y_type, y_obs_dims=y_obs_dims, **kwargs
+            ),
+            test_metrics=lambda **kwargs: cqr_uncertainty_metrics(
+                model, x_test, x_type, y_test, y_type, y_obs_dims=y_obs_dims, **kwargs
             ),
         )
     else:  # NCP / ENCP models
@@ -507,37 +558,21 @@ def main(cfg: DictConfig):
             optimizer_fn=Adam,
             optimizer_kwargs={"lr": cfg.optim.lr},
             loss_fn=model.loss if hasattr(model, "loss") else None,
-            val_metrics=lambda _: uncertainty_metrics(
-                model, x_val, y_val, y_train, x_type, y_type, cfg.alpha, cfg.lstsq, y_obs_dims
-            ),
-            test_metrics=lambda _: uncertainty_metrics(
-                model, x_test, y_test, y_train, x_type, y_type, cfg.alpha, cfg.lstsq, y_obs_dims
+            # val_metrics=lambda **kwargs: uncertainty_metrics(
+            # model, x_val, y_val, y_train, x_type, y_type, cfg.alpha, y_obs_dims, **kwargs
+            # ),
+            test_metrics=lambda **kwargs: uncertainty_metrics(
+                model, x_test, y_test, y_train, x_type, y_type, cfg.alpha, y_obs_dims, **kwargs
             ),
         )
 
     # Define the logger and callbacks
     run_path = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
-    log.info(f"Run path: {run_path}")
-    run_cfg = OmegaConf.to_container(cfg, resolve=True)
-    logger = WandbLogger(save_dir=run_path, project=cfg.proj_name, log_model=False, config=run_cfg)
-    logger.watch(model, log="gradients")
-    n_total_samples = int(len(train_ds) / cfg.dataset.train_ratio)
-    scaled_saved_freq = int(5 * n_total_samples // cfg.optim.batch_size)
-    BEST_CKPT_NAME, LAST_CKPT_NAME = "best", ModelCheckpoint.CHECKPOINT_NAME_LAST
-    ckpt_call = ModelCheckpoint(
-        dirpath=run_path,
-        filename=BEST_CKPT_NAME,
-        monitor="loss/val",
-        save_top_k=1,
-        save_last=True,
-        mode="min",
-        every_n_epochs=scaled_saved_freq,
-    )
-
-    # Fix for all runs independent on the train_ratio chosen. This way we compare on effective number of "epochs"
-    check_val_every_n_epochs = 10
     metric_to_monitor = "||k(x,y) - k_r(x,y)||/val" if isinstance(model, ENCP) or isinstance(model, NCP) else "loss/val"
-    early_call = EarlyStopping(metric_to_monitor, patience=5, mode="min")
+    ckpt_call, early_call, logger = get_train_logger_and_callbacks(
+        run_path=run_path, cfg=cfg, val_metric=metric_to_monitor
+    )
+    # logger.watch(model, log="gradients")
 
     trainer = Trainer(
         accelerator="gpu",
@@ -546,27 +581,30 @@ def main(cfg: DictConfig):
         logger=logger,
         enable_progress_bar=True,
         log_every_n_steps=25,
-        check_val_every_n_epoch=check_val_every_n_epochs,
+        check_val_every_n_epoch=cfg.optim.check_val_every_n_epoch,
         callbacks=[ckpt_call, early_call],
         fast_dev_run=25 if cfg.debug else False,
         num_sanity_val_steps=5,
     )
 
     torch.set_float32_matmul_precision("medium")
-    last_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / LAST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
+    # Resume from last checkpoint if it exists
+    last_ckpt_name = ModelCheckpoint.CHECKPOINT_NAME_LAST
+    last_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / last_ckpt_name).with_suffix(ckpt_call.FILE_EXTENSION)
     trainer.fit(
         lightning_module,
         train_dataloaders=train_dataloader,
         val_dataloaders=val_dataloader,
         ckpt_path=last_ckpt_path if last_ckpt_path.exists() else None,
     )
+    model.eval()
 
     # Loads the best model.
-    best_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / BEST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
+    best_ckpt_path = pathlib.Path(ckpt_call.best_model_path) if ckpt_call.best_model_path else None
     test_logs = trainer.test(
         lightning_module,
         dataloaders=test_dataloader,
-        ckpt_path=best_ckpt_path if best_ckpt_path.exists() else None,
+        ckpt_path=(best_ckpt_path if (best_ckpt_path and best_ckpt_path.exists()) else None),
     )
     test_metrics = test_logs[0]  # dict: metric_name -> value
     # Save the testing matrices in a csv file using pandas.
@@ -579,18 +617,23 @@ def main(cfg: DictConfig):
     lightning_module.cpu()
 
     if isinstance(model, ENCP):
-        encp_ccdf = ENCPConditionalCDF(
-            model=model, y_train=y_type(y_train), support_discretization_points=500, lstsq=True
-        )
+        encp_ccdf = ENCPConditionalCDF(model=model, y_train=y_type(y_train), support_discretization_points=100)
         q_low, q_high = encp_ccdf.conditional_quantiles(x_cond=x_type(x_test), alpha=cfg.alpha)
+        support_un = None
     elif isinstance(model, NCP):
-        ncp_ccdf = NCPConditionalCDF(model=model, y_train=y_train, support_discretization_points=500, lstsq=True)
+        ncp_ccdf = NCPConditionalCDF(model=model, y_train=y_train, support_discretization_points=100)
         q_low, q_high = ncp_ccdf.conditional_quantiles(x_cond=x_test, alpha=cfg.alpha)
+        # Unstandardize support grid for plotting horizontal lines using precomputed moments
+        y_mean_np = y_moments[0].detach().cpu().numpy()
+        y_std_np = torch.sqrt(y_moments[1]).detach().cpu().numpy()
+        support_un = ncp_ccdf.discretized_support * y_std_np[None, :] + y_mean_np[None, :]
     elif isinstance(model, MultivariateCQR):
         q_low, q_high = model(x_test)
+        support_un = None
     elif isinstance(model, EquivMultivariateCQR):
         q_low, q_high = model(x_type(x_test))
         q_low, q_high = q_low.tensor, q_high.tensor
+        support_un = None
     else:
         raise ValueError(f"Model type {type(model)} not supported.")
 
@@ -608,7 +651,12 @@ def main(cfg: DictConfig):
         q_high_obs = q_upq_un[:, y_obs_dims[obs_name]].detach().cpu().numpy()
         view_range = slice(600, 1000)
         fig = plot_gt_and_quantiles(
-            obs[view_range], q_low_obs[view_range], q_high_obs[view_range], title_prefix="grf", title="Contact Forces"
+            obs[view_range],
+            q_low_obs[view_range],
+            q_high_obs[view_range],
+            title_prefix="grf",
+            discretized_support=(None if support_un is None else support_un[:, y_obs_dims[obs_name]]),
+            show_support_lines=True,
         )
         fig_path = pathlib.Path(run_path) / f"{obs_name}_uncertainty_quantification.png"
         fig.write_image(str(fig_path))

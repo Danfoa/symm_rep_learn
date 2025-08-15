@@ -74,10 +74,11 @@ class ENCP(NCP):
         self.data_norm_y = eDataNorm(hy_type, momentum, compute_cov=True, only_centering=True)
 
     def forward(self, x: torch.Tensor = None, y: torch.Tensor = None):
-        fx_c, hy_c = super().forward(
-            x=self.x_type(x) if x is not None else None,
-            y=self.y_type(y) if y is not None else None,
-        )
+        
+        x = self.x_type(x) if isinstance(x, torch.Tensor) else x
+        y = self.y_type(y) if isinstance(y, torch.Tensor) else y
+        fx_c, hy_c = super().forward(x, y)
+        
         return fx_c.tensor if fx_c is not None else None, hy_c.tensor if hy_c is not None else None
 
     # def orthonormality_regularization(self, fx_c: torch.Tensor, hy_c: torch.Tensor):
