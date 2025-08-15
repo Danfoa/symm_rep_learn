@@ -6,14 +6,14 @@ import math
 
 import torch
 
-from symm_rep_learn.models.ncp import NCP
+from symm_rep_learn.models.neural_conditional_probability.ncp import NCP
 from symm_rep_learn.nn.layers import ResidualEncoder
 from symm_rep_learn.nn.losses import contrastive_low_rank_loss
 
 log = logging.getLogger(__name__)
 
-import torch.nn.utils.parametrize as P
 import torch.nn.utils.parametrizations as param_zoo  # convenience alias
+import torch.nn.utils.parametrize as P
 
 
 class Symmetric(torch.nn.Module):

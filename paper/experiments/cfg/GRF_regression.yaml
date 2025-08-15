@@ -41,7 +41,7 @@ dataset:
 
 # Architecture of the neural network
 architecture:
-  hidden_units: [512,512,512,512]  # List of hidden layer sizes. If a single int is provided, it is used for all layers.
+  hidden_units: [512,512]  # List of hidden layer sizes. If a single int is provided, it is used for all layers.
   embedding_dim: 128
   activation: ELU           # Any torch activation
   residual_encoder_x: False   # Introduce target regression variables in L2(Y)
@@ -59,7 +59,7 @@ optim:
 
 exp_desc: "robot=${robot_name}"
 opt_desc: "lr=${optim.lr}_bs=${optim.batch_size}_pat=${optim.patience}"
-model_desc: "${model}_hu=${architecture.hidden_units}_act=${architecture.activation}_resY=${architecture.residual_encoder}_momentum=${momentum}_gamma=${gamma}_gamma_centering=${gamma_centering}_trunc_op_bias=${truncated_op_bias}"
+model_desc: "${model}_hu=${architecture.hidden_units}_act=${architecture.activation}_res_x=${architecture.residual_encoder_x}_res_y=${architecture.residual_encoder_y}_momentum=${momentum}_gamma=${gamma}_gamma_centering=${gamma_centering}_trunc_op_bias=${truncated_op_bias}"
 run_desc: "${exp_desc}_${opt_desc}_${model_desc}"
 
 hydra:
@@ -91,7 +91,8 @@ hydra:
           - architecture.hidden_units
           - architecture.hidden_layers
           - architecture.activation
-          - architecture.residual_encoder
+          - architecture.residual_encoder_x
+          - architecture.residual_encoder_y
           - model
           - optim.lr
           - optim.batch_size

@@ -573,7 +573,7 @@ def plot_pmd_err_2D(
     Y_input = np.column_stack([Y_flat])
     # Pxy = gmm.joint_pdf(X=X_input, Y=Y_input)
     pmd = gmm.pointwise_mutual_dependency(X=X_input, Y=Y_input)
-    from symm_rep_learn.models.equiv_ncp import ENCP
+    from symm_rep_learn.models.neural_conditional_probability.encp import ENCP
 
     def get_pmd_pred(x, y):
         X_c = ((torch.Tensor(x) - x_mean) / torch.sqrt(x_var)).to(device=device)

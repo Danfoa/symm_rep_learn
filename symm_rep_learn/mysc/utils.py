@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from scipy import stats
 
+
 def act_name_to_torch(act_name: str):
     act_name = act_name.lower()
     if act_name == "relu":
@@ -19,7 +20,7 @@ def act_name_to_torch(act_name: str):
         return torch.nn.Sigmoid()
     else:
         raise ValueError(f"Unknown activation function: {act_name}.")
-    
+
 
 def to_np(x):
     return x.detach().cpu().numpy()

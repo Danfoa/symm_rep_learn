@@ -383,13 +383,11 @@ def example_usage():
     )
     print(f"Generated {len(time_arrays)} trajectories with shape {trajectory_arrays[0].shape}")
 
-
     # # Create and show 3D plot
     fig = thomas.plot_trajectories_3d(
         time_arrays=time_arrays, trajectory_arrays=trajectory_arrays, title="Thomas Attractor with Noise"
     )
     fig.show(renderer="browser")  # Force browser renderer
-
 
 
 if __name__ == "__main__":

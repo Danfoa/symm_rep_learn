@@ -24,9 +24,9 @@ from symm_learning.stats import invariant_orthogonal_projector
 from torch.optim import Adam
 from torch.utils.data import DataLoader, TensorDataset, default_collate
 
-from symm_rep_learn.models.equiv_ncp import ENCP
 from symm_rep_learn.models.lightning_modules import SupervisedTrainingModule, TrainingModule
-from symm_rep_learn.models.ncp import NCP
+from symm_rep_learn.models.neural_conditional_probability.encp import ENCP
+from symm_rep_learn.models.neural_conditional_probability.ncp import NCP
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +38,8 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
 
     if cfg.model.lower() == "encp":  # Equivariant NCP
         from escnn.nn import FieldType
-        from symm_rep_learn.models.equiv_ncp import ENCP
+
+        from symm_rep_learn.models.neural_conditional_probability.encp import ENCP
 
         G = x_type.representation.group
         reg_rep = G.regular_representation
@@ -52,12 +53,14 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
 
         if cfg.architecture.residual_encoder_y:
             from symm_rep_learn.nn.layers import ResidualEncoder
+
             y_embedding = ResidualEncoder(encoder=EMLP(in_type=y_type, out_type=lat_type, **kwargs), in_type=y_type)
         else:
             y_embedding = EMLP(in_type=y_type, out_type=lat_type, **kwargs)
 
         if cfg.architecture.residual_encoder_x:
             from symm_rep_learn.nn.equiv_layers import ResidualEncoder
+
             x_embedding = ResidualEncoder(encoder=EMLP(in_type=x_type, out_type=lat_type, **kwargs), in_type=x_type)
         else:
             x_embedding = EMLP(in_type=x_type, out_type=lat_type, **kwargs)
@@ -73,7 +76,7 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
         return eNCPop
 
     elif cfg.model.lower() == "ncp":  # NCP
-        from symm_rep_learn.models.ncp import NCP
+        from symm_rep_learn.models.neural_conditional_probability.ncp import NCP
         from symm_rep_learn.mysc.utils import class_from_name
         from symm_rep_learn.nn.layers import ResidualEncoder  # non-equivariant
 

@@ -7,7 +7,7 @@ from copy import deepcopy
 import lightning
 import torch
 
-from symm_rep_learn.models.multivariateCQR import MultivariateCQR
+from symm_rep_learn.models.conditional_quantile_regression.cqr import CQR
 from symm_rep_learn.mysc.utils import flatten_dict
 
 
@@ -189,7 +189,7 @@ class SupervisedTrainingModule(TrainingModule):
 class CQRLightningModule(TrainingModule):
     def __init__(
         self,
-        model: MultivariateCQR,
+        model: CQR,
         optimizer_fn: torch.optim.Optimizer,
         optimizer_kwargs: dict,
         loss_fn: callable,

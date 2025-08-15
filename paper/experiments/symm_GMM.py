@@ -39,7 +39,7 @@ Y_LIMS = [None, None]
 def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
     embedding_dim = lat_type.size
     if cfg.model.lower() == "encp":  # Equivariant NCP
-        from symm_rep_learn.models.equiv_ncp import ENCP
+        from symm_rep_learn.models.neural_conditional_probability.encp import ENCP
         from symm_rep_learn.nn.equiv_layers import EMLP
 
         kwargs = dict(
@@ -60,7 +60,7 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
 
         return eNCPop
     elif cfg.model.lower() == "ncp":  # NCP
-        from symm_rep_learn.models.ncp import NCP
+        from symm_rep_learn.models.neural_conditional_probability.ncp import NCP
         from symm_rep_learn.mysc.utils import class_from_name
         from symm_rep_learn.nn.layers import MLP
 
@@ -197,7 +197,7 @@ def measure_analytic_pmi_error(
     save_data_path=None,
     debug=False,
 ):
-    from symm_rep_learn.models.equiv_ncp import ENCP
+    from symm_rep_learn.models.neural_conditional_probability.encp import ENCP
 
     prev_device = next(nn_model.parameters()).device
     next(nn_model.parameters()).dtype
@@ -489,7 +489,7 @@ def main(cfg: DictConfig):
         return GeometricTensor(x_batch, x_type), GeometricTensor(y_batch, y_type)
 
     # Define the dataloaders
-    from symm_rep_learn.models.equiv_ncp import ENCP
+    from symm_rep_learn.models.neural_conditional_probability.encp import ENCP
 
     collate_fn = geom_tensor_collate_fn if isinstance(nnPME, ENCP) else default_collate
     train_dataloader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_fn)

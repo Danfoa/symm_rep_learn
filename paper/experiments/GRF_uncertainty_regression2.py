@@ -9,11 +9,7 @@ import escnn
 import hydra
 import numpy as np
 import pandas as pd
-import plotly
 import plotly.graph_objs as go
-
-plotly.io.templates.default = "plotly_white"
-
 import torch
 from escnn.group import directsum
 from escnn.nn import FieldType, GeometricTensor
@@ -191,6 +187,9 @@ def plot_gt_and_quantiles(
         y_lim_max = y_max + y_margin
         fig.update_yaxes(range=[y_lim_min, y_lim_max], row=row, col=col)
 
+    # fig.update_layout(height=500 * n_rows, width=1000 * n_cols, title_text=title)
+    # Remove borders and white spaces
+    # fig.update_layout(margin=dict(l=0, r=0, b=0, t=0))
     return fig
 
 
@@ -277,12 +276,22 @@ def get_uc_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
 
 
 def get_proprioceptive_data(cfg: DictConfig):
+    #
+    # local_path = pathlib.Path(__file__).parent / "grf_regression_uc" / "datasets"
+    # test_file = 'data/aliengo/perlin/lin_vel=(0.0, 0.0) ang_vel=(-0.7, 0.7) friction=(1.0, 1.0)/ep=50_steps=2499.h5'
+    # test_file = (
+    #     'tests/mini_cheetah/perlin/lin_vel=(0.0, 0.0) ang_vel=(-0.7, 0.7) friction=(1.0, 1.0)/ep=5_steps=2499.h5'
+    # 'data/aliengo/perlin/lin_vel=(0.0, 0.0) ang_vel=(-1.4, 1.4) friction=(0.7, 1.0)/ep=50_steps=2499.h5'
+    # )
+    # if not data_path.exists():
+    # local_path.mkdir(parents=True, exist_ok=True)
     from huggingface_hub import hf_hub_download
 
     data_path = hf_hub_download(
         repo_id="DLS-IIT/quadruped_locomotion",
         repo_type="dataset",
         filename=cfg.dataset.path,
+        # local_dir=str(local_path),
     )
 
     # You can also load data to a Torch dataset and use it for your learning projects

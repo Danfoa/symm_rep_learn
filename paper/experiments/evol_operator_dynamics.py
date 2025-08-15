@@ -7,12 +7,10 @@ import hydra
 import numpy as np
 import pandas as pd
 import torch
-from escnn.nn import FieldType, GeometricTensor
+from escnn.nn import FieldType
 from lightning import Trainer, seed_everything
-from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
-from lightning.pytorch.loggers import WandbLogger
-from omegaconf import DictConfig, OmegaConf
-from symm_learning.models.emlp import EMLP
+from lightning.pytorch.callbacks import ModelCheckpoint
+from omegaconf import DictConfig
 from torch.optim import Adam
 from torch.utils.data import DataLoader, default_collate
 
@@ -29,8 +27,9 @@ def get_model(cfg: DictConfig, state_type: FieldType) -> torch.nn.Module:
     if cfg.model == "eEvolOp":  # Equivariant NCP
         raise NotImplementedError("Equivariant NCP is not implemented yet.")
     elif cfg.model == "EvolOp":  # NCP
-        from symm_rep_learn.models.evol_op import EvolOp1D
         from symm_learning.models import MLP
+
+        from symm_rep_learn.models.evol_op import EvolOp1D
         from symm_rep_learn.mysc.utils import act_name_to_torch
         from symm_rep_learn.nn.layers import ResidualEncoder
 

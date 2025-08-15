@@ -8,7 +8,7 @@ from escnn.nn import FieldType, GeometricTensor
 from symm_learning.stats import invariant_orthogonal_projector
 
 from symm_rep_learn.inference.ncp import NCPConditionalCDF
-from symm_rep_learn.models.equiv_ncp import ENCP
+from symm_rep_learn.models.neural_conditional_probability.encp import ENCP
 from symm_rep_learn.nn.layers import ResidualEncoder
 
 

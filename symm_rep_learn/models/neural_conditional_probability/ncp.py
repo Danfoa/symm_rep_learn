@@ -22,7 +22,7 @@ class NCP(torch.nn.Module):
         embedding_dim_y: int,
         orth_reg=0.1,  # Will be multiplied by the embedding_dim
         centering_reg=0.01,  # Penalizes probability mass distortion
-        momentum=0.99,  # 1.0 Batch stats to center the embeddings and compute covariance.
+        momentum=0.995,  # 1.0 Batch stats to center the embeddings and compute covariance.
     ):
         super(NCP, self).__init__()
 

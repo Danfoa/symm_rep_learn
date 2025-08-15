@@ -1,11 +1,9 @@
-from click import Path
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
-from collections import OrderedDict
+from click import Path
 from torch.nn import init
-import numpy as np
 
 from paper.experiments.dynamics import ordered_mnist
 from symm_rep_learn.nn.layers import Lambda

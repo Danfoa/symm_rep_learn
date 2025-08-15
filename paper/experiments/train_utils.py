@@ -8,8 +8,8 @@ from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import default_collate
 
 from symm_rep_learn.inference.ncp import NCPConditionalCDF
-from symm_rep_learn.models.multivariateCQR import get_coverage, get_relaxed_coverage, get_set_size
-from symm_rep_learn.models.ncp import NCP
+from symm_rep_learn.models.conditional_quantile_regression.cqr import get_coverage, get_relaxed_coverage, get_set_size
+from symm_rep_learn.models.neural_conditional_probability.ncp import NCP
 
 
 def get_train_logger_and_callbacks(
@@ -76,7 +76,7 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
         from escnn.nn import FieldType
         from symm_learning.models.emlp import EMLP
 
-        from symm_rep_learn.models.equiv_ncp import ENCP
+        from symm_rep_learn.models.neural_conditional_probability.encp import ENCP
 
         G = x_type.representation.group
 
@@ -116,7 +116,7 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
 
         return eNCPop
     elif cfg.model.lower() == "ncp":  # NCP
-        from symm_rep_learn.models.ncp import NCP
+        from symm_rep_learn.models.neural_conditional_probability.ncp import NCP
         from symm_rep_learn.mysc.utils import class_from_name
         from symm_rep_learn.nn.layers import MLP
 

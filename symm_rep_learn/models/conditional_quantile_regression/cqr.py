@@ -1,19 +1,13 @@
-from typing import Tuple
-
-import escnn.nn
 import torch.nn
-from escnn.nn import FieldType, GeometricTensor
-
-from symm_rep_learn.nn.equiv_layers import EMLP
-from symm_rep_learn.nn.layers import MLP
+from symm_learning.models import MLP
 
 
-class MultivariateCQR(torch.nn.Module):
+class CQR(torch.nn.Module):
     def __init__(self, dim_x: int, dim_y: int, gamma: float, **mlp_kwargs):
-        super(MultivariateCQR, self).__init__()
+        super(CQR, self).__init__()
         assert 0 < gamma <= 1, "gamma must be in (0, 1]"
-        self.low_q_nn = MLP(input_shape=dim_x, output_shape=dim_y, **mlp_kwargs)
-        self.up_q_nn = MLP(input_shape=dim_x, output_shape=dim_y, **mlp_kwargs)
+        self.low_q_nn = MLP(in_dim=dim_x, out_dim=dim_y, **mlp_kwargs)
+        self.up_q_nn = MLP(in_dim=dim_x, out_dim=dim_y, **mlp_kwargs)
         self.gamma = gamma
 
     def forward(self, x: torch.Tensor):
@@ -24,29 +18,6 @@ class MultivariateCQR(torch.nn.Module):
 
     def loss(self, loq_q, up_q, target):
         return cqr_loss(loq_q, up_q, target, self.gamma)
-
-
-class EquivMultivariateCQR(escnn.nn.EquivariantModule):
-    def __init__(self, in_type: FieldType, out_type: FieldType, gamma: float, **mlp_kwargs):
-        super(EquivMultivariateCQR, self).__init__()
-        assert 0 < gamma <= 1, "gamma must be in (0, 1]"
-        self.in_type = in_type
-        self.out_type = out_type
-        self.low_q_nn = EMLP(in_type=in_type, out_type=out_type, **mlp_kwargs)
-        self.up_q_nn = EMLP(in_type=in_type, out_type=out_type, **mlp_kwargs)
-        self.gamma = gamma
-
-    def forward(self, x: GeometricTensor):
-        low_q = self.low_q_nn(x)
-        up_q = self.up_q_nn(x)
-
-        return low_q, up_q
-
-    def loss(self, loq_q, up_q, target):
-        return cqr_loss(loq_q.tensor, up_q.tensor, target.tensor, self.gamma)
-
-    def evaluate_output_shape(self, input_shape: Tuple[int, ...]) -> Tuple[int, ...]:
-        return input_shape[:-1] + (self.out_type.size,)
 
 
 def cqr_loss(loq_q, up_q, target, gamma):

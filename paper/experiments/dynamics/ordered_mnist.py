@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from datasets import DatasetDict, interleave_datasets, load_dataset, load_from_disk
 from torch.utils.data import DataLoader
-from torchvision.transforms import InterpolationMode, Pad, RandomRotation, Resize
+from torchvision.transforms import InterpolationMode, Resize
 
 from symm_rep_learn.models.lightning_modules import SupervisedTrainingModule
 
@@ -1111,7 +1111,7 @@ if __name__ == "__main__":
         # Reconstructed present image
         plt.subplot(2, 4, 2)
         plt.imshow(current_rec_img.squeeze(0), cmap="gray")
-        plt.title(f"Present Rec")
+        plt.title("Present Rec")
         plt.axis("off")
 
         # Original future image
@@ -1123,7 +1123,7 @@ if __name__ == "__main__":
         # Reconstructed future image
         plt.subplot(2, 4, 4)
         plt.imshow(next_rec_img.squeeze(0), cmap="gray")
-        plt.title(f"Future Rec")
+        plt.title("Future Rec")
         plt.axis("off")
 
         plt.tight_layout()

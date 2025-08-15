@@ -3,9 +3,7 @@
 from __future__ import annotations  # Support new typing structure in 3.8 and 3.9
 
 import logging
-import math
 import pathlib
-import time
 
 import escnn
 import hydra
@@ -14,9 +12,8 @@ import pandas as pd
 import torch
 from escnn.nn import FieldType
 from lightning import Trainer, seed_everything
-from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
-from lightning.pytorch.loggers import WandbLogger
-from omegaconf import DictConfig, OmegaConf
+from lightning.pytorch.callbacks import ModelCheckpoint
+from omegaconf import DictConfig
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 
@@ -24,18 +21,17 @@ import paper.experiments.dynamics.ordered_mnist as ordered_mnist
 from paper.experiments.dynamics.dynamics_dataset import TrajectoryDataset
 from paper.experiments.dynamics.model.unet import UNet
 from paper.experiments.train_utils import get_train_logger_and_callbacks
-from symm_rep_learn.inference.ncp import NCPRegressor
-from symm_rep_learn.models.equiv_ncp import ENCP
-from symm_rep_learn.models.lightning_modules import SupervisedTrainingModule, TrainingModule
-from symm_rep_learn.models.ncp import NCP
-from symm_rep_learn.nn.layers import Lambda, ResidualEncoder
+from symm_rep_learn.models.lightning_modules import TrainingModule
+from symm_rep_learn.models.neural_conditional_probability.encp import ENCP
+from symm_rep_learn.models.neural_conditional_probability.ncp import NCP
+from symm_rep_learn.nn.layers import ResidualEncoder
 
 log = logging.getLogger(__name__)
 
 
 def get_model(cfg: DictConfig, state_type: FieldType) -> torch.nn.Module:
     if cfg.model.lower() == "encp":  # Equivariant NCP
-        from symm_rep_learn.models.equiv_ncp import ENCP
+        from symm_rep_learn.models.neural_conditional_probability.encp import ENCP
 
         fx = ordered_mnist.SO2SCNNEncoder(
             channels=cfg.architecture.hidden_units,
@@ -102,7 +98,6 @@ def get_dataset(cfg: DictConfig):
     test_ds = TrajectoryDataset(trajectories=[sup_test_ds["image"]], **ds_kwargs)
 
     # Configure the observation space representations ------------------------------------------------------------------
-    import escnn
 
     r2_act = escnn.gspaces.rot2dOnR2(N=-1)  # 2D grid with SO(2) symmetry
     G = r2_act.fibergroup  # The group SO(2)
