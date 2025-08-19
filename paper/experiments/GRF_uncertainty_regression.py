@@ -22,6 +22,7 @@ from lightning import Trainer, seed_everything
 from lightning.pytorch.callbacks import ModelCheckpoint
 from omegaconf import DictConfig
 from plotly.subplots import make_subplots
+from symm_learning.models import EMLP
 from torch.optim import Adam
 from torch.utils.data import DataLoader, default_collate
 
@@ -30,9 +31,8 @@ from paper.experiments.grf_regression_uc.proprioceptive_datasets import Proprioc
 from paper.experiments.train_utils import get_train_logger_and_callbacks
 from symm_rep_learn.inference.encp import ENCPConditionalCDF
 from symm_rep_learn.inference.ncp import NCPConditionalCDF
+from symm_rep_learn.models import CQR, eCQR
 from symm_rep_learn.models.conditional_quantile_regression.cqr import (
-    CQR,
-    eCQR,
     get_coverage,
     get_relaxed_coverage,
     get_set_size,
@@ -40,7 +40,6 @@ from symm_rep_learn.models.conditional_quantile_regression.cqr import (
 from symm_rep_learn.models.lightning_modules import CQRLightningModule, TrainingModule
 from symm_rep_learn.models.neural_conditional_probability.encp import ENCP
 from symm_rep_learn.models.neural_conditional_probability.ncp import NCP
-from symm_rep_learn.nn.equiv_layers import EMLP
 
 log = logging.getLogger(__name__)
 
@@ -206,11 +205,9 @@ def symmetric_collate(
 ):
     batch = default_collate(batch)
     x_obs, y_obs = batch
-    x = torch.cat([x_obs[obs_name] for obs_name in ds_cfg.x_obs], dim=-1).to(dtype=torch.float32)
-    y = torch.cat([y_obs[obs_name] for obs_name in ds_cfg.y_obs], dim=-1).to(dtype=torch.float32)
-
-    x_batch = torch.squeeze(x, dim=1)
-    y_batch = torch.squeeze(y, dim=1)
+    x_batch = torch.cat([x_obs[obs_name] for obs_name in ds_cfg.x_obs], dim=-1).to(dtype=torch.float32)
+    y_batch = torch.cat([y_obs[obs_name] for obs_name in ds_cfg.y_obs], dim=-1).to(dtype=torch.float32)
+    batch_size = x_batch.shape[0]
 
     x_mean, x_var = x_moments
     y_mean, y_var = y_moments
@@ -218,6 +215,14 @@ def symmetric_collate(
     # Standardize the data
     x_batch = (x_batch - x_mean) / torch.sqrt(x_var)
     y_batch = (y_batch - y_mean) / torch.sqrt(y_var)
+
+    if x_batch.dim() == 3:  # (batch, frames, dim)
+        x_batch = x_batch.permute(0, 2, 1).reshape(batch_size, -1)  # (batch, dim * frames)
+        assert x_batch.shape[-1] == x_type.size, f"Expected x_dim {x_type.size}, got {x_batch.shape[-1]}"
+
+    if y_batch.dim() == 3:  # (batch, frames, dim)
+        y_batch = y_batch.permute(0, 2, 1).reshape(batch_size, -1)  # (batch, dim * frames)
+        assert y_batch.shape[-1] == y_type.size, f"Expected y_dim {y_type.size}, got {y_batch.shape[-1]}"
 
     if (
         (split == "train" and ds_cfg.augment_train)
@@ -342,7 +347,7 @@ def get_proprioceptive_data(cfg: DictConfig):
     val_samples = {k: np.concatenate(v, axis=0) for k, v in val_samples.items()}
     test_samples = {k: np.concatenate(v, axis=0) for k, v in test_samples.items()}
 
-    assert cfg.dataset.x_frames == 1 and cfg.dataset.y_frames == 1, "Only single frame supported for now."
+    # assert cfg.dataset.x_frames == 1 and cfg.dataset.y_frames == 1, "Only single frame supported for now."
     x_train = torch.tensor(np.concatenate([train_samples[obs_name] for obs_name in cfg.dataset.x_obs], axis=1))
     y_train = torch.tensor(np.concatenate([train_samples[obs_name] for obs_name in cfg.dataset.y_obs], axis=1))
     x_val = torch.tensor(np.concatenate([val_samples[obs_name] for obs_name in cfg.dataset.x_obs], axis=1))
@@ -404,7 +409,7 @@ def uncertainty_metrics(
 
     if isinstance(model, ENCP):
         encp_ccdf = ENCPConditionalCDF(model=model, y_train=y_type(y_train), support_discretization_points=100)
-        q_low, q_high = encp_ccdf.conditional_quantiles(x_cond=x_type(x_cond), alpha=alpha)
+        q_low, q_high = encp_ccdf.conditional_quantiles(x_cond=x_cond, alpha=alpha)
     elif isinstance(model, NCP):
         ncp_ccdf = NCPConditionalCDF(model=model, y_train=y_train, support_discretization_points=100)
         q_low, q_high = ncp_ccdf.conditional_quantiles(x_cond=x_cond, alpha=alpha)
@@ -489,8 +494,8 @@ def main(cfg: DictConfig):
 
     G = rep_x.group
     # lat_rep = G.regular_representation
-    x_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=[rep_x])
-    y_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=[rep_y])
+    x_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=[rep_x] * cfg.dataset.x_frames)
+    y_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=[rep_y] * cfg.dataset.y_frames)
 
     # Get the model_____________________________________________________________________
     model = get_uc_model(cfg, x_type, y_type)
@@ -574,7 +579,7 @@ def main(cfg: DictConfig):
         log_every_n_steps=25,
         check_val_every_n_epoch=cfg.optim.check_val_every_n_epoch,
         callbacks=[ckpt_call, early_call],
-        fast_dev_run=25 if cfg.debug else False,
+        fast_dev_run=5 if cfg.debug else False,
         num_sanity_val_steps=5,
     )
 
@@ -609,7 +614,7 @@ def main(cfg: DictConfig):
 
     if isinstance(model, ENCP):
         encp_ccdf = ENCPConditionalCDF(model=model, y_train=y_type(y_train), support_discretization_points=100)
-        q_low, q_high = encp_ccdf.conditional_quantiles(x_cond=x_type(x_test), alpha=cfg.alpha)
+        q_low, q_high = encp_ccdf.conditional_quantiles(x_cond=x_test, alpha=cfg.alpha)
         support_un = None
     elif isinstance(model, NCP):
         ncp_ccdf = NCPConditionalCDF(model=model, y_train=y_train, support_discretization_points=100)

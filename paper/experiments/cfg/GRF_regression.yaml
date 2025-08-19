@@ -21,7 +21,7 @@ gamma_centering: 0.0           # Weight of the NCP regularization loss term. NCP
 momentum: 0.995
 
 dataset:
-  path: 'data/aliengo/perlin/lin_vel=(-1.5, 1.5) ang_vel=(-0.5, 0.5) friction=(0.7, 1.0)/ep=100_steps=1249.h5'
+  path: 'data/aliengo/perlin/lin_vel=(-1.5, 1.5) ang_vel=(-0.5, 0.5) friction=(0.7, 1.0)_action_noise_std=1.0/ep=300_steps=1249.h5'
   # Observations that will be concatenated to compose y and x, given y = NN(x)
   x_obs: ['qpos_js', 'qvel_js', 'base_lin_acc:base', 'base_lin_vel:base', 'base_lin_vel_err:base', 'base_ang_vel:base', 'base_ang_vel_err:base', 'gravity_vector:base', 'feet_vel:base', 'tau_ctrl_setpoint']
   y_obs: ['work', 'contact_forces:base', 'feet_vel_rel:base']
@@ -41,19 +41,19 @@ dataset:
 
 # Architecture of the neural network
 architecture:
-  hidden_units: [512,512]  # List of hidden layer sizes. If a single int is provided, it is used for all layers.
-  embedding_dim: 128
-  activation: ELU           # Any torch activation
+  hidden_units: [512,512,512] # List of hidden layer sizes. If a single int is provided, it is used for all layers.
+  embedding_dim: 256
+  activation: ELU             # Any torch activation
   residual_encoder_x: False   # Introduce target regression variables in L2(Y)
   residual_encoder_y: False   # Introduce target regression variables in L2(Y)
 #  bias: True
 
 # OPTIMIZATION CONFIG
 optim:
-  lr: 5e-4                    # Learning rate NCP train best at low lr values < 1e-3
-  patience: 25                # Number of Val checks to wait for improvement before early stopping
+  lr: 1e-3                    # Learning rate NCP train best at low lr values < 1e-3
+  patience: 10                # Number of Val checks to wait for improvement before early stopping
   batch_size: 2048            # The higher the best
-  max_epochs: 800             # Number of passes before stop training. Early stopping is used.
+  max_epochs: 400             # Number of passes before stop training. Early stopping is used.
   dl_num_workers: 0           # Number of workers for data loading
   check_val_every_n_epoch: 5 #
 

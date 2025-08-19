@@ -188,7 +188,7 @@ class NCP(torch.nn.Module):
         self,
         train_dataloader: torch.utils.data.DataLoader,
         ridge_reg: float = 1e-3,
-        lstsq: bool = True,
+        lstsq: bool = False,
     ) -> torch.nn.Linear:
         r"""Fit linear map :math:`h(y) \mapsto z(y)` using training data.
 

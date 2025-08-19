@@ -2,7 +2,10 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from symm_rep_learn.models.ncp import NCP
+from symm_rep_learn.models.neural_conditional_probability import NCP
+import logging
+
+log = logging.getLogger(__name__)
 
 
 class NCPConditionalCDF(torch.nn.Module):
@@ -38,23 +41,25 @@ class NCPConditionalCDF(torch.nn.Module):
         self,
         model: NCP,
         y_train,
-        support_discretization_points=500,
+        support_discretization_points=100,
         ridge_reg=None,
         support_strategy: str = "quantile_transformer",
         discretizer_kwargs: dict | None = None,
     ):
         super(NCPConditionalCDF, self).__init__()
         self.ncp_model = model
-        assert y_train.ndim == 2, f"Y train must have shape (n_train, y_dim) {y_train.ndim}"
+        assert y_train.ndim == 2, f"Y train must have shape (n_train, y_dim) {y_train.shape}"
 
         self.discretization_points = support_discretization_points
         self.support_strategy = support_strategy
         self.discretizer_kwargs = discretizer_kwargs or {}
 
         # Build a robust, monotone support per dimension (shape: (m, d_y)) _____________________________
+        log.info("Discretizing support for conditional CDF estimation...")
         self.discretized_support = self._build_support(
             y_train=y_train, n_discretization_points=self.discretization_points
         )
+        log.info(f"Discretized support shape: {self.discretized_support.shape}")
 
         # Indicator functions __________________________________________________________________________
         # Compute the indicator function of (y_i <= y_i') for each y_i' in the discretized support of y_i
@@ -68,6 +73,11 @@ class NCPConditionalCDF(torch.nn.Module):
         cdf_obs_ind_c_flat = cdf_obs_ind_c.reshape((n_samples, n_dim * self.discretization_points))
         self.n_obs_dims = y_train.shape[1]
 
+        self.ccdf_lin_decoder = self._fit_ccdf_linear_decoder(y_train, cdf_obs_ind_c_flat)
+
+        log.info("NCP Conditional CDF model initialized.")
+
+    def _fit_ccdf_linear_decoder(self, y_train, cdf_obs_ind_c_flat: torch.Tensor) -> torch.nn.Linear:
         # Compute the conditional indicator sets per each y' in the support given X=x.
         y_zy_dataloader = DataLoader(
             dataset=torch.utils.data.TensorDataset(y_train, cdf_obs_ind_c_flat),
@@ -75,11 +85,11 @@ class NCPConditionalCDF(torch.nn.Module):
             shuffle=False,
             drop_last=False,
         )
-        self.ccdf_lin_decoder: torch.nn.Linear = model.fit_linear_decoder(
-            train_dataloader=y_zy_dataloader, ridge_reg=ridge_reg, lstsq=False
-        )
+        ccdf_lin_decoder = self.ncp_model.fit_linear_decoder(train_dataloader=y_zy_dataloader)
         # Ignore fitted bias
-        self.ccdf_lin_decoder.bias = torch.nn.Parameter(torch.zeros(self.ccdf_lin_decoder.bias.shape))
+        ccdf_lin_decoder.bias = torch.nn.Parameter(torch.zeros(ccdf_lin_decoder.bias.shape))
+
+        return ccdf_lin_decoder
 
     def _build_support(self, y_train: torch.Tensor, n_discretization_points: int) -> np.ndarray:
         """Construct a monotone support grid of shape ``(m, d_y)`` according to the chosen strategy.
@@ -228,7 +238,7 @@ class NCPConditionalCDF(torch.nn.Module):
         deflated_ccdf_pred = deflated_ccdf_pred.reshape((n_cond_points, self.discretization_points, self.n_obs_dims))
         ccdf_pred = self.marginal_CDF + deflated_ccdf_pred
         # Smooth the predicted Conditional Cumulative Distribution Function
-        # TODO: Implement smoothing for multivariate CDF
+        # TODO: Implement smoothing of the estimated cCDFs
         # Filter out points below 0 from approximation of the NCP [0, 1]
         ccdf_pred = np.clip(ccdf_pred, 0, 1)
 
