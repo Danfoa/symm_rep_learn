@@ -359,21 +359,26 @@ def plot_expectations_with_quantiles(
         qlo_t, qhi_t = true_quantiles
         qlo_t = _to_1d(qlo_t)
         qhi_t = _to_1d(qhi_t)
-        ax.fill_between(Xg, qlo_t, qhi_t, color=true_color, alpha=true_alpha, label=true_label)
+        ax.fill_between(
+            Xg, qlo_t, qhi_t, color=true_color, alpha=true_alpha, label=true_label, edgecolor=true_color, linewidth=1.0
+        )
 
     # Estimated quantile bands (one or many)
     if est_quantiles is not None:
-        if isinstance(est_quantiles, dict):
-            for lbl, (qlo, qhi) in est_quantiles.items():
-                qlo = _to_1d(qlo)
-                qhi = _to_1d(qhi)
-                ax.fill_between(Xg, qlo, qhi, alpha=est_alpha, label=lbl)
-        else:
-            # assume tuple
-            qlo, qhi = est_quantiles
+        if isinstance(est_quantiles, tuple):
+            est_quantiles = {"CI": est_quantiles}  # convert single tuple to dict with label "CI"
+
+        for lbl, (qlo, qhi) in est_quantiles.items():
             qlo = _to_1d(qlo)
             qhi = _to_1d(qhi)
-            ax.fill_between(Xg, qlo, qhi, alpha=est_alpha, label="Estimated PI")
+            # Get the color for this quantile band from the current color cycle
+            line = ax.plot([], [], label=lbl)[0]  # Create dummy line to get color
+            color = line.get_color()
+            line.remove()  # Remove the dummy line
+            ax.fill_between(Xg, qlo, qhi, alpha=est_alpha, label=lbl, color=color, edgecolor=color, linewidth=1.0)
+            # Plot lines on edges of the CI
+            ax.plot(Xg, qlo, color=color, lw=1.0, alpha=0.5)
+            ax.plot(Xg, qhi, color=color, lw=1.0, alpha=0.5)
 
     # Plot expectations
     for lbl, ycurve in expectations.items():

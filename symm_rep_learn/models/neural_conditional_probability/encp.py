@@ -33,11 +33,11 @@ class ENCP(NCP):
         fx_type, hy_type = embedding_x_iso[-1].out_type, embedding_y_iso[-1].out_type
         self.x_type, self.y_type = embedding_x.in_type, embedding_y.in_type
 
-        self.rep_x_iso = isotypic_decomp_rep(fx_type.representation)
-        self.rep_y_iso = isotypic_decomp_rep(hy_type.representation)
+        self.rep_fx_iso = isotypic_decomp_rep(fx_type.representation)
+        self.rep_hy_iso = isotypic_decomp_rep(hy_type.representation)
 
         # Intialize the NCP module
-        super().__init__(
+        super(ENCP, self).__init__(
             embedding_x=embedding_x_iso,
             embedding_y=embedding_y_iso,
             embedding_dim_x=fx_type.size,
@@ -65,7 +65,7 @@ class ENCP(NCP):
     def forward(self, x: torch.Tensor = None, y: torch.Tensor = None):
         x = self.x_type(x) if isinstance(x, torch.Tensor) else x
         y = self.y_type(y) if isinstance(y, torch.Tensor) else y
-        fx_c, hy_c = super().forward(x, y)
+        fx_c, hy_c = super(ENCP, self).forward(x, y)
 
         return fx_c.tensor if fx_c is not None else None, hy_c.tensor if hy_c is not None else None
 
@@ -99,6 +99,42 @@ class ENCP(NCP):
         sigma = torch.dot(u, torch.mv(Dr, v))
         Dr = Dr / sigma
         return Dr
+
+    def fit_linear_decoder(
+        self,
+        train_dataloader: torch.utils.data.DataLoader,
+        ridge_reg: float = 1e-3,
+        lstsq: bool = False,
+        z_type: FieldType | None = None,
+    ) -> torch.nn.Linear:
+        lin_decoder = super(ENCP, self).fit_linear_decoder(
+            train_dataloader=train_dataloader,
+            ridge_reg=ridge_reg,
+            lstsq=lstsq,
+        )
+
+        # Project the linear decoder to the Equivariant subpsace if z_type is provided
+        dtype, device = lin_decoder.weight.dtype, lin_decoder.weight.device
+        if z_type is not None:
+            with torch.no_grad():
+                orbit = [lin_decoder.weight]
+                rep_z = z_type.representation
+                G = self.G
+                for g in G.elements[1:]:
+                    rep_hy_g = torch.tensor(self.rep_hy_iso(g), dtype=dtype, device=device)
+                    rep_z_g = torch.tensor(rep_z(g), dtype=dtype, device=device)
+                    orbit.append(torch.einsum("ij,jk,kl->il", rep_z_g, lin_decoder.weight, rep_hy_g.T))
+
+                G_weight = torch.stack(orbit, dim=0)
+                lin_decoder.weight = torch.mean(G_weight, dim=0)
+
+                from symm_learning.linalg import invariant_orthogonal_projector
+
+                P = invariant_orthogonal_projector(rep_z).to(device=device, dtype=dtype)
+                bias = P @ lin_decoder.weight.T
+                lin_decoder.bias.data = bias
+
+        return lin_decoder
 
 
 if __name__ == "__main__":
