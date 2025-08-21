@@ -5,7 +5,7 @@ import logging
 import math
 
 import torch
-from symm_learning.nn import DataNorm
+from symm_learning.nn import EMAStats
 
 from symm_rep_learn.nn import contrastive_low_rank_loss, orthonormality_regularization
 
@@ -49,8 +49,9 @@ class NCP(torch.nn.Module):
         torch.nn.utils.parametrizations.spectral_norm(module=self.Dr, name="weight")
 
         # Layers that center the embedding functions and keep track of mean and covariance. Variance is penalized in orthonormality
-        self.data_norm_x = DataNorm(embedding_dim_x, momentum=momentum, compute_cov=True, only_centering=True)
-        self.data_norm_y = DataNorm(embedding_dim_y, momentum=momentum, compute_cov=True, only_centering=True)
+        self.ema_stats = EMAStats(
+            dim_x=embedding_dim_x, dim_y=embedding_dim_y, momentum=momentum, center_with_running_mean=True
+        )
 
     def forward(self, x: torch.Tensor = None, y: torch.Tensor = None):
         """Forward pass of the NCP operator.
@@ -67,19 +68,17 @@ class NCP(torch.nn.Module):
             fx_c: (torch.Tensor) of shape (..., r) *centered* basis functions of subspace of L^2(X) .
             hy_c: (torch.Tensor) of shape (..., r) *centered* basis functions of subspace of L^2(Y) .
         """
-        assert x is not None or y is not None, "At least one of x or y must be provided."
 
-        if x is not None:
+        if self.training:
+            assert x is not None and y is not None, "Both x and y must be provided during training."
             fx = self._embedding_x(x)  # f(x) = [f_1(x), ..., f_r(x)]
-            fx_c = self.data_norm_x(fx)  # f_c(x) = f(x) - E_p(x)[f(x)]
-        else:
-            fx_c = None
-
-        if y is not None:
             hy = self._embedding_y(y)  # h(y) = [h_1(y), ..., h_r(y)]
-            hy_c = self.data_norm_y(hy)  # h_c(y) = h(y) - E_p(y)[h(y)]
+            self.ema_stats(fx, hy)  # Update mean and covariance statistics
+            fx_c = fx - self.ema_stats.mean_x  # f_c(x) = f(x) - E_p(x)[f(x)]
+            hy_c = hy - self.ema_stats.mean_y  # h_c(y) = h(y) - E_p(y)[h(y)]
         else:
-            hy_c = None
+            fx_c = self._embedding_x(x) - self.ema_stats.mean_x if x is not None else None
+            hy_c = self._embedding_y(y) - self.ema_stats.mean_y if y is not None else None
 
         return fx_c, hy_c
 
@@ -110,8 +109,8 @@ class NCP(torch.nn.Module):
         return self.Dr.weight  # Triggers the spectral normalization.
 
     def orthonormality_regularization(self, fx_c: torch.Tensor, hy_c: torch.Tensor):
-        Cfx, Chy = self.data_norm_x.cov, self.data_norm_y.cov
-        fx_mean, hy_mean = self.data_norm_x.mean, self.data_norm_y.mean
+        Cfx, Chy = self.ema_stats.cov_xx, self.ema_stats.cov_yy
+        fx_mean, hy_mean = self.ema_stats.mean_x, self.ema_stats.mean_y
         # orthonormal_reg_fx = ||Cx - I||_F^2 + 2 ||E_p(x) f(x)||_F^2
         orthonormal_reg_x, metrics_x = orthonormality_regularization(x=fx_c, Cx=Cfx, x_mean=fx_mean, var_name="x")
         # orthonormal_reg_hy = ||Cy - I||_F^2 + 2 ||E_p(y) h(y)||_F^2
@@ -141,8 +140,8 @@ class NCP(torch.nn.Module):
         orthonormal_reg_x, orthonormal_reg_y, metrics = self.orthonormality_regularization(fx_c, hy_c)
         # Centering penalization __________________________________________________
         # Lagrange multiplier term for centering constraint of basis functions
-        cent_reg_x = self.data_norm_x.mean.pow(2).sum()  #  ||E_x f(x)||_F^2
-        cent_reg_y = self.data_norm_y.mean.pow(2).sum()  #  ||E_y h(y)||_F^2
+        cent_reg_x = self.ema_stats.mean_x.pow(2).sum()  #  ||E_x f(x)||_F^2
+        cent_reg_y = self.ema_stats.mean_y.pow(2).sum()  #  ||E_y h(y)||_F^2
         cent_reg = cent_reg_x / dx + cent_reg_y / dy
         # Operator truncation error = ||E - E_r||_HS^2 ____________________________________________________
         # E_r = Cxy -> ||E - E_r||_HS - ||E||_HS = -2 ||Cxy||_F^2 + tr(Cxy Cy Cxy^T Cx)

@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 from escnn.group import directsum
 from escnn.nn import FieldType, GeometricTensor
-from symm_learning.nn import eDataNorm
+from symm_learning.nn import eEMAStats
 from symm_learning.nn.disentangled import Change2DisentangledBasis
 from symm_learning.representation_theory import isotypic_decomp_rep
 
@@ -51,10 +51,15 @@ class ENCP(NCP):
         # Reinitialize the (nparams,)
         self.Dr.weights.data = torch.nn.init.uniform_(self.Dr.weights.data, a=-1, b=1)
 
-        # Replace the DataNorm layers with equivariant DataNorm layers
-        self.data_norm_x = eDataNorm(fx_type, self.data_norm_x.momentum, compute_cov=True, only_centering=True)
-        self.data_norm_y = eDataNorm(hy_type, self.data_norm_y.momentum, compute_cov=True, only_centering=True)
+        # Replace the EMA stats layer
+        self.ema_stats = eEMAStats(
+            x_type=fx_type,
+            y_type=hy_type,
+            momentum=self.ema_stats.momentum,
+            center_with_running_mean=self.ema_stats.center_with_running_mean,
+        )
 
+        # Custom logic for spectral normalization of equiv layers ___________________________________
         # Buffers for spectral normalization power iteration (2D Dr: (out_dim=hy_size, in_dim=fx_size))
         # u in R^{out_dim} (hy_type.size), v in R^{in_dim} (fx_type.size)
         u = F.normalize(self.Dr.weights.new_empty(hy_type.size).normal_(0, 1), dim=0, eps=1e-12)
@@ -65,9 +70,19 @@ class ENCP(NCP):
     def forward(self, x: torch.Tensor = None, y: torch.Tensor = None):
         x = self.x_type(x) if isinstance(x, torch.Tensor) else x
         y = self.y_type(y) if isinstance(y, torch.Tensor) else y
-        fx_c, hy_c = super(ENCP, self).forward(x, y)
 
-        return fx_c.tensor if fx_c is not None else None, hy_c.tensor if hy_c is not None else None
+        if self.training:
+            assert x is not None and y is not None, "Both x and y must be provided during training."
+            fx = self._embedding_x(x)  # f(x) = [f_1(x), ..., f_r(x)]
+            hy = self._embedding_y(y)  # h(y) = [h_1(y), ..., h_r(y)]
+            self.ema_stats(fx, hy)  # Update mean and covariance statistics
+            fx_c = fx.tensor - self.ema_stats.mean_x  # f_c(x) = f(x) - E_p(x)[f(x)]
+            hy_c = hy.tensor - self.ema_stats.mean_y  # h_c(y) = h(y) - E_p(y)[h(y)]
+        else:
+            fx_c = self._embedding_x(x).tensor - self.ema_stats.mean_x if x is not None else None
+            hy_c = self._embedding_y(y).tensor - self.ema_stats.mean_y if y is not None else None
+
+        return fx_c, hy_c
 
     @property
     def truncated_operator(self):
