@@ -213,7 +213,7 @@ def linear_reconstruction_metrics(
     for batch_idx, (x, x_next) in enumerate(eval_dl):
         batch_metrics = {}
         z, z_next_gt = ncp_model(x=x.to(device=ncp_device), y=x_next.to(device=ncp_device))
-        z_next_pred = ncp_model.conditional_expectation(x=x.to(device=ncp_device))
+        z_next_pred = torch.einsum("ij,bj->bi", ncp_model.evolution_operator(), z)
         x_rec = lin_dec(z)
         x_next_pred = lin_dec(z_next_pred)
 

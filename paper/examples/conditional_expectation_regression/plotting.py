@@ -1,9 +1,18 @@
 # Created by Daniel Ordoñez (daniels.ordonez@gmail.com) at 11/08/25
+import sys
+from pathlib import Path
+
 import numpy as np
 from matplotlib import pyplot as plt
 
+PARENT_DIR = Path(__file__).resolve().parents[1]
+if str(PARENT_DIR) not in sys.path:
+    sys.path.append(str(PARENT_DIR))
 
-def scatter_with_density(x, y, ax=None, bins=200, cmap="Blues", alpha_points=0.15, s=6):
+from utils import LiveLossPlotter, dataframe_to_markdown, log_metrics, plot_sample_efficiency
+
+
+def scatter_with_density(x, y, ax=None, bins=200, cmap="Blues", alpha_points=0.10, s=6):
     """Scatter plot with 2D histogram density in the background.
 
     Args:
@@ -349,7 +358,7 @@ def plot_expectations_with_quantiles(
         fig = ax.figure
 
     if add_background and x_train is not None and y_train is not None:
-        bkw = {"bins": 200, "cmap": "Blues", "alpha_points": 0.15, "s": 6}
+        bkw = {"bins": 200, "cmap": "Blues", "s": 6}
         if background_kwargs:
             bkw.update(background_kwargs)
         scatter_with_density(_to_1d(x_train), _to_1d(y_train), ax=ax, **bkw)
@@ -380,9 +389,11 @@ def plot_expectations_with_quantiles(
             ax.plot(Xg, qlo, color=color, lw=1.0, alpha=0.5)
             ax.plot(Xg, qhi, color=color, lw=1.0, alpha=0.5)
 
-    # Plot expectations
-    for lbl, ycurve in expectations.items():
-        ax.plot(Xg, _to_1d(ycurve), lw=2.0, label=lbl)
+    exp_colors = plt.cm.Set1(np.linspace(0, 1, len(expectations)))
+
+    for i, (lbl, ycurve) in enumerate(expectations.items()):
+        color = exp_colors[i] if i < len(exp_colors) else None
+        ax.plot(Xg, _to_1d(ycurve), lw=2.0, label=lbl, color=color)
 
     ax.set_xlabel("X (standardized)")
     ax.set_ylabel("Y (standardized)")
@@ -391,86 +402,137 @@ def plot_expectations_with_quantiles(
     return fig, ax
 
 
-# --- Minimal live training plot utilities -------------------------------------------------------
+# --- Reporting and summary utilities -----------------------------------------------------------
 
 
-class LiveLossPlotter:
-    """Minimal live-updating plot for training/validation loss in notebooks.
+def dataframe_to_markdown(df, index=False, float_formats=None, default_float_fmt=".2f"):
+    """Render a DataFrame as a GitHub-flavoured Markdown table."""
 
-    Usage:
-        plotter = LiveLossPlotter(title="Model training", plot_freq=5)
-        for epoch in range(E):
-            # after training epoch
-            plotter.update(epoch, train_loss=tr)
-            # at validation check
-            plotter.update(epoch, train_loss=tr, val_loss=vl)
-    """
+    if float_formats is None:
+        float_formats = {}
 
-    def __init__(self, title="Training", ylabel="Loss", figsize=(4.5, 2.4), plot_freq=1):
-        self.title = title
-        self.ylabel = ylabel
-        self.plot_freq = max(1, int(plot_freq))
+    df_fmt = df.copy()
 
-        self.epochs = []
-        self.train_losses = []
-        self.val_losses = []
-        self.fig, self.ax = plt.subplots(figsize=figsize)
+    if index:
+        df_fmt = df_fmt.reset_index()
 
-    def _plot(self):
-        self.ax.cla()
-        # Train curve (all points)
-        self.ax.plot(self.epochs, self.train_losses, label="train", color="tab:blue")
-        # Validation curve only at available points (mask NaNs so line connects)
-        if len(self.val_losses) > 0:
-            import numpy as _np
+    numeric_cols = df_fmt.select_dtypes(include="number").columns
+    for col in numeric_cols:
+        fmt = float_formats.get(col, default_float_fmt)
+        df_fmt[col] = df_fmt[col].map(lambda v, f=fmt: f"{v:{f}}")
 
-            e = _np.asarray(self.epochs)
-            v = _np.asarray(self.val_losses, dtype=float)
-            m = ~_np.isnan(v)
-            if m.any():
-                self.ax.plot(e[m], v[m], label="val", color="tab:orange", marker="o", ms=3)
-        self.ax.set_title(self.title)
-        self.ax.set_xlabel("epoch")
-        self.ax.set_ylabel(self.ylabel)
-        self.ax.grid(True, alpha=0.25)
-        self.ax.legend(loc="best", fontsize=8)
+    df_fmt = df_fmt.astype(str)
+    header = " | ".join(df_fmt.columns)
+    separator = " | ".join(["---"] * len(df_fmt.columns))
+    rows = [" | ".join(row) for row in df_fmt.to_numpy().tolist()]
+    lines = [f"| {header} |", f"| {separator} |"] + [f"| {row} |" for row in rows]
+    return "\n".join(lines)
 
-    def update(self, epoch, train_loss=None, val_loss=None, force=False):
-        epoch = int(epoch)
-        # If called twice for same epoch, update last entry instead of appending
-        if self.epochs and epoch == self.epochs[-1]:
-            if train_loss is not None:
-                self.train_losses[-1] = float(train_loss)
-            if val_loss is not None:
-                self.val_losses[-1] = float(val_loss)
-        else:
-            self.epochs.append(epoch)
-            self.train_losses.append(np.nan if train_loss is None else float(train_loss))
-            self.val_losses.append(np.nan if val_loss is None else float(val_loss))
 
-        # Redraw only at plot_freq steps or when a val point is provided, or when forced
-        should_redraw = force or (epoch % self.plot_freq == 0) or (val_loss is not None)
-        if not should_redraw:
-            return
+def plot_condexp_metrics_panels(
+    df_results,
+    mae_by_model,
+    output_path=None,
+    model_colors=None,
+    figsize=(18, 4),
+    show=False,
+):
+    """Plot coverage, interval size, coverage error, and MAE comparison panels."""
 
-        self._plot()
-        try:
-            from IPython.display import clear_output, display
+    if model_colors is None:
+        model_colors = {"NCP": "tab:green", "eNCP": "tab:blue", "MLP": "tab:orange"}
 
-            clear_output(wait=True)
-            display(self.fig)
-        except Exception:
-            # Fallback if not in IPython
-            self.fig.canvas.draw()
-            self.fig.canvas.flush_events()
+    fig, axes = plt.subplots(
+        1,
+        4,
+        figsize=figsize,
+        gridspec_kw={"width_ratios": [1.1, 1.1, 1.1, 0.8]},
+    )
+    axes = np.atleast_1d(axes)
 
-    def close(self):
-        # Final redraw to ensure the last state is visible before closing
-        self._plot()
-        try:
-            from IPython.display import display
+    axes[0].plot(df_results["Alpha"], df_results["Desired Coverage (%)"], "k--", label="Desired", linewidth=2)
+    axes[0].plot(df_results["Alpha"], df_results["NCP Coverage (%)"], "o-", label="NCP", markersize=6)
+    axes[0].plot(df_results["Alpha"], df_results["eNCP Coverage (%)"], "s-", label="eNCP", markersize=6)
+    axes[0].set_xlabel("Alpha")
+    axes[0].set_ylabel("Coverage (%)")
+    axes[0].set_title("Empirical Coverage vs Desired")
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
 
-            display(self.fig)
-        except Exception:
-            pass
-        plt.close(self.fig)
+    axes[1].plot(df_results["Alpha"], df_results["NCP CI Size"], "o-", label="NCP", markersize=6)
+    axes[1].plot(df_results["Alpha"], df_results["eNCP CI Size"], "s-", label="eNCP", markersize=6)
+    axes[1].set_xlabel("Alpha")
+    axes[1].set_ylabel("CI Size")
+    axes[1].set_title("Confidence Interval Size")
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
+
+    axes[2].plot(df_results["Alpha"], df_results["NCP Coverage Error"], "o-", label="NCP", markersize=6)
+    axes[2].plot(df_results["Alpha"], df_results["eNCP Coverage Error"], "s-", label="eNCP", markersize=6)
+    axes[2].set_xlabel("Alpha")
+    axes[2].set_ylabel("Coverage Error (%)")
+    axes[2].set_title("Coverage Error (|Empirical - Desired|)")
+    axes[2].legend()
+    axes[2].grid(True, alpha=0.3)
+
+    order = list(mae_by_model.keys())
+    bar_positions = np.arange(len(order))
+    bar_values = [mae_by_model[name] for name in order]
+    bar_colors = [model_colors.get(name, None) for name in order]
+    bars = axes[3].bar(bar_positions, bar_values, color=bar_colors, width=0.5)
+    axes[3].set_xticks(bar_positions)
+    axes[3].set_xticklabels(order, rotation=45, ha="right")
+    axes[3].set_ylabel("Mean Abs Error")
+    axes[3].set_title("Average MAE")
+    axes[3].grid(True, axis="y", alpha=0.3)
+    for bar in bars:
+        height = bar.get_height()
+        axes[3].text(bar.get_x() + bar.get_width() / 2, height, f"{height:.3f}", ha="center", va="bottom", fontsize=8)
+
+    plt.tight_layout()
+
+    if output_path is not None:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(output_path, dpi=200, bbox_inches="tight")
+
+    if show:
+        plt.show(fig)
+
+    return fig, axes
+
+
+def log_condexp_summary_metrics(
+    metrics_dir,
+    sample_size,
+    seed,
+    df_results,
+    mae_by_model,
+    prefix="condexp_metrics",
+):
+    """Persist run-level summary metrics to a uniquely named CSV file."""
+
+    rows = []
+    for model, mae in mae_by_model.items():
+        rows.append(
+            {
+                "sample_size": int(sample_size),
+                "seed": int(seed),
+                "model": model,
+                "mae": float(mae),
+                "coverage_error": float(df_results[f"{model} Coverage Error"].mean())
+                if f"{model} Coverage Error" in df_results
+                else np.nan,
+                "ci_size": float(df_results[f"{model} CI Size"].mean())
+                if f"{model} CI Size" in df_results
+                else np.nan,
+            }
+        )
+
+    return log_metrics(
+        metrics_dir=metrics_dir,
+        sample_size=sample_size,
+        seed=seed,
+        rows=rows,
+        prefix=prefix,
+    )

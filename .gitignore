@@ -2,6 +2,9 @@
 *.npy
 *.h5
 *.ckpt
+*.pth
+*.ph
+*.pt
 *__pycache__*
 *.pyc
 /.idea

@@ -22,9 +22,8 @@ dependencies = [
   "datasets",
   "torchvision",
   "matplotlib",
-  "escnn",
-  "lie-learn==0.0.2",
   "kaleido",
+  "seaborn",
 ]
 
 # RUFF ___________________________________________________________________________________________________________

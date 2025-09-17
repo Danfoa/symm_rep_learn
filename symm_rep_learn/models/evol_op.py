@@ -55,46 +55,55 @@ class EvolOp1D(NCP):
             self._trainable_lin_dec = torch.nn.Linear(in_features=self.dim_fx, out_features=state_dim)
 
     def forward(self, x: torch.Tensor = None, y: torch.Tensor = None):
-        assert x is not None or y is not None, "At least one of x or y must be provided."
-        assert x is None or x.ndim == 2, "x must be a 2D tensor (batch_size, state_dim)."
-        assert y is None or y.ndim == 2, "y must be a 2D tensor (batch_size, state_dim)."
+        """Compute the time-delayed state embeddings.
 
-        if y is None:
+        Given the state x and next state y, this function computes the time-delayed state embeddings
+        f(x) and h(y) using a unique non-linear encoder function, and the truncated conditional expectation operator
+        such that:
+
+        f(x) = \phi(x)
+
+        h(y) = Dr @ \phi(y)
+
+        """
+
+        if self.training:
+            assert x is not None and y is not None, "Both x and y must be provided during training."
             x_samples = x.shape[0]
-            state_traj = x
-        elif x is None:
-            x_samples = 0
-            state_traj = y
-        else:  # Process present and next image using the same embedding in a single forward pass
-            x_samples = x.shape[0]
-            state_traj = torch.cat([x, y], dim=0) if y is not None else x
-
-        fstate = self._embedding_x(state_traj)
-
-        fx = fstate[:x_samples]  # Centered latent state of shape (B, r_x)
-        hy = fstate[x_samples:] if y is not None else None  # Next state embedding
-        # Separate past and next image embeddings
-        fx_c = self.data_norm_x(fx)  # Center the embeddings
-        if y is not None:
-            hy_c_gt = self.data_norm_y(hy)
-            hy_c = torch.nn.functional.linear(hy_c_gt, self.truncated_operator)
+            state_traj = torch.cat([x, y], dim=0)
+            fs = self._embedding_x(state_traj)  # f(x) = [f_1(x), ..., f_r(x)]
+            fx, hy = fs[:x_samples], fs[x_samples:]
+            self.ema_stats(fx, hy)  # Update mean and covariance statistics
+            fs_mean = (self.ema_stats.mean_x + self.ema_stats.mean_y) / 2
+            fx_c = fx - fs_mean
+            hy_c = torch.nn.functional.linear(hy - fs_mean, self.truncated_operator)
         else:
-            hy_c = None
+            fs_mean = (self.ema_stats.mean_x + self.ema_stats.mean_y) / 2
+
+            if x is None and y is not None:
+                fs = self._embedding_x(y)
+                fx_c = None
+                hy_c = torch.nn.functional.linear(fs - fs_mean, self.truncated_operator)
+            elif y is None and x is not None:
+                fs = self._embedding_x(x)
+                fx_c = fs - fs_mean
+                hy_c = None
+            else:
+                state_traj = torch.cat([x, y], dim=0)
+                fs = self._embedding_x(state_traj)
+                x_samples = x.shape[0]
+                fx_c = fs[:x_samples] - fs_mean
+                hy_c = torch.nn.functional.linear(fs[x_samples:] - fs_mean, self.truncated_operator)
 
         return fx_c, hy_c
 
-    def evolve_latent_state(self, fx_c: torch.Tensor):
-        """Evolve the latent state fx_c using the truncated operator Dr.
-
-        Args:
-            fx_c (torch.Tensor): Centered latent state of shape (B, r_x).
-
-        Returns:
-            torch.Tensor: Evolved latent state of shape (B, r_y).
-        """
-        Dr = self.truncated_operator
-        hy_c = torch.nn.functional.linear(fx_c, Dr.T)  # (B, r_y)
-        return hy_c
+    @torch.no_grad()
+    def evolution_operator(self, reg=1e-5) -> torch.Tensor:
+        """Returns the evolution operator defined as Cov(f(x))^-1 Cov(f(x), f(x'))"""
+        regularizer = reg * torch.eye(self.dim_fx, out=torch.empty_like(self.ema_stats.cov_xx))
+        reg_cov = regularizer + self.ema_stats.cov_xx
+        evolution_operator = torch.linalg.solve(reg_cov, self.ema_stats.cov_xy)
+        return evolution_operator
 
     def regression_loss(self, fx_c: torch.Tensor, hy_c: torch.Tensor, x: torch.Tensor, y: torch.Tensor = None):
         """Compute regression loss for 1D evolution operator.
