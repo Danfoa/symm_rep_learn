@@ -15,6 +15,7 @@ from lightning import seed_everything
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf
+from symm_learning.stats import var_mean
 from torch.utils.data import DataLoader, TensorDataset, default_collate
 
 from paper.experiments.symmetricGMM.plot_utils import (
@@ -30,7 +31,7 @@ from symm_rep_learn.models.lightning_modules import TrainingModule
 from symm_rep_learn.nn.equiv_layers import IMLP
 
 log = logging.getLogger(__name__)
-DPI = 180
+DPI = 400
 X_LIMS = [None, None]
 Y_LIMS = [None, None]
 
@@ -38,7 +39,7 @@ Y_LIMS = [None, None]
 def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
     embedding_dim = lat_type.size
     if cfg.model.lower() == "encp":  # Equivariant NCP
-        from symm_rep_learn.models.equiv_ncp import ENCP
+        from symm_rep_learn.models.neural_conditional_probability.encp import ENCP
         from symm_rep_learn.nn.equiv_layers import EMLP
 
         kwargs = dict(
@@ -53,13 +54,13 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
         eNCPop = ENCP(
             embedding_x=χ_embedding,
             embedding_y=y_embedding,
-            gamma=cfg.gamma,
+            orth_reg=cfg.gamma,
             truncated_op_bias=cfg.truncated_op_bias,
         )
 
         return eNCPop
     elif cfg.model.lower() == "ncp":  # NCP
-        from symm_rep_learn.models.ncp import NCP
+        from symm_rep_learn.models.neural_conditional_probability.ncp import NCP
         from symm_rep_learn.mysc.utils import class_from_name
         from symm_rep_learn.nn.layers import MLP
 
@@ -77,7 +78,7 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
             embedding_x=fx,
             embedding_y=fy,
             embedding_dim=embedding_dim,
-            gamma=cfg.gamma,
+            orth_reg=cfg.gamma,
             truncated_op_bias=cfg.truncated_op_bias,
         )
         return ncp
@@ -102,7 +103,7 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
 
         return drf
     elif cfg.model.lower() == "idrf":  # Density Ratio Fitting
-        from symm_rep_learn.models.inv_density_ratio_fitting import InvDRF
+        from symm_rep_learn.models.density_ratio_fitting import InvDRF
         from symm_rep_learn.mysc.utils import class_from_name
 
         xy_reps = x_type.representations + y_type.representations
@@ -122,8 +123,6 @@ def get_model(cfg: DictConfig, x_type, y_type, lat_type) -> torch.nn.Module:
 
 
 def gmm_dataset(cfg: DictConfig, gmm: SymmGaussianMixture, rep_X: Representation, rep_Y: Representation, device="cpu"):
-    from symm_rep_learn.mysc.symm_algebra import symmetric_moments
-
     total_samples = cfg.gmm.n_total_samples
     x_samples, y_samples = gmm.simulate(n_samples=total_samples)
     MI = (gmm.MI(x_samples, y_samples),)
@@ -134,8 +133,12 @@ def gmm_dataset(cfg: DictConfig, gmm: SymmGaussianMixture, rep_X: Representation
         [np.min(x_samples), np.max(x_samples)]
         [np.min(y_samples), np.max(y_samples)]
 
-    x_mean, x_var = symmetric_moments(x_samples, rep_X)
-    y_mean, y_var = symmetric_moments(y_samples, rep_Y)
+    x_var, x_mean = var_mean(torch.tensor(x_samples), rep_X)
+    y_var, y_mean = var_mean(torch.tensor(y_samples), rep_Y)
+    x_var = x_var.to(device=device, dtype=torch.float32)
+    y_var = y_var.to(device=device, dtype=torch.float32)
+    x_mean = x_mean.to(device=device, dtype=torch.float32)
+    y_mean = y_mean.to(device=device, dtype=torch.float32)
     # Train, val, test splitting
     assert 0.0 < cfg.train_samples_ratio <= 0.7, f"Invalid train_samples_ratio: {cfg.train_samples_ratio}"
     train_ratio, val_ratio, test_ratio = cfg.train_samples_ratio, 0.15, 0.15
@@ -194,7 +197,7 @@ def measure_analytic_pmi_error(
     save_data_path=None,
     debug=False,
 ):
-    from symm_rep_learn.models.equiv_ncp import ENCP
+    from symm_rep_learn.models.neural_conditional_probability.encp import ENCP
 
     prev_device = next(nn_model.parameters()).device
     next(nn_model.parameters()).dtype
@@ -225,14 +228,14 @@ def measure_analytic_pmi_error(
     P_joint_XY_pairs_mat = P_joint_XY_pairs.reshape(X_idx.shape)  # P_joint_XY_pairs_mat_ij = p(x_i, y_j)
     # Diagonal P_XY_pairs_mat is the p(x,y) of samples from the joint.
     if debug:
-        assert np.allclose(
-            np.diag(P_joint_XY_pairs_mat), gmm.joint_pdf(X, Y), rtol=1e-5, atol=1e-5
-        ), "Error in joint PDF computation"
+        assert np.allclose(np.diag(P_joint_XY_pairs_mat), gmm.joint_pdf(X, Y), rtol=1e-5, atol=1e-5), (
+            "Error in joint PDF computation"
+        )
         x_0, y_1 = X[[0], :], Y[[1], :]
         gmm.joint_pdf(x_0, y_1)
-        assert np.allclose(
-            P_joint_XY_pairs_mat[1, 0], gmm.joint_pdf(x_0, y_1), rtol=1e-5, atol=1e-5
-        ), f"{P_joint_XY_pairs_mat[1, 0]} != {gmm.joint_pdf(x_0, y_1)}"
+        assert np.allclose(P_joint_XY_pairs_mat[1, 0], gmm.joint_pdf(x_0, y_1), rtol=1e-5, atol=1e-5), (
+            f"{P_joint_XY_pairs_mat[1, 0]} != {gmm.joint_pdf(x_0, y_1)}"
+        )
 
     # ==============================================================================================================
     # Compute the NN estimate of the PMD for the entire group orbit in a single pass ______
@@ -269,9 +272,9 @@ def measure_analytic_pmi_error(
         # Check reshaping is not breaking ordering
         pmd_xy_err = pmd_xy_gt2 - G_pmd_xy_pred_mat[G.identity].flatten()
         pmd_xy_err_mat2 = pmd_xy_err.reshape(X_idx.shape)
-        assert np.allclose(
-            G_pmd_xy_err_mat[G.identity], pmd_xy_err_mat2, rtol=1e-5, atol=1e-5
-        ), f"Max error: {np.max(G_pmd_xy_err_mat[G.identity] - pmd_xy_err_mat2)}"
+        assert np.allclose(G_pmd_xy_err_mat[G.identity], pmd_xy_err_mat2, rtol=1e-5, atol=1e-5), (
+            f"Max error: {np.max(G_pmd_xy_err_mat[G.identity] - pmd_xy_err_mat2)}"
+        )
 
     # ==============================================================================================================
     #  Approximate the operator norm from the Gram matrix of errors.
@@ -486,7 +489,7 @@ def main(cfg: DictConfig):
         return GeometricTensor(x_batch, x_type), GeometricTensor(y_batch, y_type)
 
     # Define the dataloaders
-    from symm_rep_learn.models.equiv_ncp import ENCP
+    from symm_rep_learn.models.neural_conditional_probability.encp import ENCP
 
     collate_fn = geom_tensor_collate_fn if isinstance(nnPME, ENCP) else default_collate
     train_dataloader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_fn)
@@ -497,23 +500,23 @@ def main(cfg: DictConfig):
     run_path = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
     gmm_plot_path = pathlib.Path(run_path).parent.parent / "joint_pdf.png"
 
-    if not gmm_plot_path.exists():
-        if x_type.size == 1 and y_type.size == 1:
-            x_samples, y_samples = gmm.simulate(n_samples=5000)
-            grid = plot_analytic_joint_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(pathlib.Path(run_path).parent.parent / "joint_pdf.png", dpi=DPI, bbox_inches="tight")
-            grid = plot_analytic_prod_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(pathlib.Path(run_path).parent.parent / "prod_pdf.png", dpi=DPI, bbox_inches="tight")
-            grid = plot_analytic_npmi_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(
-                pathlib.Path(run_path).parent.parent / "normalized_mutual_information.png",
-                dpi=DPI,
-                bbox_inches="tight",
-            )
-            grid = plot_analytic_pmd_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
-            grid.fig.savefig(
-                pathlib.Path(run_path).parent.parent / "pointwise_mutual_dependency.png", dpi=DPI, bbox_inches="tight"
-            )
+    # if not gmm_plot_path.exists():
+    if x_type.size == 1 and y_type.size == 1:
+        x_samples, y_samples = gmm.simulate(n_samples=5000)
+        grid = plot_analytic_joint_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
+        grid.fig.savefig(pathlib.Path(run_path).parent.parent / "joint_pdf.png", dpi=DPI, bbox_inches="tight")
+        grid = plot_analytic_prod_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
+        grid.fig.savefig(pathlib.Path(run_path).parent.parent / "prod_pdf.png", dpi=DPI, bbox_inches="tight")
+        grid = plot_analytic_npmi_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
+        grid.fig.savefig(
+            pathlib.Path(run_path).parent.parent / "normalized_mutual_information.png",
+            dpi=DPI,
+            bbox_inches="tight",
+        )
+        grid = plot_analytic_pmd_2D(gmm, G=G, rep_X=rep_X, rep_Y=rep_Y, x_samples=x_samples, y_samples=y_samples)
+        grid.fig.savefig(
+            pathlib.Path(run_path).parent.parent / "pointwise_mutual_dependency.png", dpi=DPI, bbox_inches="tight"
+        )
 
     # Define the Lightning module ________________________________________________________
     ncp_lightning_module = TrainingModule(

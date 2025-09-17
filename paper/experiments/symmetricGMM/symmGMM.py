@@ -5,9 +5,10 @@ import logging
 import escnn
 import numpy as np
 import scipy.stats as stats
+import torch
 from escnn.group import Representation, directsum
+from symm_learning.stats import var_mean
 
-from symm_rep_learn.mysc.symm_algebra import symmetric_moments
 from symm_rep_learn.mysc.utils import project_to_pos_semi_def
 
 from .GMM import GaussianMixture
@@ -210,7 +211,7 @@ class SymmGaussianMixture(GaussianMixture):
     def _compute_data_statistics(self):
         """Return mean and std of the y component of the data."""
         X, Y = self.simulate(n_samples=10**4)
-        Y_mean, Y_var = symmetric_moments(Y, self.rep_Y)
+        Y_var, Y_mean = var_mean(torch.tensor(Y), self.rep_Y)
         return Y_mean.detach().numpy(), np.sqrt(Y_var.detach().numpy())
 
     def pdf_y(self, Y):
@@ -320,25 +321,25 @@ def test_inv(gmm: SymmGaussianMixture):
         H_pxy.append(np.squeeze(gmm.joint_pdf(g_Hx_x, g_Hy_y)))
 
         if G == gmm.Hx and G == gmm.Hy:
-            assert np.allclose(
-                G_px, G_px[0], atol=1e-5, rtol=1e-5
-            ), f"The marginal distribution of X is not invariant under the group action: {G_px}"
-            assert np.allclose(
-                G_py, G_py[0], atol=1e-5, rtol=1e-5
-            ), f"The marginal distribution of Y is not invariant under the group action: {G_py}"
-            assert np.allclose(
-                G_pxy, G_pxy[0], atol=1e-5, rtol=1e-5
-            ), f"The joint distribution of X and Y is not invariant under the group action: {G_pxy}"
+            assert np.allclose(G_px, G_px[0], atol=1e-5, rtol=1e-5), (
+                f"The marginal distribution of X is not invariant under the group action: {G_px}"
+            )
+            assert np.allclose(G_py, G_py[0], atol=1e-5, rtol=1e-5), (
+                f"The marginal distribution of Y is not invariant under the group action: {G_py}"
+            )
+            assert np.allclose(G_pxy, G_pxy[0], atol=1e-5, rtol=1e-5), (
+                f"The joint distribution of X and Y is not invariant under the group action: {G_pxy}"
+            )
         else:
-            assert np.allclose(
-                H_px, H_px[0], atol=1e-5, rtol=1e-5
-            ), f"The marginal distribution of X is not invariant under the group action: {H_px}"
-            assert np.allclose(
-                H_py, H_py[0], atol=1e-5, rtol=1e-5
-            ), f"The marginal distribution of Y is not invariant under the group action: {H_py}"
-            assert np.allclose(
-                H_pxy, H_pxy[0], atol=1e-5, rtol=1e-5
-            ), f"The joint distribution of X and Y is not invariant under the group action: {H_pxy}"
+            assert np.allclose(H_px, H_px[0], atol=1e-5, rtol=1e-5), (
+                f"The marginal distribution of X is not invariant under the group action: {H_px}"
+            )
+            assert np.allclose(H_py, H_py[0], atol=1e-5, rtol=1e-5), (
+                f"The marginal distribution of Y is not invariant under the group action: {H_py}"
+            )
+            assert np.allclose(H_pxy, H_pxy[0], atol=1e-5, rtol=1e-5), (
+                f"The joint distribution of X and Y is not invariant under the group action: {H_pxy}"
+            )
 
 
 if __name__ == "__main__":

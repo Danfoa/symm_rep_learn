@@ -19,15 +19,14 @@ from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from morpho_symm.data.DynamicsRecording import DynamicsRecording
 from omegaconf import DictConfig, OmegaConf
+from symm_learning.models import EMLP, MLP
 from symm_learning.stats import invariant_orthogonal_projector
 from torch.optim import Adam
 from torch.utils.data import DataLoader, TensorDataset, default_collate
 
-from symm_rep_learn.models.equiv_ncp import ENCP
 from symm_rep_learn.models.lightning_modules import SupervisedTrainingModule, TrainingModule
-from symm_rep_learn.models.ncp import NCP
-from symm_rep_learn.nn.equiv_layers import EMLP
-from symm_rep_learn.nn.layers import MLP
+from symm_rep_learn.models.neural_conditional_probability.encp import ENCP
+from symm_rep_learn.models.neural_conditional_probability.ncp import NCP
 
 log = logging.getLogger(__name__)
 
@@ -40,93 +39,82 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
     if cfg.model.lower() == "encp":  # Equivariant NCP
         from escnn.nn import FieldType
 
-        from symm_rep_learn.models.equiv_ncp import ENCP
-        from symm_rep_learn.nn.equiv_layers import EMLP
+        from symm_rep_learn.models.neural_conditional_probability.encp import ENCP
 
         G = x_type.representation.group
-
         reg_rep = G.regular_representation
 
-        kwargs = dict(
-            hidden_layers=cfg.architecture.hidden_layers,
-            activation=cfg.architecture.activation,
-            hidden_units=cfg.architecture.hidden_units,
-            bias=False,
-        )
-        if cfg.architecture.residual_encoder:
-            from symm_rep_learn.nn.equiv_layers import EMLP, ResidualEncoder
+        # Common latent type (k copies of regular rep)
+        k = max(1, math.ceil(cfg.architecture.embedding_dim // reg_rep.size))
+        lat_rep = [reg_rep] * k
+        lat_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=lat_rep)
 
-            lat_rep = [reg_rep] * max(1, math.ceil(cfg.architecture.embedding_dim // reg_rep.size))
-            lat_x_type = FieldType(
-                gspace=escnn.gspaces.no_base_space(G), representations=list(y_type.representations) + lat_rep
-            )
-            lat_y_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=lat_rep)
-            x_embedding = EMLP(in_type=x_type, out_type=lat_x_type, **kwargs)
-            y_embedding = ResidualEncoder(encoder=EMLP(in_type=y_type, out_type=lat_y_type, **kwargs), in_type=y_type)
-            assert y_embedding.out_type.size == x_embedding.out_type.size
+        kwargs = dict(hidden_units=cfg.architecture.hidden_units, activation=cfg.architecture.activation, bias=True)
+
+        if cfg.architecture.residual_encoder_y:
+            from symm_rep_learn.nn.layers import ResidualEncoder
+
+            y_embedding = ResidualEncoder(encoder=EMLP(in_type=y_type, out_type=lat_type, **kwargs), in_type=y_type)
         else:
-            lat_type = FieldType(
-                gspace=escnn.gspaces.no_base_space(G),
-                representations=[reg_rep] * max(1, math.ceil(cfg.architecture.embedding_dim // reg_rep.size)),
-            )
-            x_embedding = EMLP(in_type=x_type, out_type=lat_type, **kwargs)
             y_embedding = EMLP(in_type=y_type, out_type=lat_type, **kwargs)
+
+        if cfg.architecture.residual_encoder_x:
+            from symm_rep_learn.nn.equiv_layers import ResidualEncoder
+
+            x_embedding = ResidualEncoder(encoder=EMLP(in_type=x_type, out_type=lat_type, **kwargs), in_type=x_type)
+        else:
+            x_embedding = EMLP(in_type=x_type, out_type=lat_type, **kwargs)
+
+        assert y_embedding.out_type.size == x_embedding.out_type.size
         eNCPop = ENCP(
             embedding_x=x_embedding,
             embedding_y=y_embedding,
-            gamma=cfg.gamma,
-            gamma_centering=cfg.gamma_centering,
-            truncated_op_bias=cfg.truncated_op_bias,
-            learnable_change_of_basis=cfg.learnable_change_basis,
+            orth_reg=cfg.gamma,
+            centering_reg=cfg.gamma_centering,
+            momentum=cfg.momentum,
         )
-
         return eNCPop
+
     elif cfg.model.lower() == "ncp":  # NCP
-        from symm_rep_learn.models.ncp import NCP
+        from symm_rep_learn.models.neural_conditional_probability.ncp import NCP
         from symm_rep_learn.mysc.utils import class_from_name
-        from symm_rep_learn.nn.layers import MLP
+        from symm_rep_learn.nn.layers import ResidualEncoder  # non-equivariant
 
         activation = class_from_name("torch.nn", cfg.architecture.activation)
         kwargs = dict(
-            output_shape=embedding_dim,
-            n_hidden=cfg.architecture.hidden_layers,
-            layer_size=cfg.architecture.hidden_units,
-            activation=activation,
-            bias=False,
-            iterative_whitening=cfg.architecture.iter_whitening,
+            out_dim=embedding_dim,
+            hidden_units=cfg.architecture.hidden_units,
+            activation=activation(),
+            bias=True,
         )
+        cfg.architecture.residual_encoder_x = bool(getattr(cfg.architecture, "residual_encoder_x", False))
+        cfg.architecture.residual_encoder_y = bool(getattr(cfg.architecture, "residual_encoder_y", False))
+
         if cfg.architecture.residual_encoder_x:
-            from symm_rep_learn.nn.layers import MLP, ResidualEncoder
-
             dim_free_embedding = embedding_dim - dim_x
-            fx = ResidualEncoder(
-                encoder=MLP(input_shape=dim_x, **kwargs | {"output_shape": dim_free_embedding}), in_dim=dim_x
-            )
+            fx = ResidualEncoder(encoder=MLP(in_dim=dim_x, **(kwargs | {"out_dim": dim_free_embedding})), in_dim=dim_x)
         else:
-            fx = MLP(input_shape=dim_x, **kwargs)
-        if cfg.architecture.residual_encoder:
-            from symm_rep_learn.nn.layers import MLP, ResidualEncoder
+            fx = MLP(in_dim=dim_x, **kwargs)
 
+        if cfg.architecture.residual_encoder_y:
             dim_free_embedding = embedding_dim - dim_y
-            fy = ResidualEncoder(
-                encoder=MLP(input_shape=dim_y, **kwargs | {"output_shape": dim_free_embedding}), in_dim=dim_y
-            )
+            fy = ResidualEncoder(encoder=MLP(in_dim=dim_y, **(kwargs | {"out_dim": dim_free_embedding})), in_dim=dim_y)
         else:
-            fy = MLP(input_shape=dim_y, **kwargs)
+            fy = MLP(in_dim=dim_y, **kwargs)
+
         ncp = NCP(
             embedding_x=fx,
             embedding_y=fy,
-            embedding_dim=embedding_dim,
-            gamma=cfg.gamma,
-            gamma_centering=cfg.gamma_centering,
-            truncated_op_bias=cfg.truncated_op_bias,
-            learnable_change_basis=cfg.learnable_change_basis,
+            embedding_dim_x=embedding_dim,
+            embedding_dim_y=embedding_dim,
+            orth_reg=cfg.gamma,
+            centering_reg=cfg.gamma_centering,
+            momentum=cfg.momentum,
         )
         return ncp
 
     elif cfg.model.lower() == "mlp":
         from symm_rep_learn.mysc.utils import class_from_name
-        from symm_rep_learn.nn.layers import MLP
 
         activation = class_from_name("torch.nn", cfg.architecture.activation)
         n_h_layers = cfg.architecture.hidden_layers
@@ -140,8 +128,6 @@ def get_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
         )
         return mlp
     elif cfg.model.lower() == "emlp":
-        from symm_rep_learn.nn.equiv_layers import EMLP
-
         n_h_layers = cfg.architecture.hidden_layers
         emlp = EMLP(
             in_type=x_type,
@@ -272,18 +258,18 @@ def ncp_regression(model: NCP, x, y, y_train, x_type, y_type, lstsq=False, analy
     # Compute the embeddings of the entire y training dataset. And the linear regression between y and h(y)
     Cyhy = torch.zeros((y_train.shape[-1], model.embedding_dim), device=device)
     n_train = y_train.shape[0]
-    if isinstance(model.embedding_y, EquivariantModule):  # Symmetry aware models.
-        hy_train = model.embedding_y(y_type(y_train)).tensor  # shape: (n_train, embedding_dim)
+    if isinstance(model._embedding_y, EquivariantModule):  # Symmetry aware models.
+        hy_train = model._embedding_y(y_type(y_train)).tensor  # shape: (n_train, embedding_dim)
         from symm_rep_learn.nn.equiv_layers import ResidualEncoder
 
-        if analytic_residual and isinstance(model.embedding_y[0], ResidualEncoder):
+        if analytic_residual and isinstance(model._embedding_y[0], ResidualEncoder):
             # Y is embedded in the encoded vector h(y), we can get the prediction using indexing.
-            res_encoder = model.embedding_y[0]
-            change2iso_module = model.embedding_y[-1]
+            res_encoder = model._embedding_y[0]
+            change2iso_module = model._embedding_y[-1]
             Qiso2y = change2iso_module.Qin2iso.T
             Cyhy = Qiso2y[res_encoder.residual_dims, :]
         else:  # Compute the symmetry aware linear regression from h(y) to y
-            rep_Hy = model.embedding_y.out_type.representation
+            rep_Hy = model._embedding_y.out_type.representation
             if lstsq:  # TODO: symmetry aware lstsq
                 import linear_operator_learning as lol
 
@@ -293,11 +279,11 @@ def ncp_regression(model: NCP, x, y, y_train, x_type, y_type, lstsq=False, analy
 
                 Cyhy = lol.nn.symmetric.stats.covariance(X=hy_train, Y=y_train_c, rep_X=rep_Hy, rep_Y=rep_Y)
     else:  # Symmetry agnostic models.
-        hy_train = model.embedding_y(y_train)  # shape: (n_train, embedding_dim)
+        hy_train = model._embedding_y(y_train)  # shape: (n_train, embedding_dim)
         from symm_rep_learn.nn.layers import ResidualEncoder
 
-        if analytic_residual and isinstance(model.embedding_y, ResidualEncoder):
-            y_dims_in_hy = model.embedding_y.residual_dims
+        if analytic_residual and isinstance(model._embedding_y, ResidualEncoder):
+            y_dims_in_hy = model._embedding_y.residual_dims
             mask = torch.zeros(hy_train.shape[-1], device=device)
             mask[y_dims_in_hy] = 1
             for dim in range(y_dims_in_hy.start, y_dims_in_hy.stop):
@@ -311,10 +297,10 @@ def ncp_regression(model: NCP, x, y, y_train, x_type, y_type, lstsq=False, analy
                 Cyhy = (1 / n_train) * torch.einsum("by,bh->yh", y_train_c, hy_train)
 
     # Introduce the entire group orbit of the testing set, to appropriately compute the equivariant error.
-    if isinstance(model.embedding_x, EquivariantModule):
-        fx = model.embedding_x(x_type(x)).tensor
+    if isinstance(model._embedding_x, EquivariantModule):
+        fx = model._embedding_x(x_type(x)).tensor
     else:
-        fx = model.embedding_x(x)  # shape: (n_test, embedding_dim)
+        fx = model._embedding_x(x)  # shape: (n_test, embedding_dim)
 
     # Check formula 12 from https://arxiv.org/pdf/2407.01171
     Dr = model.truncated_operator

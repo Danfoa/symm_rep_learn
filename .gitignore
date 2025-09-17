@@ -1,9 +1,15 @@
 *.pkl
+*.npy
 *.h5
 *.ckpt
+*.pth
+*.ph
+*.pt
 *__pycache__*
 *.pyc
 /.idea
 /.vscode
 /.ipynb_checkpoints
 /paper/results
+.github/
+paper/experiments/dynamics/data/ordered_mnist/*

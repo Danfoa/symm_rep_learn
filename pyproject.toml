@@ -1,6 +1,6 @@
 [project]
 name = "symm-rep-learn"
-version = "0.1.0"
+dynamic = ["version"]
 
 description = "Code of paper Learning Disentangled Representations for Equivariant Inference"
 readme = "README.md"
@@ -12,11 +12,30 @@ authors = [
 dependencies = [
   "torch",
   "symm-learning",
+  "plotly",
+  "lightning",
+  "scipy",
+  "wandb",
+  "hydra-core",
+  "hydra-joblib-launcher",
+  "pandas",
+  "datasets",
+  "torchvision",
+  "matplotlib",
+  "kaleido",
+  "seaborn",
 ]
 
 # RUFF ___________________________________________________________________________________________________________
 [tool.ruff]
 line-length = 120 # Set the maximum allowed line length to 120 characters
+# Exclude specific directories from linting
+exclude = [
+  ".git",  # Git version control directory
+  ".idea", # PyCharm project settings directory
+  ".venv",  # Virtual environment directory
+  ".vscode"
+]
 
 [tool.ruff.lint] # _____________________________________________________________________________________________________
 # Enable specific linting rules
@@ -34,18 +53,15 @@ ignore = [
   "D401", # Allow any docstring to start with a capital letter, not just "This"
   "D405", # Allow non-imperative mood in docstring section names
   "E701", # Allow multiple statements on one line (colon)
-  "D100"  # Ignore missing docstring in public module
+  "D100",  # Ignore missing docstring in public module
+  # Resolve incompatible pydocstyle pairs if D checks are enabled upstream
+  "D203",  # Conflicts with D211
+  "D213"   # Conflicts with D212
 ]
 
-# Exclude specific directories from linting
-exclude = [
-  ".git",  # Git version control directory
-  ".idea", # PyCharm project settings directory
-  ".venv",  # Virtual environment directory
-  ".vscode"
-]
-
-pydocstyle.convention = "google"
+[tool.ruff.lint.pydocstyle]
+# Apply Google docstring conventions if pydocstyle ("D") checks are enabled
+convention = "google"
 
 # ___________________________________________________________________________________________________________
 [build-system]
@@ -70,3 +86,9 @@ exclude = [
   "*.pkl", # Exclude pickle files
   "__pycache__/**", # Exclude Python cache files
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["symm_rep_learn"]
+
+[tool.hatch.version]
+path = "symm_rep_learn/__init__.py"

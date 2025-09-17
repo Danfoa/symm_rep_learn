@@ -88,9 +88,9 @@ class ConditionalDensity(BaseEstimator):
     """ SKEWNESS """
 
     def _skewness_pdf(self, x_cond, n_samples=10**6):
-        assert (
-            self.ndim_y == 1
-        ), "this function does not support co-skewness - target variable y must be one-dimensional"
+        assert self.ndim_y == 1, (
+            "this function does not support co-skewness - target variable y must be one-dimensional"
+        )
         assert hasattr(self, "mean_")
         assert hasattr(self, "pdf")
         assert hasattr(self, "covariance")
@@ -133,9 +133,9 @@ class ConditionalDensity(BaseEstimator):
     """ KURTOSIS """
 
     def _kurtosis_pdf(self, x_cond, n_samples=10**6):
-        assert (
-            self.ndim_y == 1
-        ), "this function does not support co-kurtosis - target variable y must be one-dimensional"
+        assert self.ndim_y == 1, (
+            "this function does not support co-kurtosis - target variable y must be one-dimensional"
+        )
         assert hasattr(self, "mean_")
         assert hasattr(self, "pdf")
         assert hasattr(self, "covariance")
@@ -217,9 +217,9 @@ class ConditionalDensity(BaseEstimator):
     """ CONDITONAL VALUE-AT-RISK """
 
     def _conditional_value_at_risk_mc_pdf(self, VaRs, x_cond, alpha=0.01, n_samples=10**7):
-        assert (
-            VaRs.shape[0] == x_cond.shape[0]
-        ), "same number of x_cond must match the number of values_at_risk provided"
+        assert VaRs.shape[0] == x_cond.shape[0], (
+            "same number of x_cond must match the number of values_at_risk provided"
+        )
         assert x_cond.ndim == 2
 
         CVaRs = np.zeros(x_cond.shape[0])

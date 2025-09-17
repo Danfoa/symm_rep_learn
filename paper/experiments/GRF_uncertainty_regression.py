@@ -4,40 +4,66 @@ from __future__ import annotations  # Support new typing structure in 3.8 and 3.
 
 import logging
 import pathlib
-from pathlib import Path
 
 import escnn
 import hydra
 import numpy as np
 import pandas as pd
+import plotly
 import plotly.graph_objs as go
+
+plotly.io.templates.default = "plotly_white"
+
 import torch
 from escnn.group import directsum
 from escnn.nn import FieldType, GeometricTensor
 from gym_quadruped.utils.quadruped_utils import configure_observation_space_representations
 from lightning import Trainer, seed_everything
-from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
-from lightning.pytorch.loggers import WandbLogger
-from omegaconf import DictConfig, OmegaConf
+from lightning.pytorch.callbacks import ModelCheckpoint
+from omegaconf import DictConfig
 from plotly.subplots import make_subplots
+from symm_learning.models import EMLP
 from torch.optim import Adam
 from torch.utils.data import DataLoader, default_collate
 
 from paper.experiments.CoM_regression import get_model
 from paper.experiments.grf_regression_uc.proprioceptive_datasets import ProprioceptiveDataset
+from paper.experiments.train_utils import get_train_logger_and_callbacks
 from symm_rep_learn.inference.encp import ENCPConditionalCDF
 from symm_rep_learn.inference.ncp import NCPConditionalCDF
-from symm_rep_learn.models.equiv_ncp import ENCP
+from symm_rep_learn.models import CQR, eCQR
+from symm_rep_learn.models.conditional_quantile_regression.cqr import (
+    get_coverage,
+    get_relaxed_coverage,
+    get_set_size,
+)
 from symm_rep_learn.models.lightning_modules import CQRLightningModule, TrainingModule
-from symm_rep_learn.models.multivariateCQR import MultivariateCQR, get_coverage, get_relaxed_coverage, get_set_size
-from symm_rep_learn.models.ncp import NCP
-from symm_rep_learn.nn.equiv_layers import EMLP
+from symm_rep_learn.models.neural_conditional_probability.encp import ENCP
+from symm_rep_learn.models.neural_conditional_probability.ncp import NCP
 
 log = logging.getLogger(__name__)
 
 
 def plot_gt_and_quantiles(
-    gt, q_low, q_high, title_prefix="Dim", subtitles=None, title="Observables", fig=None, ncols=None
+    gt,
+    q_low,
+    q_high,
+    title_prefix="Dim",
+    subtitles=None,
+    fig=None,
+    ncols=None,
+    area_color="rgba(255, 0, 0, 0.2)",
+    outlier_color="red",
+    legend=True,
+    time_0=0,
+    row_offset=0,
+    col_offset=0,
+    # --- new optional args for discretization overlay ---
+    discretized_support=None,
+    show_support_lines=True,
+    support_line_color="rgba(200,200,200,0.5)",
+    support_line_width=1.0,
+    round_decimals=12,
 ):
     """Plots predictions vs ground truth per dimension with shared legend group using Plotly.
 
@@ -48,6 +74,8 @@ def plot_gt_and_quantiles(
         title_prefix (str): Fallback prefix for subplot titles.
         subtitles (list of str): Optional list of titles per dimension.
         title (str): Title of the entire figure.
+        discretized_support (np.ndarray): Optional support grid (m, dim) in the same units as gt.
+        show_support_lines (bool): Whether to draw horizontal lines at each support level.
     """
     gt = gt.cpu().numpy() if hasattr(gt, "cpu") else gt
     q_low = q_low.cpu().numpy() if hasattr(q_low, "cpu") else q_low
@@ -64,23 +92,24 @@ def plot_gt_and_quantiles(
             cols=n_cols,
             shared_xaxes=True,
             vertical_spacing=0.05,
+            horizontal_spacing=0.055,
             subplot_titles=[
                 subtitles[i] if subtitles and i < len(subtitles) else f"{title_prefix} {i}" for i in range(dim)
             ],
         )
 
     for i in range(dim):
-        row = i // n_cols + 1
-        col = i % n_cols + 1
+        row = (i) // n_cols + 1
+        col = (i) % n_cols + 1
 
         fig.add_trace(
             go.Scatter(
-                x=time,
+                x=time + time_0,
                 y=gt[:, i],
                 mode="lines",
                 name="GT",
                 legendgroup="GT",
-                showlegend=(i == 0),
+                showlegend=(i == 0) and legend,
                 line=dict(color="blue"),
             ),
             row=row,
@@ -89,12 +118,12 @@ def plot_gt_and_quantiles(
 
         fig.add_trace(
             go.Scatter(
-                x=np.concatenate([time, time[::-1]]),
+                x=np.concatenate([time, time[::-1]]) + time_0,
                 y=np.concatenate([q_low[:, i], q_high[::-1, i]]),
                 fill="toself",
-                fillcolor="rgba(255, 0, 0, 0.2)",
+                fillcolor=area_color,
                 line=dict(color="rgba(255, 0, 0, 0)"),
-                name="Confidence Interval",
+                name="CI",
                 legendgroup="CI",
                 showlegend=(i == 0),
             ),
@@ -102,24 +131,65 @@ def plot_gt_and_quantiles(
             col=col,
         )
 
+        # Horizontal discretization lines at support levels (efficient multi-segment trace)
+        if show_support_lines and discretized_support is not None:
+            S = discretized_support
+            if S.ndim == 1:
+                S = S[:, None]
+            if S.shape[1] == dim:
+                s_i = S[:, i]
+            else:
+                # If provided dim doesn't match, try to broadcast last column
+                idx = min(i, S.shape[1] - 1)
+                s_i = S[:, idx]
+            # Unique rounded support to avoid overplotting identical levels
+            s_unique = np.unique(np.round(s_i.astype(float), decimals=round_decimals))
+            if s_unique.size > 0:
+                x0 = (time[0] + time_0) if time.size > 0 else time_0
+                x1 = (time[-1] + time_0) if time.size > 0 else (time_0 + 1)
+                xs = []
+                ys = []
+                for s in s_unique:
+                    xs.extend([x0, x1, None])
+                    ys.extend([s, s, None])
+                fig.add_trace(
+                    go.Scatter(
+                        x=np.array(xs),
+                        y=np.array(ys),
+                        mode="lines",
+                        line=dict(color=support_line_color, width=support_line_width),
+                        name="support",
+                        legendgroup="support",
+                        showlegend=False,
+                    ),
+                    row=row,
+                    col=col,
+                )
+
         outliers = (gt[:, i] < q_low[:, i]) | (gt[:, i] > q_high[:, i])
         fig.add_trace(
             go.Scatter(
-                x=time[outliers],
+                x=np.asarray(time[outliers]) + time_0,
                 y=gt[outliers, i],
                 mode="markers",
                 name="Outliers",
                 legendgroup="Outliers",
                 showlegend=(i == 0),
-                marker=dict(color="red"),
+                marker=dict(color=outlier_color, size=3),
             ),
             row=row,
             col=col,
         )
 
-    # fig.update_layout(height=800 * n_rows, width=2000 * n_cols, title_text=title)
-    # Remove borders and white spaces
-    # fig.update_layout(margin=dict(l=0, r=0, b=0, t=0))
+        # Compute dynamic y-limits
+        y_all = gt[:, i]
+        y_min = np.min(y_all)
+        y_max = np.max(y_all)
+        y_margin = (y_max - y_min) * 0.1
+        y_lim_min = y_min - y_margin
+        y_lim_max = y_max + y_margin
+        fig.update_yaxes(range=[y_lim_min, y_lim_max], row=row, col=col)
+
     return fig
 
 
@@ -135,11 +205,9 @@ def symmetric_collate(
 ):
     batch = default_collate(batch)
     x_obs, y_obs = batch
-    x = torch.cat([x_obs[obs_name] for obs_name in ds_cfg.x_obs], dim=-1).to(dtype=torch.float32)
-    y = torch.cat([y_obs[obs_name] for obs_name in ds_cfg.y_obs], dim=-1).to(dtype=torch.float32)
-
-    x_batch = torch.squeeze(x, dim=1)
-    y_batch = torch.squeeze(y, dim=1)
+    x_batch = torch.cat([x_obs[obs_name] for obs_name in ds_cfg.x_obs], dim=-1).to(dtype=torch.float32)
+    y_batch = torch.cat([y_obs[obs_name] for obs_name in ds_cfg.y_obs], dim=-1).to(dtype=torch.float32)
+    batch_size = x_batch.shape[0]
 
     x_mean, x_var = x_moments
     y_mean, y_var = y_moments
@@ -147,6 +215,14 @@ def symmetric_collate(
     # Standardize the data
     x_batch = (x_batch - x_mean) / torch.sqrt(x_var)
     y_batch = (y_batch - y_mean) / torch.sqrt(y_var)
+
+    if x_batch.dim() == 3:  # (batch, frames, dim)
+        x_batch = x_batch.permute(0, 2, 1).reshape(batch_size, -1)  # (batch, dim * frames)
+        assert x_batch.shape[-1] == x_type.size, f"Expected x_dim {x_type.size}, got {x_batch.shape[-1]}"
+
+    if y_batch.dim() == 3:  # (batch, frames, dim)
+        y_batch = y_batch.permute(0, 2, 1).reshape(batch_size, -1)  # (batch, dim * frames)
+        assert y_batch.shape[-1] == y_type.size, f"Expected y_dim {y_type.size}, got {y_batch.shape[-1]}"
 
     if (
         (split == "train" and ds_cfg.augment_train)
@@ -171,12 +247,12 @@ def get_uc_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
     dim_y = y_type.size
 
     if cfg.model.lower() == "cqr":  # Conditional Quantile Regression
-        from symm_rep_learn.models.multivariateCQR import MultivariateCQR
+        from symm_rep_learn.models.conditional_quantile_regression.cqr import CQR
         from symm_rep_learn.mysc.utils import class_from_name
 
         activation = class_from_name("torch.nn", cfg.architecture.activation)
         n_h_layers = cfg.architecture.hidden_layers
-        cqr = MultivariateCQR(
+        cqr = CQR(
             dim_x=dim_x,
             dim_y=dim_y,
             gamma=cfg.alpha,
@@ -186,54 +262,37 @@ def get_uc_model(cfg: DictConfig, x_type, y_type) -> torch.nn.Module:
             bias=False,
         )
         return cqr
-    elif cfg.model.lower() == "encp":  # Equivariant NCP
-        from symm_rep_learn.models.equiv_ncp import ENCP
-
-        G = x_type.representation.group
-
-        reg_rep = G.regular_representation
-
-        kwargs = dict(
+    elif cfg.model.lower() == "ecqr":  # Equivariant Conditional Quantile Regression
+        n_h_layers = cfg.architecture.hidden_layers
+        nn_kwargs = dict(
             hidden_layers=cfg.architecture.hidden_layers,
             activation=cfg.architecture.activation,
-            hidden_units=cfg.architecture.hidden_units,
+            hidden_units=[cfg.architecture.hidden_units] * (n_h_layers - 1) + [cfg.architecture.embedding_dim],
             bias=False,
         )
-        from symm_rep_learn.nn.equiv_layers import IMLP
-
-        if cfg.architecture.residual_encoder:
-            from symm_rep_learn.nn.equiv_layers import ResidualEncoder
-
-            x_embedding = IMLP(in_type=x_type, out_dim=cfg.architecture.embedding_dim, **kwargs)
-            y_embedding = ResidualEncoder(
-                encoder=IMLP(in_type=y_type, out_dim=cfg.architecture.embedding_dim - y_type.size, **kwargs),
-                in_type=y_type,
-            )
-            assert (
-                y_embedding.out_type.size == x_embedding.out_type.size
-            ), f"{y_embedding.out_type.size} != {x_embedding.out_type.size}"
-        else:
-            x_embedding = IMLP(in_type=x_type, out_dim=cfg.architecture.embedding_dim, **kwargs)
-            y_embedding = IMLP(in_type=y_type, out_dim=cfg.architecture.embedding_dim, **kwargs)
-        eNCPop = ENCP(
-            embedding_x=x_embedding,
-            embedding_y=y_embedding,
-            gamma=cfg.gamma,
-            gamma_centering=cfg.gamma_centering,
-            truncated_op_bias=cfg.truncated_op_bias,
-            learnable_change_of_basis=cfg.learnable_change_basis,
+        equiv_cqr = eCQR(
+            in_type=x_type,
+            out_type=y_type,
+            gamma=cfg.alpha,
+            **nn_kwargs,
         )
-
-        return eNCPop
+        return equiv_cqr
     else:
         return get_model(cfg, x_type, y_type)
 
 
 def get_proprioceptive_data(cfg: DictConfig):
-    #
-    data_path = Path(cfg.dataset.path)
+    from huggingface_hub import hf_hub_download
+
+    data_path = hf_hub_download(
+        repo_id="DLS-IIT/quadruped_locomotion",
+        repo_type="dataset",
+        filename=cfg.dataset.path,
+    )
+
+    # You can also load data to a Torch dataset and use it for your learning projects
     dataset = ProprioceptiveDataset(
-        data_path,
+        data_file=pathlib.Path(data_path),
         x_obs_names=cfg.dataset.x_obs,
         y_obs_names=cfg.dataset.y_obs,
         x_frames=cfg.dataset.x_frames,
@@ -261,7 +320,7 @@ def get_proprioceptive_data(cfg: DictConfig):
 
     # Compute the mean and variance of the observations ---------------------------------------------------------------
     is_equiv_model = cfg.model.lower() == "emlp" or cfg.model.lower() == "encp"
-    train_ds.compute_obs_moments(obs_reps=obs_reps if is_equiv_model else None)
+    train_ds.compute_obs_moments(obs_reps=obs_reps)
     train_ds.shuffle()
 
     y_obs_dims = {}
@@ -288,7 +347,7 @@ def get_proprioceptive_data(cfg: DictConfig):
     val_samples = {k: np.concatenate(v, axis=0) for k, v in val_samples.items()}
     test_samples = {k: np.concatenate(v, axis=0) for k, v in test_samples.items()}
 
-    assert cfg.dataset.x_frames == 1 and cfg.dataset.y_frames == 1, "Only single frame supported for now."
+    # assert cfg.dataset.x_frames == 1 and cfg.dataset.y_frames == 1, "Only single frame supported for now."
     x_train = torch.tensor(np.concatenate([train_samples[obs_name] for obs_name in cfg.dataset.x_obs], axis=1))
     y_train = torch.tensor(np.concatenate([train_samples[obs_name] for obs_name in cfg.dataset.y_obs], axis=1))
     x_val = torch.tensor(np.concatenate([val_samples[obs_name] for obs_name in cfg.dataset.x_obs], axis=1))
@@ -319,7 +378,15 @@ def get_proprioceptive_data(cfg: DictConfig):
 
 @torch.no_grad()
 def uncertainty_metrics(
-    model, x_cond, y, y_train, x_type, y_type, alpha: float = 0.05, lstsq: bool = True, y_obs_dims: dict = None
+    model,
+    x_cond,
+    y,
+    y_train,
+    x_type,
+    y_type,
+    alpha: float = 0.05,
+    y_obs_dims: dict = None,
+    current_epoch: int = None,
 ):
     """Args:
         model: NCP or ENCP model.
@@ -333,17 +400,68 @@ def uncertainty_metrics(
     Returns:
 
     """
+
+    G = x_type.fibergroup
+    x_transformed = [x_type.transform_fibers(x_cond, g) for g in G.elements]
+    y_transformed = [y_type.transform_fibers(y, g) for g in G.elements]
+    x_cond = torch.cat(x_transformed, dim=0)
+    y = torch.cat(y_transformed, dim=0)
+
     if isinstance(model, ENCP):
-        encp_ccdf = ENCPConditionalCDF(
-            model=model, y_train=y_type(y_train), support_discretization_points=500, lstsq=lstsq
-        )
-        q_low, q_high = encp_ccdf.conditional_quantiles(x_cond=x_type(x_cond), alpha=alpha)
+        encp_ccdf = ENCPConditionalCDF(model=model, y_train=y_type(y_train), support_discretization_points=100)
+        q_low, q_high = encp_ccdf.conditional_quantiles(x_cond=x_cond, alpha=alpha)
     elif isinstance(model, NCP):
-        ncp_ccdf = NCPConditionalCDF(model=model, y_train=y_train, support_discretization_points=500, lstsq=lstsq)
+        ncp_ccdf = NCPConditionalCDF(model=model, y_train=y_train, support_discretization_points=100)
         q_low, q_high = ncp_ccdf.conditional_quantiles(x_cond=x_cond, alpha=alpha)
     else:
         raise ValueError(f"Model type {type(model)} not supported.")
 
+    q_low = torch.tensor(q_low).to(y.device, y.dtype)
+    q_high = torch.tensor(q_high).to(y.device, y.dtype)
+
+    metrics = dict(
+        coverage=get_coverage(q_low, q_high, target=y),
+        relaxed_coverage=get_relaxed_coverage(q_low, q_high, target=y),
+        set_size=get_set_size(q_low, q_high),
+    )
+    for obs_name, obs_dims in y_obs_dims.items():
+        metrics |= {
+            f"{obs_name}/coverage": get_coverage(q_low[:, obs_dims], q_high[:, obs_dims], target=y[:, obs_dims]),
+            f"{obs_name}/relaxed_coverage": get_relaxed_coverage(
+                q_low[:, obs_dims], q_high[:, obs_dims], target=y[:, obs_dims]
+            ),
+            f"{obs_name}/set_size": get_set_size(q_low[:, obs_dims], q_high[:, obs_dims]),
+        }
+
+    return metrics
+
+
+@torch.no_grad()
+def cqr_uncertainty_metrics(model, x_cond, x_type, y, y_type, y_obs_dims: dict = None):
+    """Args:
+        model: NCP or ENCP model.
+        x_cond: (batch, x_dim) tensor of the conditioning values.
+        y: (batch, y_dim) tensor of target data to regress with uncertainty quantification.
+        y_train: (n_train, y_dim) tensor of Y training data (standardized).
+        y_type: (FieldType) output field type.
+        y_obs_dims: (dict[str, slice]) dictionary with names of observables in the Y vector (e.g., "force": slice(0, 3)).)
+        y_moments: Mean and variance of the Y data, used to standardize the data.
+
+    Returns:
+
+    """
+
+    G = x_type.fibergroup
+    x_transformed = [x_type.transform_fibers(x_cond, g) for g in G.elements]
+    y_transformed = [y_type.transform_fibers(y, g) for g in G.elements]
+    x_cond = torch.cat(x_transformed, dim=0)
+    y = torch.cat(y_transformed, dim=0)
+
+    is_equiv_model = isinstance(model, escnn.nn.EquivariantModule)
+    device = next(model.parameters()).device
+    q_low, q_high = model(x_type(x_cond.to(device)) if is_equiv_model else x_cond.to(device))
+    if is_equiv_model:
+        q_low, q_high = q_low.tensor, q_high.tensor
     q_low = torch.tensor(q_low).to(y.device, y.dtype)
     q_high = torch.tensor(q_high).to(y.device, y.dtype)
 
@@ -376,8 +494,8 @@ def main(cfg: DictConfig):
 
     G = rep_x.group
     # lat_rep = G.regular_representation
-    x_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=[rep_x])
-    y_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=[rep_y])
+    x_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=[rep_x] * cfg.dataset.x_frames)
+    y_type = FieldType(gspace=escnn.gspaces.no_base_space(G), representations=[rep_y] * cfg.dataset.y_frames)
 
     # Get the model_____________________________________________________________________
     model = get_uc_model(cfg, x_type, y_type)
@@ -388,7 +506,7 @@ def main(cfg: DictConfig):
 
     # Define the dataloaders_____________________________________________________________
     # ESCNN equivariant models expect GeometricTensors.
-    is_equiv_model = isinstance(model, ENCP) or isinstance(model, EMLP)
+    is_equiv_model = isinstance(model, ENCP) or isinstance(model, EMLP) or isinstance(model, eCQR)
     dl_kwargs = dict(
         ds_cfg=cfg.dataset,
         x_moments=x_moments,
@@ -417,12 +535,18 @@ def main(cfg: DictConfig):
     )
 
     # Define the Lightning module ______________________________________________________
-    if isinstance(model, MultivariateCQR):
+    if isinstance(model, CQR) or isinstance(model, eCQR):
         lightning_module = CQRLightningModule(
             model=model,
             optimizer_fn=Adam,
             optimizer_kwargs={"lr": cfg.optim.lr},
             loss_fn=model.loss,
+            val_metrics=lambda **kwargs: cqr_uncertainty_metrics(
+                model, x_val, x_type, y_val, y_type, y_obs_dims=y_obs_dims, **kwargs
+            ),
+            test_metrics=lambda **kwargs: cqr_uncertainty_metrics(
+                model, x_test, x_type, y_test, y_type, y_obs_dims=y_obs_dims, **kwargs
+            ),
         )
     else:  # NCP / ENCP models
         lightning_module = TrainingModule(
@@ -430,37 +554,21 @@ def main(cfg: DictConfig):
             optimizer_fn=Adam,
             optimizer_kwargs={"lr": cfg.optim.lr},
             loss_fn=model.loss if hasattr(model, "loss") else None,
-            val_metrics=lambda _: uncertainty_metrics(
-                model, x_val, y_val, y_train, x_type, y_type, cfg.alpha, cfg.lstsq, y_obs_dims
-            ),
-            test_metrics=lambda _: uncertainty_metrics(
-                model, x_test, y_test, y_train, x_type, y_type, cfg.alpha, cfg.lstsq, y_obs_dims
+            # val_metrics=lambda **kwargs: uncertainty_metrics(
+            # model, x_val, y_val, y_train, x_type, y_type, cfg.alpha, y_obs_dims, **kwargs
+            # ),
+            test_metrics=lambda **kwargs: uncertainty_metrics(
+                model, x_test, y_test, y_train, x_type, y_type, cfg.alpha, y_obs_dims, **kwargs
             ),
         )
 
     # Define the logger and callbacks
     run_path = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
-    log.info(f"Run path: {run_path}")
-    run_cfg = OmegaConf.to_container(cfg, resolve=True)
-    logger = WandbLogger(save_dir=run_path, project=cfg.proj_name, log_model=False, config=run_cfg)
-    logger.watch(model, log="gradients")
-    n_total_samples = int(len(train_ds) / cfg.dataset.train_ratio)
-    scaled_saved_freq = int(5 * n_total_samples // cfg.optim.batch_size)
-    BEST_CKPT_NAME, LAST_CKPT_NAME = "best", ModelCheckpoint.CHECKPOINT_NAME_LAST
-    ckpt_call = ModelCheckpoint(
-        dirpath=run_path,
-        filename=BEST_CKPT_NAME,
-        monitor="loss/val",
-        save_top_k=1,
-        save_last=True,
-        mode="min",
-        every_n_epochs=scaled_saved_freq,
-    )
-
-    # Fix for all runs independent on the train_ratio chosen. This way we compare on effective number of "epochs"
-    check_val_every_n_epochs = 33
     metric_to_monitor = "||k(x,y) - k_r(x,y)||/val" if isinstance(model, ENCP) or isinstance(model, NCP) else "loss/val"
-    early_call = EarlyStopping(metric_to_monitor, patience=5, mode="min")
+    ckpt_call, early_call, logger = get_train_logger_and_callbacks(
+        run_path=run_path, cfg=cfg, val_metric=metric_to_monitor
+    )
+    # logger.watch(model, log="gradients")
 
     trainer = Trainer(
         accelerator="gpu",
@@ -469,27 +577,30 @@ def main(cfg: DictConfig):
         logger=logger,
         enable_progress_bar=True,
         log_every_n_steps=25,
-        check_val_every_n_epoch=check_val_every_n_epochs,
+        check_val_every_n_epoch=cfg.optim.check_val_every_n_epoch,
         callbacks=[ckpt_call, early_call],
-        fast_dev_run=25 if cfg.debug else False,
+        fast_dev_run=5 if cfg.debug else False,
         num_sanity_val_steps=5,
     )
 
     torch.set_float32_matmul_precision("medium")
-    last_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / LAST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
+    # Resume from last checkpoint if it exists
+    last_ckpt_name = ModelCheckpoint.CHECKPOINT_NAME_LAST
+    last_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / last_ckpt_name).with_suffix(ckpt_call.FILE_EXTENSION)
     trainer.fit(
         lightning_module,
         train_dataloaders=train_dataloader,
         val_dataloaders=val_dataloader,
         ckpt_path=last_ckpt_path if last_ckpt_path.exists() else None,
     )
+    model.eval()
 
     # Loads the best model.
-    best_ckpt_path = (pathlib.Path(ckpt_call.dirpath) / BEST_CKPT_NAME).with_suffix(ckpt_call.FILE_EXTENSION)
+    best_ckpt_path = pathlib.Path(ckpt_call.best_model_path) if ckpt_call.best_model_path else None
     test_logs = trainer.test(
         lightning_module,
         dataloaders=test_dataloader,
-        ckpt_path=best_ckpt_path if best_ckpt_path.exists() else None,
+        ckpt_path=(best_ckpt_path if (best_ckpt_path and best_ckpt_path.exists()) else None),
     )
     test_metrics = test_logs[0]  # dict: metric_name -> value
     # Save the testing matrices in a csv file using pandas.
@@ -502,15 +613,23 @@ def main(cfg: DictConfig):
     lightning_module.cpu()
 
     if isinstance(model, ENCP):
-        encp_ccdf = ENCPConditionalCDF(
-            model=model, y_train=y_type(y_train), support_discretization_points=1000, lstsq=True
-        )
-        q_low, q_high = encp_ccdf.conditional_quantiles(x_cond=x_type(x_test), alpha=cfg.alpha)
+        encp_ccdf = ENCPConditionalCDF(model=model, y_train=y_type(y_train), support_discretization_points=100)
+        q_low, q_high = encp_ccdf.conditional_quantiles(x_cond=x_test, alpha=cfg.alpha)
+        support_un = None
     elif isinstance(model, NCP):
-        ncp_ccdf = NCPConditionalCDF(model=model, y_train=y_train, support_discretization_points=1000, lstsq=True)
+        ncp_ccdf = NCPConditionalCDF(model=model, y_train=y_train, support_discretization_points=100)
         q_low, q_high = ncp_ccdf.conditional_quantiles(x_cond=x_test, alpha=cfg.alpha)
-    elif isinstance(model, MultivariateCQR):
+        # Unstandardize support grid for plotting horizontal lines using precomputed moments
+        y_mean_np = y_moments[0].detach().cpu().numpy()
+        y_std_np = torch.sqrt(y_moments[1]).detach().cpu().numpy()
+        support_un = ncp_ccdf.discretized_support * y_std_np[None, :] + y_mean_np[None, :]
+    elif isinstance(model, CQR):
         q_low, q_high = model(x_test)
+        support_un = None
+    elif isinstance(model, eCQR):
+        q_low, q_high = model(x_type(x_test))
+        q_low, q_high = q_low.tensor, q_high.tensor
+        support_un = None
     else:
         raise ValueError(f"Model type {type(model)} not supported.")
 
@@ -528,7 +647,12 @@ def main(cfg: DictConfig):
         q_high_obs = q_upq_un[:, y_obs_dims[obs_name]].detach().cpu().numpy()
         view_range = slice(600, 1000)
         fig = plot_gt_and_quantiles(
-            obs[view_range], q_low_obs[view_range], q_high_obs[view_range], title_prefix="grf", title="Contact Forces"
+            obs[view_range],
+            q_low_obs[view_range],
+            q_high_obs[view_range],
+            title_prefix="grf",
+            discretized_support=(None if support_un is None else support_un[:, y_obs_dims[obs_name]]),
+            show_support_lines=True,
         )
         fig_path = pathlib.Path(run_path) / f"{obs_name}_uncertainty_quantification.png"
         fig.write_image(str(fig_path))
