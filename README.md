@@ -10,6 +10,22 @@ This repository hosts the code of the ICLR 2026 submission
 pip install -e .
 ```
 
+## Repository Structure
+
+```
+.
+├── symm_rep_learn/              # Core library
+│   ├── inference/               # Inference methods and algorithms
+│   ├── models/                  # Model implementations
+│   ├── nn/                      # Neural network components
+│   └── mysc/                    # Utilities and theory
+├── paper/                       # Paper experiments and examples
+    ├── examples/                # Reproducible examples
+    ├── experiments/             # Main experiments
+    ├── plots/                   # Generated plots and figures
+    └── results/                 # Experimental results
+```
+
 ## Ready-to-use models 
 
 - [`ENCP` (Equivariant Neural Conditional Probability)](symm_rep_learn/models/neural_conditional_probability/encp.py#L22) extends the neural conditional operator with equivariant embeddings and statistics so that conditional expectations respect symmetry constraints.
