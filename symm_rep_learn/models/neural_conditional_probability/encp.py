@@ -4,11 +4,10 @@ from __future__ import annotations
 import logging
 
 import escnn.nn
-import lightning
 import torch
 import torch.nn.functional as F
 from escnn.group import directsum
-from escnn.nn import FieldType, GeometricTensor
+from escnn.nn import FieldType
 from symm_learning.nn import eEMAStats
 from symm_learning.nn.disentangled import Change2DisentangledBasis
 from symm_learning.representation_theory import isotypic_decomp_rep

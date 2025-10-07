@@ -10,16 +10,19 @@ authors = [
 
 ]
 dependencies = [
-  "torch",
   "symm-learning",
+  "wandb",
+  "datasets",
+  "hydra-core",
+]
+
+[project.optional-dependencies]
+paper = [
   "plotly",
   "lightning",
   "scipy",
-  "wandb",
-  "hydra-core",
   "hydra-joblib-launcher",
   "pandas",
-  "datasets",
   "torchvision",
   "matplotlib",
   "kaleido",

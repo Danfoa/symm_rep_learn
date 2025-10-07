@@ -137,7 +137,9 @@ def plot_conditional_samples(
     for x_cond, color in zip(x_values, colors):
         y_cond = dataset_fn(float(x_cond))
         q_up, q_lo = np.quantile(y_cond, 1 - (alpha / 2), axis=0), np.quantile(y_cond, alpha / 2, axis=0)
-        plot_quantiles(y_cond, q_lo, q_up, ax=ax, label=f"X={float(x_cond):.1f}", gt=False, quantile_color="black", color=color)
+        plot_quantiles(
+            y_cond, q_lo, q_up, ax=ax, label=f"X={float(x_cond):.1f}", gt=False, quantile_color="black", color=color
+        )
 
     fig.tight_layout()
 
@@ -178,15 +180,21 @@ def plot_basis_functions_x(
     *,
     title="Learned basis functions for x",
     fig_size=(4, 3),
+    palette: str | None = "tab20",
+    color_offset: int = 0,
     output_path: Path | str | None = None,
 ):
-    """Plot one-dimensional basis functions over x."""
+    """Plot one-dimensional basis functions over x with optional Matplotlib palette."""
 
     fig, ax = plt.subplots(figsize=fig_size)
     x_np = np.asarray(x_grid)
     fx_np = np.asarray(fx)
+    cmap = plt.get_cmap(palette) if palette is not None else None
     for idx in range(fx_np.shape[1]):
-        ax.plot(x_np, fx_np[:, idx], label=f"f_{idx}(x)")
+        color = None
+        if cmap is not None:
+            color = cmap((color_offset + idx) % cmap.N)
+        ax.plot(x_np, fx_np[:, idx], label=f"f_{idx}(x)", color=color)
     ax.set_title(title)
     fig.tight_layout()
 
@@ -252,7 +260,14 @@ def plot_ccdf_diagnostics(
     axs[0].axis("off")
     for idx, color in enumerate(colors):
         axs_idx = axs[idx + 1]
-        axs_idx.vlines(support[:, idx], marginal_cdf[:, idx].min(), marginal_cdf[:, idx].max(), color="lightgray", alpha=0.2, lw=0.6)
+        axs_idx.vlines(
+            support[:, idx],
+            marginal_cdf[:, idx].min(),
+            marginal_cdf[:, idx].max(),
+            color="lightgray",
+            alpha=0.2,
+            lw=0.6,
+        )
         axs_idx.plot(support[:, idx], ccdf[:, idx], label=rf"$CCDF_{{y_{idx}}}$", color=color)
         axs_idx.plot(support[:, idx], marginal_cdf[:, idx], label=rf"$CDF_{{y_{idx}}}$", color=color, linestyle="--")
         axs_idx.set_title(rf"Pred CCDF $y_{idx}$ given $X={float(x_value):.2f}$", fontsize=8)
@@ -304,13 +319,17 @@ def plot_quantile_comparison_grid(
         ccdf_pred = ccdf_fns["ncp"](float(x_cond))
         eccdf_pred = ccdf_fns["encp"](float(x_cond))
 
-        axs[i, 1].vlines(support[:, 0], marginal_cdf[:, 0].min(), marginal_cdf[:, 0].max(), color="lightgray", alpha=0.2, lw=0.6)
+        axs[i, 1].vlines(
+            support[:, 0], marginal_cdf[:, 0].min(), marginal_cdf[:, 0].max(), color="lightgray", alpha=0.2, lw=0.6
+        )
         axs[i, 1].plot(support[:, 0], ccdf_pred[:, 0], label="NCP", color="red")
         axs[i, 1].plot(support[:, 0], eccdf_pred[:, 0], label="eNCP", color="purple")
         axs[i, 1].plot(support[:, 0], marginal_cdf[:, 0], label="CDF", color="green")
         axs[i, 1].set_title(rf"Pred CCDF $y_0$ | X={float(x_cond):.2f}")
 
-        axs[i, 2].vlines(support[:, 1], marginal_cdf[:, 1].min(), marginal_cdf[:, 1].max(), color="lightgray", alpha=0.2, lw=0.6)
+        axs[i, 2].vlines(
+            support[:, 1], marginal_cdf[:, 1].min(), marginal_cdf[:, 1].max(), color="lightgray", alpha=0.2, lw=0.6
+        )
         axs[i, 2].plot(support[:, 1], ccdf_pred[:, 1], label="NCP", color="red")
         axs[i, 2].plot(support[:, 1], eccdf_pred[:, 1], label="eNCP", color="purple")
         axs[i, 2].plot(support[:, 1], marginal_cdf[:, 1], label="CDF", color="green")

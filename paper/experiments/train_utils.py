@@ -5,9 +5,9 @@ from escnn.nn import FieldType, GeometricTensor
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf
+from symm_rep_learn.inference.ncp import NCPConditionalCDF
 from torch.utils.data import default_collate
 
-from symm_rep_learn.inference.ncp import NCPConditionalCDF
 from symm_rep_learn.models.conditional_quantile_regression.cqr import get_coverage, get_relaxed_coverage, get_set_size
 from symm_rep_learn.models.neural_conditional_probability.ncp import NCP
 

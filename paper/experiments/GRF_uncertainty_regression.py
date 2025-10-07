@@ -23,14 +23,14 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from omegaconf import DictConfig
 from plotly.subplots import make_subplots
 from symm_learning.models import EMLP
+from symm_rep_learn.inference.encp import ENCPConditionalCDF
+from symm_rep_learn.inference.ncp import NCPConditionalCDF
 from torch.optim import Adam
 from torch.utils.data import DataLoader, default_collate
 
 from paper.experiments.CoM_regression import get_model
 from paper.experiments.grf_regression_uc.proprioceptive_datasets import ProprioceptiveDataset
 from paper.experiments.train_utils import get_train_logger_and_callbacks
-from symm_rep_learn.inference.encp import ENCPConditionalCDF
-from symm_rep_learn.inference.ncp import NCPConditionalCDF
 from symm_rep_learn.models import CQR, eCQR
 from symm_rep_learn.models.conditional_quantile_regression.cqr import (
     get_coverage,

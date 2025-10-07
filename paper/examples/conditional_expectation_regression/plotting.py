@@ -9,7 +9,7 @@ PARENT_DIR = Path(__file__).resolve().parents[1]
 if str(PARENT_DIR) not in sys.path:
     sys.path.append(str(PARENT_DIR))
 
-from utils import LiveLossPlotter, dataframe_to_markdown, log_metrics, plot_sample_efficiency
+from utils import dataframe_to_markdown, log_metrics
 
 
 def scatter_with_density(x, y, ax=None, bins=200, cmap="Blues", alpha_points=0.10, s=6):
@@ -523,9 +523,7 @@ def log_condexp_summary_metrics(
                 "coverage_error": float(df_results[f"{model} Coverage Error"].mean())
                 if f"{model} Coverage Error" in df_results
                 else np.nan,
-                "ci_size": float(df_results[f"{model} CI Size"].mean())
-                if f"{model} CI Size" in df_results
-                else np.nan,
+                "ci_size": float(df_results[f"{model} CI Size"].mean()) if f"{model} CI Size" in df_results else np.nan,
             }
         )
 

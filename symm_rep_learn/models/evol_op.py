@@ -55,7 +55,7 @@ class EvolOp1D(NCP):
             self._trainable_lin_dec = torch.nn.Linear(in_features=self.dim_fx, out_features=state_dim)
 
     def forward(self, x: torch.Tensor = None, y: torch.Tensor = None):
-        """Compute the time-delayed state embeddings.
+        r"""Compute the time-delayed state embeddings.
 
         Given the state x and next state y, this function computes the time-delayed state embeddings
         f(x) and h(y) using a unique non-linear encoder function, and the truncated conditional expectation operator

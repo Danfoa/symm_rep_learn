@@ -78,7 +78,9 @@ class LiveLossPlotter:
         self.ax.grid(True, alpha=0.25)
         self.ax.legend(loc="best", fontsize=8)
 
-    def update(self, epoch: int, train_loss: float | None = None, val_loss: float | None = None, force: bool = False) -> None:
+    def update(
+        self, epoch: int, train_loss: float | None = None, val_loss: float | None = None, force: bool = False
+    ) -> None:
         epoch = int(epoch)
         if self.epochs and epoch == self.epochs[-1]:
             if train_loss is not None:
@@ -164,11 +166,7 @@ def plot_sample_efficiency(
     data["sample_size"] = data["sample_size"].astype(int)
     data["seed"] = data["seed"].astype(int)
 
-    agg = (
-        data.groupby(["model", "sample_size"], as_index=False)[metric]
-        .agg(["mean", "std", "count"])
-        .reset_index()
-    )
+    agg = data.groupby(["model", "sample_size"], as_index=False)[metric].agg(["mean", "std", "count"]).reset_index()
     agg.rename(columns={"mean": "value_mean", "std": "value_std", "count": "value_count"}, inplace=True)
     agg["value_sem"] = agg["value_std"].fillna(0.0) / np.sqrt(np.maximum(agg["value_count"], 1))
 
