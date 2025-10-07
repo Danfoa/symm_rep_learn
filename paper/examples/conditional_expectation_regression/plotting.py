@@ -186,7 +186,7 @@ def plot_conditional_cdf_on_support(
     lw_pred=2.0,
     y_train=None,
     model_marginal_cdf=None,
-    label_marginal_emp="Empirical CDF (train)",
+    label_marginal_emp="Empirical cCDF (train)",
     label_marginal_model="Marginal CDF",
     color_marginal_emp="tab:blue",
     color_marginal_model="tab:orange",
@@ -483,7 +483,7 @@ def plot_condexp_metrics_panels(
     axes[3].set_xticks(bar_positions)
     axes[3].set_xticklabels(order, rotation=45, ha="right")
     axes[3].set_ylabel("Mean Abs Error")
-    axes[3].set_title("Average MAE")
+    axes[3].set_title("Average regression MAE")
     axes[3].grid(True, axis="y", alpha=0.3)
     for bar in bars:
         height = bar.get_height()
@@ -514,18 +514,16 @@ def log_condexp_summary_metrics(
 
     rows = []
     for model, mae in mae_by_model.items():
-        rows.append(
-            {
-                "sample_size": int(sample_size),
-                "seed": int(seed),
-                "model": model,
-                "mae": float(mae),
-                "coverage_error": float(df_results[f"{model} Coverage Error"].mean())
-                if f"{model} Coverage Error" in df_results
-                else np.nan,
-                "ci_size": float(df_results[f"{model} CI Size"].mean()) if f"{model} CI Size" in df_results else np.nan,
-            }
-        )
+        rows.append({
+            "sample_size": int(sample_size),
+            "seed": int(seed),
+            "model": model,
+            "mae": float(mae),
+            "coverage_error": float(df_results[f"{model} Coverage Error"].mean())
+            if f"{model} Coverage Error" in df_results
+            else np.nan,
+            "ci_size": float(df_results[f"{model} CI Size"].mean()) if f"{model} CI Size" in df_results else np.nan,
+        })
 
     return log_metrics(
         metrics_dir=metrics_dir,

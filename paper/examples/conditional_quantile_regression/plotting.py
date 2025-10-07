@@ -178,7 +178,7 @@ def plot_basis_functions_x(
     x_grid,
     fx,
     *,
-    title="Learned basis functions for x",
+    title="earned basis functions for x",
     fig_size=(4, 3),
     palette: str | None = "tab20",
     color_offset: int = 0,
