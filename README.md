@@ -51,7 +51,7 @@ We demonstrate conditional expectation (regression) *with uncertainty quantifica
 ![1D conditional expectation data](paper/examples/conditional_expectation_regression/plots/data_with_zones_and_true_expectation.png)
 
 The notebook illustrates how to use the eNCP and NCP models to estimate conditional expectations (regression) and conditional quantiles (uncertainty quantification), without any retraining needed for estimation of quantiles of different coverage levels.
-![1D conditional expectation with uncertainty zones](paper/examples/conditional_expectation_regression/plots/condexp_full_comparison_with_quantiles.png)
+<img src="paper/examples/conditional_expectation_regression/plots/condexp_full_comparison_with_quantiles.png" alt="Marginal coverage grid" width="100%" />
 
 ### Conditional quantile regression
 
@@ -80,15 +80,3 @@ The notebook [conditional_quantile_regression_quadruped.ipynb](paper/examples/co
 - [`DRF` (Density Ratio Fitting)](symm_rep_learn/models/density_ratio_fitting/drf.py#L6) provides density-ratio based estimators of pointwise mutual dependency.
 - [`InvDRF` (Invariant Density Ratio Fitting)](symm_rep_learn/models/density_ratio_fitting/inv_drf.py#L12) adapts DRF to invariant equivariant modules for symmetry-preserving density-ratio estimation.
 
-## Citation
-
-If you find this work useful in your research, please consider citing:
-
-```bibtex
-@article{ordonez2025eNCP,
-  title={Representation Learning for Equivariant Inference with Guarantees},
-  author={Ordo{\~n}ez-Apraez, Daniel and Kosti{\'c}, Vladimir and Fr{\"o}hlich, Alek and Brandt, Vivien and Lounici, Karim and Pontil, Massimiliano},
-  journal={arXiv preprint arXiv:2505.19809},
-  year={2025}
-}
-```
