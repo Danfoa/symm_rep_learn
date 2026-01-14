@@ -1,8 +1,7 @@
 # Representation Learning for Equivariant Inference with Guarantees
 
-This repository hosts the code of the paper "Representation Learning for Equivariant Inference with Guarantees" submitted to ICLR 2026.
+This repository hosts the code of the paper "Representation Learning for Equivariant Inference with Guarantees".
 
-<!-- **Authors:** Daniel Ordoñez-Apraez, Vladimir Kostić, Alek Fröhlich, Vivien Brandt, Karim Lounici, Massimiliano Pontil -->
 
 ## Installation
 
@@ -56,7 +55,7 @@ The notebook illustrates how to use the eNCP and NCP models to estimate conditio
 
 ### Conditional quantile regression
 
-The notebook [conditional_quantile_regression_synthetic.ipynb](paper/examples/conditional_quantile_regression/conditional_quantile_regression_synthetic.ipynb) how the eNCP and NCP framework *model conditional probabilities* enabling the prediction of the conditional [Cumulative Distribution Function](https://en.wikipedia.org/wiki/Cumulative_distribution_function) (cCDF) enabling the regression of conditional quantiles of any desired coverage level.
+The notebook [conditional_quantile_regression_synthetic.ipynb](paper/examples/conditional_quantile_regression/conditional_quantile_regression_synthetic.ipynb) shows how the eNCP and NCP framework *model conditional probabilities* enabling the prediction of the conditional [Cumulative Distribution Function](https://en.wikipedia.org/wiki/Cumulative_distribution_function) (cCDF) enabling the regression of conditional quantiles of any desired coverage level.
 <p float="left">
   <img src="paper/examples/conditional_quantile_regression/plots/uc_marginal.png" alt="Marginal coverage grid" width="65%" />
   <img src="paper/examples/conditional_quantile_regression/plots/uc_conditional.png" alt="Conditional coverage grid" width="30%" />
@@ -64,6 +63,15 @@ The notebook [conditional_quantile_regression_synthetic.ipynb](paper/examples/co
 The results show how the eNCP and NCP models outperform training frameworks that aim to directly predict quantiles of a fixed coverage level (i.e., Conditional Quantile Regression, CQR)
 
 ![Equivariant CCDF regression data](paper/examples/conditional_quantile_regression/plots/encp_ccdf_regression.png)
+
+### Uncertainty quantification in ground reaction force estimation in legged locmotion.
+
+The notebook [conditional_quantile_regression_quadruped.ipynb](paper/examples/conditional_quantile_regression/conditional_quantile_regression_quadruped.py.ipynb) shows how the eNCP and NCP framework can be used for uncertainty quantification in the estimation of ground reaction forces (GRFs) in quadruped locomotion over rough terrain. 
+
+<div align="center">
+    <img src="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExNWx4ampoZ2xobjRvanh4ODFhMXZ2d25jYXp0dm5hb3B3azVrd2dxMyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/hFoRNrXqJIi6BxJyVb/giphy.gif" alt="Quadruped walking on rough terrain" />
+   <img src="paper/plots/quadruped_grf_encp.png" alt="Marginal coverage grid" width="80%" />
+</div>
 
 ## Baseline implementations
 
