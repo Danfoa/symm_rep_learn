@@ -18,7 +18,7 @@ df = pd.DataFrame()
 
 exp_labels = ["C2", "C6", "D6", "Ico"]
 for exp_label in exp_labels:
-    exp_path = pathlib.Path(f"experiments/NCP-GMM-C2/{exp_label}")
+    exp_path = pathlib.Path(f"paper/results/NCP-GMM-C2/{exp_label}")
 
     print(exp_path)
     assert exp_path.exists(), f"Experiment path {exp_path.absolute()} does not exist"
@@ -68,7 +68,7 @@ metrics_to_plot = [
 # sort metrics to plot
 metrics_to_plot = sorted(metrics_to_plot)
 log_scale_metrics = [
-    # "PMD/mse/test"
+    "PMD/invariance_err/test",
     "PMD/mse/test",
 ]
 
@@ -126,8 +126,8 @@ for ax in g.axes.flat:
 g.tight_layout()
 g.set_xlabels(fontsize=FONT_SIZE_AX_LABELS)
 g.figure.subplots_adjust(wspace=0.1, hspace=0.5)
-g.fig.savefig(fname=pathlib.Path("experiments/NCP-GMM-C2/") / "test_metrics.png", dpi=300)
-plt.show(dpi=250)
+g.fig.savefig(fname=pathlib.Path("paper/results/NCP-GMM-C2/") / "test_metrics.png", dpi=300)
+plt.show()
 
 # Show the plot
 # %% ==============================================================================
@@ -145,14 +145,10 @@ for train_ratio in sorted(df["train_samples_ratio"].unique()):  # Ensure train r
             continue
         pmd_gt = np.concatenate([d["pmd_gt"] for d in data])
         pmd_pred = np.concatenate([d["pmd_pred"] for d in data])
-        df_pmd_all = pd.concat(
-            [
-                df_pmd_all,
-                pd.DataFrame(
-                    {"train_samples_ratio": train_ratio, "model": model, "pmd_gt": pmd_gt, "pmd_pred": pmd_pred}
-                ),
-            ]
-        )
+        df_pmd_all = pd.concat([
+            df_pmd_all,
+            pd.DataFrame({"train_samples_ratio": train_ratio, "model": model, "pmd_gt": pmd_gt, "pmd_pred": pmd_pred}),
+        ])
 
 # Compute limits for the plots
 upper_limit = np.percentile(df_pmd_all["pmd_gt"], 95)  # 95th percentile
