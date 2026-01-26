@@ -1,4 +1,4 @@
-# Created by Daniel Ordoñez (daniels.ordonez@gmail.com) at 29/03/25
+# Created  at 29/03/25
 from __future__ import annotations
 
 import torch

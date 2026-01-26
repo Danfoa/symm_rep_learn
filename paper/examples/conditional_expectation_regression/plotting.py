@@ -1,4 +1,4 @@
-# Created by Daniel Ordoñez (daniels.ordonez@gmail.com) at 11/08/25
+# Created  at 11/08/25
 import sys
 from pathlib import Path
 
@@ -159,19 +159,17 @@ def plot_marginal_cdf_on_support(
 
     # Markers only to emphasize 1-1 with support
     ax.plot(s, c_model, linestyle="None", marker="o", markersize=markersize_model, color=color_model, label=label_model)
-    ax.plot(
-        s, c_emp, linestyle="None", marker="x", markersize=markersize_emp, color=color_emp, alpha=0.9, label=label_emp
-    )
+    # ax.plot(
+    # s, c_emp, linestyle="None", marker="x", markersize=markersize_emp, color=color_emp, alpha=0.9, label=label_emp
+    # )
 
     # Support vlines
     if show_vlines:
-        vkw = {"color": "lightgray", "alpha": 0.35, "lw": 0.6}
+        vkw = {"color": "lightgray", "alpha": 0.25, "lw": 0.6}
         if vlines_kwargs:
             vkw.update(vlines_kwargs)
         plot_support_vlines(ax, s, **vkw)
 
-    ax.set_xlabel("y (standardized)")
-    ax.set_ylabel("CDF")
     ax.legend(fontsize=8)
     return fig, ax
 
@@ -186,8 +184,8 @@ def plot_conditional_cdf_on_support(
     lw_pred=2.0,
     y_train=None,
     model_marginal_cdf=None,
-    label_marginal_emp="Empirical cCDF (train)",
-    label_marginal_model="Marginal CDF",
+    label_marginal_emp="cCDF GT",
+    label_marginal_model="CDF",
     color_marginal_emp="tab:blue",
     color_marginal_model="tab:orange",
     show_vlines=True,
@@ -230,7 +228,7 @@ def plot_conditional_cdf_on_support(
 
     if y_train is not None:
         c_emp = empirical_cdf_at(y_train, s)
-        ax.plot(s, c_emp, label=label_marginal_emp, color=color_marginal_emp, ls=":", lw=1.6)
+        # ax.plot(s, c_emp, label=label_marginal_emp, color=color_marginal_emp, ls=":", lw=1.6)
 
     if model_marginal_cdf is not None:
         c_m = _to_1d(model_marginal_cdf)
@@ -244,9 +242,9 @@ def plot_conditional_cdf_on_support(
             vkw.update(vlines_kwargs)
         plot_support_vlines(ax, s, **vkw)
 
-    ax.set_xlabel("y (standardized)")
-    ax.set_ylabel("CDF")
-    ax.legend(fontsize=8)
+    # ax.set_xlabel("y (standardized)")
+    # ax.set_ylabel("CDF")
+    # ax.legend(fontsize=8)
     return fig, ax
 
 
@@ -324,6 +322,8 @@ def plot_expectations_with_quantiles(
     background_kwargs=None,
     true_quantiles=None,
     est_quantiles=None,
+    quantile_colors=None,
+    exp_colors=None,
     true_label="True PI",
     true_color="green",
     true_alpha=0.15,
@@ -361,7 +361,7 @@ def plot_expectations_with_quantiles(
         bkw = {"bins": 200, "cmap": "Blues", "s": 6}
         if background_kwargs:
             bkw.update(background_kwargs)
-        scatter_with_density(_to_1d(x_train), _to_1d(y_train), ax=ax, **bkw)
+        scatter_with_density(_to_1d(x_train), _to_1d(y_train), ax=ax, alpha_points=0.05, **bkw)
 
     # True quantile band first (so lines are on top)
     if true_quantiles is not None:
@@ -377,28 +377,26 @@ def plot_expectations_with_quantiles(
         if isinstance(est_quantiles, tuple):
             est_quantiles = {"CI": est_quantiles}  # convert single tuple to dict with label "CI"
 
-        for lbl, (qlo, qhi) in est_quantiles.items():
+        if quantile_colors is None:
+            quantile_colors = plt.cm.Set1(np.linspace(0, 1, len(est_quantiles)))
+        for (lbl, (qlo, qhi)), color in zip(est_quantiles.items(), quantile_colors):
             qlo = _to_1d(qlo)
             qhi = _to_1d(qhi)
-            # Get the color for this quantile band from the current color cycle
-            line = ax.plot([], [], label=lbl)[0]  # Create dummy line to get color
-            color = line.get_color()
-            line.remove()  # Remove the dummy line
             ax.fill_between(Xg, qlo, qhi, alpha=est_alpha, label=lbl, color=color, edgecolor=color, linewidth=1.0)
             # Plot lines on edges of the CI
             ax.plot(Xg, qlo, color=color, lw=1.0, alpha=0.5)
             ax.plot(Xg, qhi, color=color, lw=1.0, alpha=0.5)
 
-    exp_colors = plt.cm.Set1(np.linspace(0, 1, len(expectations)))
-
+    if exp_colors is None:
+        exp_colors = plt.cm.Set1(np.linspace(0, 1, len(expectations)))
     for i, (lbl, ycurve) in enumerate(expectations.items()):
         color = exp_colors[i] if i < len(exp_colors) else None
-        ax.plot(Xg, _to_1d(ycurve), lw=2.0, label=lbl, color=color)
+        ax.plot(Xg, _to_1d(ycurve), lw=1.0, label=lbl, color=color)
 
-    ax.set_xlabel("X (standardized)")
-    ax.set_ylabel("Y (standardized)")
+    ax.set_xlabel(r"$\mathcal{X}$", fontsize=10)
+    ax.set_ylabel(r"$\mathcal{Y}$", fontsize=10)
     if legend:
-        ax.legend()
+        ax.legend(fontsize=8, framealpha=1.0, loc="upper right")
     return fig, ax
 
 

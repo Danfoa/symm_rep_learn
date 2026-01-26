@@ -129,60 +129,60 @@ g.figure.subplots_adjust(wspace=0.1, hspace=0.5)
 g.fig.savefig(fname=pathlib.Path("paper/results/NCP-GMM-C2/") / "test_metrics.png", dpi=300)
 plt.show()
 
-# Show the plot
-# %% ==============================================================================
-unique_train_ratios = df["train_samples_ratio"].unique()
-# Construct the dataframe holding train ratio information
-df_pmd_all = pd.DataFrame(columns=["train_samples_ratio", "model", "pmd_gt", "pmd_pred"])
+# # Show the plot
+# # %% ==============================================================================
+# unique_train_ratios = df["train_samples_ratio"].unique()
+# # Construct the dataframe holding train ratio information
+# df_pmd_all = pd.DataFrame(columns=["train_samples_ratio", "model", "pmd_gt", "pmd_pred"])
 
-for train_ratio in sorted(df["train_samples_ratio"].unique()):  # Ensure train ratios are ordered
-    df_sub = df[df["train_samples_ratio"] == train_ratio]
+# for train_ratio in sorted(df["train_samples_ratio"].unique()):  # Ensure train ratios are ordered
+#     df_sub = df[df["train_samples_ratio"] == train_ratio]
 
-    for model in ["NCP", "ENCP", "DRF", "IDRF"]:
-        df_sub_model = df_sub[df_sub["model"] == model]
-        data = [np.load(p / "npmi_data.npz") for p in df_sub_model["run_path"]]
-        if len(data) == 0:
-            continue
-        pmd_gt = np.concatenate([d["pmd_gt"] for d in data])
-        pmd_pred = np.concatenate([d["pmd_pred"] for d in data])
-        df_pmd_all = pd.concat([
-            df_pmd_all,
-            pd.DataFrame({"train_samples_ratio": train_ratio, "model": model, "pmd_gt": pmd_gt, "pmd_pred": pmd_pred}),
-        ])
+#     for model in ["NCP", "ENCP", "DRF", "IDRF"]:
+#         df_sub_model = df_sub[df_sub["model"] == model]
+#         data = [np.load(p / "npmi_data.npz") for p in df_sub_model["run_path"]]
+#         if len(data) == 0:
+#             continue
+#         pmd_gt = np.concatenate([d["pmd_gt"] for d in data])
+#         pmd_pred = np.concatenate([d["pmd_pred"] for d in data])
+#         df_pmd_all = pd.concat([
+#             df_pmd_all,
+#             pd.DataFrame({"train_samples_ratio": train_ratio, "model": model, "pmd_gt": pmd_gt, "pmd_pred": pmd_pred}),
+#         ])
 
-# Compute limits for the plots
-upper_limit = np.percentile(df_pmd_all["pmd_gt"], 95)  # 95th percentile
-y_max_lim = np.percentile(df_pmd_all["pmd_gt"] - df_pmd_all["pmd_pred"], 99)  # 99th percentile
-y_min_lim = np.percentile(df_pmd_all["pmd_gt"] - df_pmd_all["pmd_pred"], 1)  # 1st percentile
+# # Compute limits for the plots
+# upper_limit = np.percentile(df_pmd_all["pmd_gt"], 95)  # 95th percentile
+# y_max_lim = np.percentile(df_pmd_all["pmd_gt"] - df_pmd_all["pmd_pred"], 99)  # 99th percentile
+# y_min_lim = np.percentile(df_pmd_all["pmd_gt"] - df_pmd_all["pmd_pred"], 1)  # 1st percentile
 
-# Create a custom column for the residuals
-df_pmd_all["residual"] = df_pmd_all["pmd_gt"] - df_pmd_all["pmd_pred"]
+# # Create a custom column for the residuals
+# df_pmd_all["residual"] = df_pmd_all["pmd_gt"] - df_pmd_all["pmd_pred"]
 
-# Initialize a FacetGrid for train ratios and models
-g = sns.FacetGrid(
-    df_pmd_all,
-    row="model",
-    col="train_samples_ratio",
-    height=3,
-    aspect=1,
-    sharex=True,
-    sharey=True,
-    xlim=(0, upper_limit),
-    ylim=(y_min_lim, y_max_lim),
-)
-# Map a kernel density plot to the grid
-g.map(
-    sns.kdeplot,
-    "pmd_gt",
-    "residual",
-    fill=True,
-    levels=10,
-    cmap=sns.color_palette("ch:start=.2,rot=-.3", as_cmap=True),
-    clip=[[0, upper_limit], [y_min_lim, y_max_lim]],
-)
-# Use g.map to pot a horixontal line from 0 to upper_limit
-g.map(plt.axhline, y=0, color="black", linestyle="-", linewidth=1, alpha=0.4)
-# Adjust layout and save the figure
-g.tight_layout()
-g.savefig(fname=exp_path / "error_dist_facetgrid.png", dpi=250)
-plt.show()
+# # Initialize a FacetGrid for train ratios and models
+# g = sns.FacetGrid(
+#     df_pmd_all,
+#     row="model",
+#     col="train_samples_ratio",
+#     height=3,
+#     aspect=1,
+#     sharex=True,
+#     sharey=True,
+#     xlim=(0, upper_limit),
+#     ylim=(y_min_lim, y_max_lim),
+# )
+# # Map a kernel density plot to the grid
+# g.map(
+#     sns.kdeplot,
+#     "pmd_gt",
+#     "residual",
+#     fill=True,
+#     levels=10,
+#     cmap=sns.color_palette("ch:start=.2,rot=-.3", as_cmap=True),
+#     clip=[[0, upper_limit], [y_min_lim, y_max_lim]],
+# )
+# # Use g.map to pot a horixontal line from 0 to upper_limit
+# g.map(plt.axhline, y=0, color="black", linestyle="-", linewidth=1, alpha=0.4)
+# # Adjust layout and save the figure
+# g.tight_layout()
+# g.savefig(fname=exp_path / "error_dist_facetgrid.png", dpi=250)
+# plt.show()

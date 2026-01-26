@@ -1,4 +1,4 @@
-# Created by danfoa at 21/01/25
+# Created  at 21/01/25
 import numpy as np
 import seaborn as sns
 import torch
@@ -622,14 +622,12 @@ def plot_pmd_err_2D(
     )
 
     # Add a colorbar that does not overlap
-    colorbar_axes = grid.fig.add_axes(
-        [
-            grid.ax_marg_y.get_position().x1,  # To the right of the joint axes
-            grid.ax_joint.get_position().y0,  # Align bottom with joint axes
-            0.02,  # Width of the colorbar
-            grid.ax_marg_y.get_position().height,  # Same height as joint axes
-        ]
-    )
+    colorbar_axes = grid.fig.add_axes([
+        grid.ax_marg_y.get_position().x1,  # To the right of the joint axes
+        grid.ax_joint.get_position().y0,  # Align bottom with joint axes
+        0.02,  # Width of the colorbar
+        grid.ax_marg_y.get_position().height,  # Same height as joint axes
+    ])
     plt.colorbar(contour, cax=colorbar_axes)
 
     # # Add a new axis at the bottom-left corner of the joint axes

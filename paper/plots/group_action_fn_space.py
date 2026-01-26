@@ -1,4 +1,4 @@
-# Created by Daniel Ordoñez (daniels.ordonez@gmail.com) at 11/05/25
+# Created  at 11/05/25
 import numpy as np
 from escnn.group import DihedralGroup
 

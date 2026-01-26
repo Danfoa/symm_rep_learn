@@ -1,4 +1,4 @@
-# Created by danfoa at 18/12/24
+# Created  at 18/12/24
 import logging
 import pathlib
 from math import ceil

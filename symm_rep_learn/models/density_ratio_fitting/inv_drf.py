@@ -1,4 +1,4 @@
-# Created by danfoa at 16/01/25
+# Created  at 16/01/25
 import escnn
 import torch.nn
 from escnn.group import Representation

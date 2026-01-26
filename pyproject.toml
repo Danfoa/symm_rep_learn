@@ -10,7 +10,7 @@ authors = [
 
 ]
 dependencies = [
-  "symm-learning",
+  "symm-learning==0.2.23",
   "wandb",
   "datasets",
   "hydra-core",

@@ -1,4 +1,4 @@
-# Created by Daniel Ordoñez (daniels.ordonez@gmail.com) at 17/02/25
+# Created  at 17/02/25
 from os import PathLike
 from pathlib import Path
 

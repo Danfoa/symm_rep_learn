@@ -1,4 +1,4 @@
-# Created by danfoa at 19/12/24
+# Created  at 19/12/24
 from __future__ import annotations
 
 import logging
