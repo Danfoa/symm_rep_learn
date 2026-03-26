@@ -1,23 +1,22 @@
 from typing import Tuple
 
+import torch
 import escnn.nn
-from escnn.nn import FieldType, GeometricTensor
-from symm_learning.models import EMLP
+from escnn.group import Representation
+from symm_learning.models import eMLP
 
 from .cqr import cqr_loss
 
 
-class eCQR(escnn.nn.EquivariantModule):
-    def __init__(self, in_type: FieldType, out_type: FieldType, gamma: float, **mlp_kwargs):
+class eCQR(torch.nn.Module):
+    def __init__(self, in_rep: Representation, out_rep: Representation, gamma: float, **mlp_kwargs):
         super(eCQR, self).__init__()
         assert 0 < gamma <= 1, "gamma must be in (0, 1]"
-        self.in_type = in_type
-        self.out_type = out_type
-        self.low_q_nn = EMLP(in_type=in_type, out_type=out_type, **mlp_kwargs)
-        self.up_q_nn = EMLP(in_type=in_type, out_type=out_type, **mlp_kwargs)
+        self.low_q_nn = eMLP(in_rep, out_rep, **mlp_kwargs)
+        self.up_q_nn = eMLP(in_rep, out_rep, **mlp_kwargs)
         self.gamma = gamma
 
-    def forward(self, x: GeometricTensor):
+    def forward(self, x: torch.Tensor):
         low_q = self.low_q_nn(x)
         up_q = self.up_q_nn(x)
 
