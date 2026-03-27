@@ -2,17 +2,34 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import torch
 from matplotlib import pyplot as plt
+from symm_learning.stats import var_mean as symm_var_mean
+from tqdm import tqdm
 
 __all__ = [
     "LiveLossPlotter",
+    "checkpoint_exists",
     "dataframe_to_markdown",
+    "display_saved_training_curve",
+    "fit_or_load_ncp_like",
+    "make_condexp_1d_dataset",
+    "make_positive_bias_train_val_split",
+    "load_checkpoint",
     "log_metrics",
     "plot_sample_efficiency",
+    "plot_saved_training_curves_panel",
+    "save_checkpoint",
+    "save_training_curve_plot",
+    "split_standardize_tensors",
+    "split_x_side_masks",
+    "training_curve_plot_path",
+    "true_condexp_1d",
 ]
 
 
@@ -217,3 +234,430 @@ def plot_sample_efficiency(
         plt.show(fig)
 
     return fig, ax, agg
+
+
+def _f_center_1d(x: torch.Tensor) -> torch.Tensor:
+    """Deterministic center function used by the 1D conditional-expectation synthetic dataset."""
+
+    return 0.5 * torch.cos(2.0 / 3.0 * math.pi * x) + 0.2 * torch.cos(8.0 / 3.0 * math.pi * x) + 0.25
+
+
+def _exp_scale_param_1d(absx: torch.Tensor) -> torch.Tensor:
+    """Exponential noise scale used in the skewed regime of the 1D synthetic dataset."""
+
+    return 0.1 + 0.1 * (torch.cos(absx * 2.0) ** 2)
+
+
+def make_condexp_1d_dataset(n: int = 20_000, seed: int = 10, x=None):
+    """Generate the 1D synthetic dataset used in Appendix G.4-style experiments.
+
+    The construction matches the previous `conditional_expectation_regression_1D.ipynb` dataset:
+    - |x| <= 1: skewed regime with exponential noise
+    - 1 < |x| <= 2: symmetric heteroscedastic regime
+    - |x| > 2: bimodal heteroscedastic regime
+    """
+
+    rng = np.random.default_rng(int(seed))
+
+    if x is None:
+        x_np = rng.uniform(-3.0, 3.0, size=(int(n), 1)).astype(np.float32)
+    else:
+        if np.isscalar(x):
+            x_np = np.full((int(n), 1), float(x), dtype=np.float32)
+        else:
+            x_arr = np.asarray(x, dtype=np.float32)
+            if x_arr.ndim == 1:
+                x_arr = x_arr.reshape(-1, 1)
+            if x_arr.shape[1] != 1:
+                raise ValueError(f"x must be shape (n,) or (n,1), got {x_arr.shape}")
+            if x_arr.shape[0] != int(n):
+                n = int(x_arr.shape[0])
+            x_np = x_arr
+
+    x_t = torch.from_numpy(x_np)
+    absx = torch.abs(x_t)
+
+    sigma_sym = 0.04 + 0.05 * np.cos(6 * absx) ** 2 + 0.15 * torch.sin(9 * absx) ** 2
+    sigma_bi = 0.03 + 0.1 * np.cos(5 * absx) ** 2 + 0.06 * np.cos(4 * absx) ** 2
+    base_noise = torch.randn_like(x_t)
+    scale_param = _exp_scale_param_1d(absx)
+    u = torch.from_numpy(rng.uniform(0, 1, size=x_t.shape)).to(torch.float32)
+    eps_exp = -scale_param * torch.log(u)
+    eps_sym = base_noise * sigma_sym
+    s = torch.from_numpy(rng.choice([-1.0, 1.0], size=(n, 1))).to(torch.float32)
+    a = 0.6 * (absx - 2.0).clamp(min=0)
+    eps_bi = torch.randn_like(x_t) * sigma_bi
+
+    y_zone1 = _f_center_1d(x_t) + eps_exp
+    y_zone2 = _f_center_1d(x_t) + eps_sym
+    y_zone3 = s * a + eps_bi
+    y_t = torch.where(absx <= 1.0, y_zone1, torch.where(absx <= 2.0, y_zone2, y_zone3))
+    return x_t, y_t
+
+
+@torch.no_grad()
+def true_condexp_1d(x) -> torch.Tensor:
+    """True conditional expectation E[Y|X=x] for the shared 1D synthetic dataset."""
+
+    x = torch.as_tensor(x, dtype=torch.float32)
+    absx = torch.abs(x)
+    expected_exp_noise = _exp_scale_param_1d(absx)
+    zone1_exp = _f_center_1d(x) + expected_exp_noise
+    zone2_exp = _f_center_1d(x)
+    zone3_exp = torch.zeros_like(x)
+    return torch.where(absx <= 1.0, zone1_exp, torch.where(absx <= 2.0, zone2_exp, zone3_exp))
+
+
+def split_standardize_tensors(
+    x: torch.Tensor,
+    y: torch.Tensor,
+    *,
+    train_ratio: float = 0.7,
+    val_ratio: float = 0.15,
+    seed: int | None = None,
+    x_rep=None,
+    y_rep=None,
+):
+    """Random split and standardization for tensor datasets.
+
+    Returns a dictionary containing raw splits, standardized splits, and train statistics.
+    """
+
+    n = int(x.shape[0])
+    if not 0.0 < train_ratio < 1.0:
+        raise ValueError("`train_ratio` must be in (0, 1).")
+    if not 0.0 <= val_ratio <= 1.0:
+        raise ValueError("`val_ratio` must be in [0, 1].")
+    if train_ratio + val_ratio > 1.0:
+        raise ValueError("`train_ratio + val_ratio` must be <= 1.")
+
+    if seed is None:
+        idx = torch.randperm(n)
+    else:
+        gen = torch.Generator().manual_seed(int(seed))
+        idx = torch.randperm(n, generator=gen)
+
+    train_end = int(train_ratio * n)
+    val_end = int((train_ratio + val_ratio) * n)
+    idx_tr, idx_val, idx_te = idx[:train_end], idx[train_end:val_end], idx[val_end:]
+
+    x_tr, y_tr = x[idx_tr], y[idx_tr]
+    x_val, y_val = x[idx_val], y[idx_val]
+    x_te, y_te = x[idx_te], y[idx_te]
+
+    if x_rep is not None:
+        x_var, x_mean_vec = symm_var_mean(x_tr, x_rep)
+        x_mean = x_mean_vec.reshape(1, -1)
+        x_std = torch.sqrt(torch.clamp(x_var, min=0.0)).reshape(1, -1) + 1e-8
+    else:
+        x_mean, x_std = x_tr.mean(0, keepdim=True), x_tr.std(0, keepdim=True) + 1e-8
+
+    if y_rep is not None:
+        y_var, y_mean_vec = symm_var_mean(y_tr, y_rep)
+        y_mean = y_mean_vec.reshape(1, -1)
+        y_std = torch.sqrt(torch.clamp(y_var, min=0.0)).reshape(1, -1) + 1e-8
+    else:
+        y_mean, y_std = y_tr.mean(0, keepdim=True), y_tr.std(0, keepdim=True) + 1e-8
+
+    x_tr_c = (x_tr - x_mean) / x_std
+    y_tr_c = (y_tr - y_mean) / y_std
+    x_val_c = (x_val - x_mean) / x_std
+    y_val_c = (y_val - y_mean) / y_std
+    x_te_c = (x_te - x_mean) / x_std
+    y_te_c = (y_te - y_mean) / y_std
+
+    return {
+        "x_tr": x_tr,
+        "y_tr": y_tr,
+        "x_val": x_val,
+        "y_val": y_val,
+        "x_te": x_te,
+        "y_te": y_te,
+        "x_tr_c": x_tr_c,
+        "y_tr_c": y_tr_c,
+        "x_val_c": x_val_c,
+        "y_val_c": y_val_c,
+        "x_te_c": x_te_c,
+        "y_te_c": y_te_c,
+        "x_mean": x_mean,
+        "x_std": x_std,
+        "y_mean": y_mean,
+        "y_std": y_std,
+        "idx_tr": idx_tr,
+        "idx_val": idx_val,
+        "idx_te": idx_te,
+    }
+
+
+def make_positive_bias_train_val_split(
+    x: torch.Tensor,
+    y: torch.Tensor,
+    *,
+    train_ratio: float = 0.85,
+    seed: int | None = None,
+    threshold: float = 0.0,
+    x_rep=None,
+    y_rep=None,
+):
+    """Create train/val splits from the positive side of X only (extrinsic marginal-bias setup)."""
+
+    x_flat = x.reshape(-1)
+    pos_mask = x_flat > float(threshold)
+    x_pos, y_pos = x[pos_mask], y[pos_mask]
+    if x_pos.shape[0] < 2:
+        raise ValueError("Not enough positive-side samples to split train/val.")
+
+    val_ratio = 1.0 - float(train_ratio)
+    return split_standardize_tensors(
+        x_pos,
+        y_pos,
+        train_ratio=float(train_ratio),
+        val_ratio=val_ratio,
+        seed=seed,
+        x_rep=x_rep,
+        y_rep=y_rep,
+    )
+
+
+def split_x_side_masks(x, *, threshold: float = 0.0):
+    """Boolean masks for left/right/full regions in one-dimensional x."""
+
+    x_flat = torch.as_tensor(x, dtype=torch.float32).reshape(-1)
+    left = x_flat < float(threshold)
+    right = ~left
+    full = torch.ones_like(left, dtype=torch.bool)
+    return {"left": left, "right": right, "full": full}
+
+
+def training_curve_plot_path(checkpoint_path: Path | str) -> Path:
+    """Return the companion PNG path for a model checkpoint."""
+
+    checkpoint_path = Path(checkpoint_path)
+    return checkpoint_path.with_suffix(".training_curve.png")
+
+
+def save_training_curve_plot(plotter: LiveLossPlotter | None, checkpoint_path: Path | str) -> Path | None:
+    """Persist the latest live training-curve figure next to its checkpoint."""
+
+    if plotter is None or not hasattr(plotter, "fig"):
+        return None
+
+    out_path = training_curve_plot_path(checkpoint_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        plotter._plot()
+    except Exception:
+        pass
+    plotter.fig.savefig(out_path, dpi=220, bbox_inches="tight")
+    return out_path
+
+
+def display_saved_training_curve(checkpoint_path: Path | str, title: str, figsize=(4.6, 2.5)):
+    """Display a saved training-curve PNG for a checkpoint."""
+
+    img_path = training_curve_plot_path(checkpoint_path)
+    fig, ax = plt.subplots(figsize=figsize)
+    if img_path.exists():
+        img = plt.imread(img_path)
+        ax.imshow(img)
+        ax.set_xticks([])
+        ax.set_yticks([])
+    else:
+        ax.text(
+            0.5,
+            0.5,
+            "No saved training curve figure found.\nThis checkpoint predates curve export.",
+            ha="center",
+            va="center",
+            fontsize=8,
+        )
+        ax.set_xticks([])
+        ax.set_yticks([])
+        img_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(img_path, dpi=220, bbox_inches="tight")
+        print(f"Saved placeholder training-curve figure to {img_path}")
+    ax.set_title(title, fontsize=8)
+    fig.tight_layout()
+    plt.show()
+    return fig, ax
+
+
+def save_checkpoint(
+    model,
+    optimizer,
+    best_val_loss: float,
+    epoch: int,
+    checkpoint_path: Path | str,
+    *,
+    plotter: LiveLossPlotter | None = None,
+    extra_state: dict | None = None,
+) -> Path:
+    """Save model checkpoint and current training-curve figure."""
+
+    checkpoint = {
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict() if optimizer is not None else None,
+        "best_val_loss": float(best_val_loss),
+        "epoch": int(epoch),
+    }
+    if extra_state:
+        checkpoint.update(extra_state)
+
+    checkpoint_path = Path(checkpoint_path)
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(checkpoint, checkpoint_path)
+    if plotter is not None:
+        save_training_curve_plot(plotter, checkpoint_path)
+    return checkpoint_path
+
+
+def load_checkpoint(model, optimizer, checkpoint_path: Path | str, *, device: str | torch.device = "cpu"):
+    """Load model and optimizer state from checkpoint."""
+
+    checkpoint_path = Path(checkpoint_path)
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    if optimizer is not None and checkpoint.get("optimizer_state_dict") is not None:
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    return checkpoint
+
+
+def checkpoint_exists(checkpoint_path: Path | str) -> bool:
+    """Check whether a checkpoint file exists on disk."""
+
+    return Path(checkpoint_path).exists()
+
+
+@torch.no_grad()
+def ncp_val_objective(model, dataloader, *, device: str | torch.device = "cpu"):
+    """Compute validation objective and averaged metric dictionary for NCP/eNCP-style models."""
+
+    metrics = {}
+    model.eval()
+    total, n = 0.0, 0
+    for xb, yb in dataloader:
+        xb, yb = xb.to(device), yb.to(device)
+        fx, hy = model(xb, yb)
+        loss, batch_metrics = model.loss(fx, hy)
+        total += float(loss.item())
+        n += 1
+        for key, value in batch_metrics.items():
+            metrics.setdefault(key, []).append(value)
+
+    for key, values in metrics.items():
+        metrics[key] = float(np.mean(values))
+
+    return total / max(1, n), metrics
+
+
+def fit_or_load_ncp_like(
+    *,
+    model,
+    train_loader,
+    val_loader,
+    optimizer,
+    checkpoint_path: Path | str,
+    device: str | torch.device = "cpu",
+    train_epochs: int = 2500,
+    check_every: int = 10,
+    patience: int = 50,
+    plot_freq: int = 100,
+    desc: str = "Training",
+    plot_title: str = "Training",
+    val_metric: str = "||k(x,y) - k_r(x,y)||",
+    checkpoint_meta: dict | None = None,
+    show_curve_on_load: bool = True,
+):
+    """Train an NCP/eNCP-like model with early stopping or load it from checkpoint.
+
+    Returns:
+        (best_state_dict_on_cpu, best_validation_objective)
+    """
+
+    checkpoint_path = Path(checkpoint_path)
+
+    if checkpoint_exists(checkpoint_path):
+        print(f"Loading model from checkpoint: {checkpoint_path}")
+        checkpoint = load_checkpoint(model, optimizer, checkpoint_path, device=device)
+        best_val = float(checkpoint.get("best_val_loss", np.nan))
+        best_state = {k: v.cpu() for k, v in model.state_dict().items()}
+        print(f"Loaded - best val objective: {best_val:.5f}")
+        if show_curve_on_load:
+            display_saved_training_curve(checkpoint_path, title=plot_title)
+    else:
+        print(f"{desc} from scratch...")
+        best_val = float("inf")
+        patience_counter = 0
+        best_state = {k: v.cpu() for k, v in model.state_dict().items()}
+        pbar = tqdm(range(train_epochs), desc=desc)
+        plotter = LiveLossPlotter(title=plot_title, plot_freq=plot_freq)
+
+        for epoch in pbar:
+            model.train()
+            for xb, yb in train_loader:
+                xb, yb = xb.to(device), yb.to(device)
+                optimizer.zero_grad()
+                fx, hy = model(xb, yb)
+                loss, metrics = model.loss(fx, hy)
+                loss.backward()
+                optimizer.step()
+
+            if epoch % check_every == 0 or epoch == train_epochs - 1:
+                vm, val_metrics = ncp_val_objective(model, val_loader, device=device)
+                pbar.set_postfix(loss=float(loss.item()), val=vm)
+                train_loss = float(metrics.get(val_metric, loss.item()))
+                val_loss = float(val_metrics.get(val_metric, vm))
+                plotter.update(epoch, train_loss=train_loss, val_loss=val_loss)
+                if vm < best_val:
+                    best_val = vm
+                    best_state = {k: v.cpu() for k, v in model.state_dict().items()}
+                    patience_counter = 0
+                    save_checkpoint(
+                        model,
+                        optimizer,
+                        best_val,
+                        epoch,
+                        checkpoint_path,
+                        plotter=plotter,
+                        extra_state=checkpoint_meta,
+                    )
+                else:
+                    patience_counter += 1
+                    if patience_counter >= int(patience):
+                        print(f"Early stopping at epoch {epoch}")
+                        break
+
+        save_training_curve_plot(plotter, checkpoint_path)
+        plotter.close()
+        print(f"Best val objective: {best_val:.5f}")
+
+    model.load_state_dict(best_state)
+    model.eval()
+    return best_state, best_val
+
+
+def plot_saved_training_curves_panel(
+    curve_specs: list[tuple[str, Path | str]],
+    *,
+    figsize=(14.8, 3.0),
+    missing_text: str = "curve unavailable",
+    title_fontsize: int = 8,
+):
+    """Plot a horizontal panel of saved training curves for multiple checkpoints."""
+
+    if not curve_specs:
+        raise ValueError("`curve_specs` must contain at least one (label, checkpoint_path) pair.")
+
+    fig, axes = plt.subplots(1, len(curve_specs), figsize=figsize)
+    axes = np.atleast_1d(axes)
+    for ax, (model_name, checkpoint_path) in zip(axes, curve_specs):
+        curve_path = training_curve_plot_path(checkpoint_path)
+        if curve_path.exists():
+            ax.imshow(plt.imread(curve_path))
+        else:
+            ax.text(0.5, 0.5, missing_text, ha="center", va="center", fontsize=8)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_title(model_name, fontsize=title_fontsize)
+    fig.tight_layout()
+    return fig, axes
