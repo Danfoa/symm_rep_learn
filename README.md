@@ -48,10 +48,11 @@ pip install -e ".[paper]"
 
 We demonstrate conditional expectation (regression) *with uncertainty quantification* in the notebook [conditional_expectation_regression_1D.ipynb](paper/examples/conditional_expectation_regression/conditional_expectation_regression_1D.ipynb). The notebook tackles a picewise 1D regression where we aim to predict both the expected value of `Y` given `X` and confidence intervals (lower and upper quantiles) for the prediction. Confidence intervals are of paramount importance in the regions where the conditional distribution $\mathbb{P(y \mid x)}$ is multimodal or skewed.
 
-![1D conditional expectation data](paper/examples/conditional_expectation_regression/plots/data_with_zones_and_true_expectation.png)
+![1D conditional expectation data](paper/examples/conditional_expectation_regression/plots/data_with_zones_and_true_expectation_train_size=14.0k.png)
 
 The notebook illustrates how to use the eNCP and NCP models to estimate conditional expectations (regression) and conditional quantiles (uncertainty quantification), without any retraining needed for estimation of quantiles of different coverage levels.
-<img src="paper/examples/conditional_expectation_regression/plots/condexp_full_comparison_with_quantiles.png" alt="Marginal coverage grid" width="100%" />
+<img src="paper/examples/conditional_expectation_regression/plots/uq_quantiles_comparison_train_size=14.0k.png" alt="Quantile comparison" width="100%" />
+<img src="paper/examples/conditional_expectation_regression/plots/coverage_and_size_comparison_train_size=14.0k.png" alt="Coverage error and set size comparison" width="100%" />
 
 ### Conditional quantile regression
 
@@ -79,4 +80,3 @@ The notebook [conditional_quantile_regression_quadruped.ipynb](paper/examples/co
 - [`eCQR` (Equivariant Conditional Quantile Regression)](symm_rep_learn/models/conditional_quantile_regression/ecqr.py#L10) wraps equivariant MLPs to enforce symmetry-aware prediction intervals.
 - [`DRF` (Density Ratio Fitting)](symm_rep_learn/models/density_ratio_fitting/drf.py#L6) provides density-ratio based estimators of pointwise mutual dependency.
 - [`InvDRF` (Invariant Density Ratio Fitting)](symm_rep_learn/models/density_ratio_fitting/inv_drf.py#L12) adapts DRF to invariant equivariant modules for symmetry-preserving density-ratio estimation.
-

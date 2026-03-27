@@ -433,10 +433,10 @@ def plot_condexp_metrics_panels(
     mae_by_model=None,
     output_path=None,
     model_colors=None,
-    figsize=(18, 4),
+    figsize=(12, 4),
     show=False,
 ):
-    """Plot coverage, CI size, coverage error, and MAE comparison panels."""
+    """Plot CI-size and coverage-error comparison panels."""
 
     if model_colors is None:
         model_colors = {"NCP": "tab:green", "NCPaug": "tab:purple", "eNCP": "tab:blue", "MLP": "tab:orange"}
@@ -450,9 +450,8 @@ def plot_condexp_metrics_panels(
     if not models:
         raise ValueError("No model coverage columns found in `df_results`.")
 
-    include_mae = bool(mae_by_model)
-    ncols = 4 if include_mae else 3
-    width_ratios = [1.1, 1.1, 1.1, 0.8] if include_mae else [1.1, 1.1, 1.1]
+    ncols = 2
+    width_ratios = [1.1, 1.1]
     marker_cycle = ["o-", "s-", "^-", "d-", "x-"]
 
     fig, axes = plt.subplots(
@@ -463,9 +462,8 @@ def plot_condexp_metrics_panels(
     )
     axes = np.atleast_1d(axes)
 
-    axes[0].plot(df_results["Alpha"], df_results["Desired Coverage (%)"], "k--", label="Desired", linewidth=2)
     for i, model in enumerate(models):
-        col = f"{model} Coverage (%)"
+        col = f"{model} CI Size"
         if col not in df_results:
             continue
         style = marker_cycle[i % len(marker_cycle)]
@@ -478,13 +476,13 @@ def plot_condexp_metrics_panels(
             color=model_colors.get(model),
         )
     axes[0].set_xlabel("Alpha")
-    axes[0].set_ylabel("Coverage (%)")
-    axes[0].set_title("Empirical Coverage vs Desired")
+    axes[0].set_ylabel("CI Size")
+    axes[0].set_title("CI Size")
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
 
     for i, model in enumerate(models):
-        col = f"{model} CI Size"
+        col = f"{model} Coverage Error"
         if col not in df_results:
             continue
         style = marker_cycle[i % len(marker_cycle)]
@@ -497,51 +495,10 @@ def plot_condexp_metrics_panels(
             color=model_colors.get(model),
         )
     axes[1].set_xlabel("Alpha")
-    axes[1].set_ylabel("CI Size")
-    axes[1].set_title("CI Size")
+    axes[1].set_ylabel("Coverage Error (%)")
+    axes[1].set_title("Coverage Error")
     axes[1].legend()
     axes[1].grid(True, alpha=0.3)
-
-    for i, model in enumerate(models):
-        col = f"{model} Coverage Error"
-        if col not in df_results:
-            continue
-        style = marker_cycle[i % len(marker_cycle)]
-        axes[2].plot(
-            df_results["Alpha"],
-            df_results[col],
-            style,
-            label=model,
-            markersize=6,
-            color=model_colors.get(model),
-        )
-    axes[2].set_xlabel("Alpha")
-    axes[2].set_ylabel("Coverage Error (%)")
-    axes[2].set_title("Coverage Error")
-    axes[2].legend()
-    axes[2].grid(True, alpha=0.3)
-
-    if include_mae:
-        order = list(mae_by_model.keys())
-        bar_positions = np.arange(len(order))
-        bar_values = [mae_by_model[name] for name in order]
-        bar_colors = [model_colors.get(name, None) for name in order]
-        bars = axes[3].bar(bar_positions, bar_values, color=bar_colors, width=0.5)
-        axes[3].set_xticks(bar_positions)
-        axes[3].set_xticklabels(order, rotation=45, ha="right")
-        axes[3].set_ylabel("Mean Abs Error")
-        axes[3].set_title("Average regression MAE")
-        axes[3].grid(True, axis="y", alpha=0.3)
-        for bar in bars:
-            height = bar.get_height()
-            axes[3].text(
-                bar.get_x() + bar.get_width() / 2,
-                height,
-                f"{height:.3f}",
-                ha="center",
-                va="bottom",
-                fontsize=8,
-            )
 
     plt.tight_layout()
 
@@ -562,7 +519,7 @@ def log_condexp_summary_metrics(
     seed,
     df_results,
     mae_by_model=None,
-    prefix="condexp_metrics",
+    prefix="condexp_summary_metrics",
 ):
     """Persist run-level summary metrics to a uniquely named CSV file."""
 
@@ -588,6 +545,70 @@ def log_condexp_summary_metrics(
             else np.nan,
             "ci_size": float(df_results[f"{model} CI Size"].mean()) if f"{model} CI Size" in df_results else np.nan,
         })
+
+    return log_metrics(
+        metrics_dir=metrics_dir,
+        sample_size=sample_size,
+        seed=seed,
+        rows=rows,
+        prefix=prefix,
+    )
+
+
+def log_condexp_alpha_metrics(
+    metrics_dir,
+    sample_size,
+    seed,
+    df_results,
+    prefix="condexp_metrics",
+    train_size=None,
+    coverage_eval_n=None,
+):
+    """Persist per-alpha uncertainty metrics for each model to CSV.
+
+    Expected columns in ``df_results``:
+    - ``Alpha``
+    - ``Desired Coverage (%)``
+    - ``<model> Coverage (%)``
+    - ``<model> Coverage Error``
+    - ``<model> CI Size``
+    """
+
+    if train_size is None:
+        train_size = int(sample_size)
+
+    coverage_suffix = " Coverage (%)"
+    models = [
+        col[: -len(coverage_suffix)]
+        for col in df_results.columns
+        if col.endswith(coverage_suffix) and col != "Desired Coverage (%)"
+    ]
+    if not models:
+        raise ValueError("No model coverage columns found in `df_results`.")
+
+    rows = []
+    for _, row in df_results.iterrows():
+        alpha = float(row["Alpha"])
+        desired = float(row["Desired Coverage (%)"])
+        for model in models:
+            cov_col = f"{model} Coverage (%)"
+            err_col = f"{model} Coverage Error"
+            ci_col = f"{model} CI Size"
+
+            rows.append(
+                {
+                    "sample_size": int(sample_size),
+                    "train_size": int(train_size),
+                    "seed": int(seed),
+                    "alpha": alpha,
+                    "desired_coverage_pct": desired,
+                    "model": model,
+                    "coverage_pct": float(row[cov_col]) if cov_col in df_results.columns else np.nan,
+                    "coverage_error_pct": float(row[err_col]) if err_col in df_results.columns else np.nan,
+                    "ci_size": float(row[ci_col]) if ci_col in df_results.columns else np.nan,
+                    "coverage_eval_n": int(coverage_eval_n) if coverage_eval_n is not None else np.nan,
+                }
+            )
 
     return log_metrics(
         metrics_dir=metrics_dir,
