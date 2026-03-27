@@ -314,7 +314,7 @@ def plot_expectations_with_quantiles(
     x_train,
     y_train,
     x_grid,
-    expectations,
+    expectations=None,
     *,
     fig=None,
     ax=None,
@@ -324,7 +324,7 @@ def plot_expectations_with_quantiles(
     est_quantiles=None,
     quantile_colors=None,
     exp_colors=None,
-    true_label="True PI",
+    true_label="True CI",
     true_color="green",
     true_alpha=0.15,
     est_alpha=0.18,
@@ -336,7 +336,7 @@ def plot_expectations_with_quantiles(
     Args:
         x_train, y_train: arrays for background density (standardized space).
         x_grid: 1D array of x locations corresponding to curves.
-        expectations: dict[label -> 1D array] mapping each label to its E[Y|X] over `x_grid`.
+        expectations: optional dict[label -> 1D array] mapping each label to its E[Y|X] over `x_grid`.
         fig, ax: optional Matplotlib figure/axes to draw on (for incremental updates).
         add_background: if True, draw the scatter+density background.
         background_kwargs: optional kwargs forwarded to `scatter_with_density`.
@@ -387,11 +387,12 @@ def plot_expectations_with_quantiles(
             ax.plot(Xg, qlo, color=color, lw=1.0, alpha=0.5)
             ax.plot(Xg, qhi, color=color, lw=1.0, alpha=0.5)
 
-    if exp_colors is None:
-        exp_colors = plt.cm.Set1(np.linspace(0, 1, len(expectations)))
-    for i, (lbl, ycurve) in enumerate(expectations.items()):
-        color = exp_colors[i] if i < len(exp_colors) else None
-        ax.plot(Xg, _to_1d(ycurve), lw=1.0, label=lbl, color=color)
+    if expectations:
+        if exp_colors is None:
+            exp_colors = plt.cm.Set1(np.linspace(0, 1, len(expectations)))
+        for i, (lbl, ycurve) in enumerate(expectations.items()):
+            color = exp_colors[i] if i < len(exp_colors) else None
+            ax.plot(Xg, _to_1d(ycurve), lw=1.0, label=lbl, color=color)
 
     ax.set_xlabel(r"$\mathcal{X}$", fontsize=10)
     ax.set_ylabel(r"$\mathcal{Y}$", fontsize=10)
@@ -429,63 +430,118 @@ def dataframe_to_markdown(df, index=False, float_formats=None, default_float_fmt
 
 def plot_condexp_metrics_panels(
     df_results,
-    mae_by_model,
+    mae_by_model=None,
     output_path=None,
     model_colors=None,
     figsize=(18, 4),
     show=False,
 ):
-    """Plot coverage, interval size, coverage error, and MAE comparison panels."""
+    """Plot coverage, CI size, coverage error, and MAE comparison panels."""
 
     if model_colors is None:
-        model_colors = {"NCP": "tab:green", "eNCP": "tab:blue", "MLP": "tab:orange"}
+        model_colors = {"NCP": "tab:green", "NCPaug": "tab:purple", "eNCP": "tab:blue", "MLP": "tab:orange"}
+
+    coverage_suffix = " Coverage (%)"
+    models = [
+        col[: -len(coverage_suffix)]
+        for col in df_results.columns
+        if col.endswith(coverage_suffix) and col != "Desired Coverage (%)"
+    ]
+    if not models:
+        raise ValueError("No model coverage columns found in `df_results`.")
+
+    include_mae = bool(mae_by_model)
+    ncols = 4 if include_mae else 3
+    width_ratios = [1.1, 1.1, 1.1, 0.8] if include_mae else [1.1, 1.1, 1.1]
+    marker_cycle = ["o-", "s-", "^-", "d-", "x-"]
 
     fig, axes = plt.subplots(
         1,
-        4,
+        ncols,
         figsize=figsize,
-        gridspec_kw={"width_ratios": [1.1, 1.1, 1.1, 0.8]},
+        gridspec_kw={"width_ratios": width_ratios},
     )
     axes = np.atleast_1d(axes)
 
     axes[0].plot(df_results["Alpha"], df_results["Desired Coverage (%)"], "k--", label="Desired", linewidth=2)
-    axes[0].plot(df_results["Alpha"], df_results["NCP Coverage (%)"], "o-", label="NCP", markersize=6)
-    axes[0].plot(df_results["Alpha"], df_results["eNCP Coverage (%)"], "s-", label="eNCP", markersize=6)
+    for i, model in enumerate(models):
+        col = f"{model} Coverage (%)"
+        if col not in df_results:
+            continue
+        style = marker_cycle[i % len(marker_cycle)]
+        axes[0].plot(
+            df_results["Alpha"],
+            df_results[col],
+            style,
+            label=model,
+            markersize=6,
+            color=model_colors.get(model),
+        )
     axes[0].set_xlabel("Alpha")
     axes[0].set_ylabel("Coverage (%)")
     axes[0].set_title("Empirical Coverage vs Desired")
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
 
-    axes[1].plot(df_results["Alpha"], df_results["NCP CI Size"], "o-", label="NCP", markersize=6)
-    axes[1].plot(df_results["Alpha"], df_results["eNCP CI Size"], "s-", label="eNCP", markersize=6)
+    for i, model in enumerate(models):
+        col = f"{model} CI Size"
+        if col not in df_results:
+            continue
+        style = marker_cycle[i % len(marker_cycle)]
+        axes[1].plot(
+            df_results["Alpha"],
+            df_results[col],
+            style,
+            label=model,
+            markersize=6,
+            color=model_colors.get(model),
+        )
     axes[1].set_xlabel("Alpha")
     axes[1].set_ylabel("CI Size")
-    axes[1].set_title("Confidence Interval Size")
+    axes[1].set_title("CI Size")
     axes[1].legend()
     axes[1].grid(True, alpha=0.3)
 
-    axes[2].plot(df_results["Alpha"], df_results["NCP Coverage Error"], "o-", label="NCP", markersize=6)
-    axes[2].plot(df_results["Alpha"], df_results["eNCP Coverage Error"], "s-", label="eNCP", markersize=6)
+    for i, model in enumerate(models):
+        col = f"{model} Coverage Error"
+        if col not in df_results:
+            continue
+        style = marker_cycle[i % len(marker_cycle)]
+        axes[2].plot(
+            df_results["Alpha"],
+            df_results[col],
+            style,
+            label=model,
+            markersize=6,
+            color=model_colors.get(model),
+        )
     axes[2].set_xlabel("Alpha")
     axes[2].set_ylabel("Coverage Error (%)")
-    axes[2].set_title("Coverage Error (|Empirical - Desired|)")
+    axes[2].set_title("Coverage Error")
     axes[2].legend()
     axes[2].grid(True, alpha=0.3)
 
-    order = list(mae_by_model.keys())
-    bar_positions = np.arange(len(order))
-    bar_values = [mae_by_model[name] for name in order]
-    bar_colors = [model_colors.get(name, None) for name in order]
-    bars = axes[3].bar(bar_positions, bar_values, color=bar_colors, width=0.5)
-    axes[3].set_xticks(bar_positions)
-    axes[3].set_xticklabels(order, rotation=45, ha="right")
-    axes[3].set_ylabel("Mean Abs Error")
-    axes[3].set_title("Average regression MAE")
-    axes[3].grid(True, axis="y", alpha=0.3)
-    for bar in bars:
-        height = bar.get_height()
-        axes[3].text(bar.get_x() + bar.get_width() / 2, height, f"{height:.3f}", ha="center", va="bottom", fontsize=8)
+    if include_mae:
+        order = list(mae_by_model.keys())
+        bar_positions = np.arange(len(order))
+        bar_values = [mae_by_model[name] for name in order]
+        bar_colors = [model_colors.get(name, None) for name in order]
+        bars = axes[3].bar(bar_positions, bar_values, color=bar_colors, width=0.5)
+        axes[3].set_xticks(bar_positions)
+        axes[3].set_xticklabels(order, rotation=45, ha="right")
+        axes[3].set_ylabel("Mean Abs Error")
+        axes[3].set_title("Average regression MAE")
+        axes[3].grid(True, axis="y", alpha=0.3)
+        for bar in bars:
+            height = bar.get_height()
+            axes[3].text(
+                bar.get_x() + bar.get_width() / 2,
+                height,
+                f"{height:.3f}",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+            )
 
     plt.tight_layout()
 
@@ -505,13 +561,23 @@ def log_condexp_summary_metrics(
     sample_size,
     seed,
     df_results,
-    mae_by_model,
+    mae_by_model=None,
     prefix="condexp_metrics",
 ):
     """Persist run-level summary metrics to a uniquely named CSV file."""
 
+    if mae_by_model is None:
+        mae_by_model = {}
+
+    coverage_error_suffix = " Coverage Error"
+    coverage_models = [
+        col[: -len(coverage_error_suffix)] for col in df_results.columns if col.endswith(coverage_error_suffix)
+    ]
+    model_order = list(dict.fromkeys(list(mae_by_model.keys()) + coverage_models))
+
     rows = []
-    for model, mae in mae_by_model.items():
+    for model in model_order:
+        mae = mae_by_model.get(model, np.nan)
         rows.append({
             "sample_size": int(sample_size),
             "seed": int(seed),
