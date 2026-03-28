@@ -19,6 +19,8 @@ __all__ = [
     "display_saved_training_curve",
     "fit_or_load_ncp_like",
     "make_condexp_1d_dataset",
+    "make_condexp_1d_dataset_incorrect_conditional",
+    "make_condexp_1d_dataset_incorrect_conditional_biased",
     "make_positive_bias_train_val_split",
     "load_checkpoint",
     "log_metrics",
@@ -30,6 +32,7 @@ __all__ = [
     "split_x_side_masks",
     "training_curve_plot_path",
     "true_condexp_1d",
+    "true_condexp_1d_incorrect_conditional_biased",
 ]
 
 
@@ -258,6 +261,7 @@ def make_condexp_1d_dataset(n: int = 20_000, seed: int = 10, x=None):
     """
 
     rng = np.random.default_rng(int(seed))
+    torch_gen = torch.Generator().manual_seed(int(seed))
 
     if x is None:
         x_np = rng.uniform(-3.0, 3.0, size=(int(n), 1)).astype(np.float32)
@@ -279,18 +283,137 @@ def make_condexp_1d_dataset(n: int = 20_000, seed: int = 10, x=None):
 
     sigma_sym = 0.04 + 0.05 * np.cos(6 * absx) ** 2 + 0.15 * torch.sin(9 * absx) ** 2
     sigma_bi = 0.03 + 0.1 * np.cos(5 * absx) ** 2 + 0.06 * np.cos(4 * absx) ** 2
-    base_noise = torch.randn_like(x_t)
+    base_noise = torch.randn(x_t.shape, generator=torch_gen, dtype=torch.float32)
     scale_param = _exp_scale_param_1d(absx)
     u = torch.from_numpy(rng.uniform(0, 1, size=x_t.shape)).to(torch.float32)
     eps_exp = -scale_param * torch.log(u)
     eps_sym = base_noise * sigma_sym
     s = torch.from_numpy(rng.choice([-1.0, 1.0], size=(n, 1))).to(torch.float32)
     a = 0.6 * (absx - 2.0).clamp(min=0)
-    eps_bi = torch.randn_like(x_t) * sigma_bi
+    eps_bi = torch.randn(x_t.shape, generator=torch_gen, dtype=torch.float32) * sigma_bi
 
     y_zone1 = _f_center_1d(x_t) + eps_exp
     y_zone2 = _f_center_1d(x_t) + eps_sym
     y_zone3 = s * a + eps_bi
+    y_t = torch.where(absx <= 1.0, y_zone1, torch.where(absx <= 2.0, y_zone2, y_zone3))
+    return x_t, y_t
+
+
+def make_condexp_1d_dataset_incorrect_conditional(
+    n: int = 20_000,
+    seed: int = 10,
+    x=None,
+    c_rhs: float = 4.0,
+):
+    """Generate a 1D dataset with incorrect conditional symmetry on the right side.
+
+    This perturbation keeps the marginal sampling of x unchanged and modifies only the conditional
+    heteroscedastic-noise amplitude on the right half-space (x > 0) for:
+    - symmetric regime: 1 < |x| <= 2
+    - bimodal regime: |x| > 2
+
+    The skewed exponential regime (|x| <= 1) is left unchanged.
+    """
+
+    rng = np.random.default_rng(int(seed))
+    torch_gen = torch.Generator().manual_seed(int(seed))
+
+    if x is None:
+        x_np = rng.uniform(-3.0, 3.0, size=(int(n), 1)).astype(np.float32)
+    else:
+        if np.isscalar(x):
+            x_np = np.full((int(n), 1), float(x), dtype=np.float32)
+        else:
+            x_arr = np.asarray(x, dtype=np.float32)
+            if x_arr.ndim == 1:
+                x_arr = x_arr.reshape(-1, 1)
+            if x_arr.shape[1] != 1:
+                raise ValueError(f"x must be shape (n,) or (n,1), got {x_arr.shape}")
+            if x_arr.shape[0] != int(n):
+                n = int(x_arr.shape[0])
+            x_np = x_arr
+
+    x_t = torch.from_numpy(x_np)
+    absx = torch.abs(x_t)
+
+    sigma_sym = 0.04 + 0.05 * np.cos(6 * absx) ** 2 + 0.15 * torch.sin(9 * absx) ** 2
+    sigma_bi = 0.03 + 0.1 * np.cos(5 * absx) ** 2 + 0.06 * np.cos(4 * absx) ** 2
+
+    # Increase only right-side heteroscedastic noise in zones 2 and 3.
+    rhs_mask = (x_t > 0.0) & (absx > 1.0)
+    rhs_scale = torch.ones_like(x_t)
+    rhs_scale[rhs_mask] = float(c_rhs)
+
+    base_noise = torch.randn(x_t.shape, generator=torch_gen, dtype=torch.float32)
+    scale_param = _exp_scale_param_1d(absx)
+    u = torch.from_numpy(rng.uniform(0, 1, size=x_t.shape)).to(torch.float32)
+    eps_exp = -scale_param * torch.log(u)  # unchanged in zone 1
+
+    eps_sym = base_noise * sigma_sym * rhs_scale
+    s = torch.from_numpy(rng.choice([-1.0, 1.0], size=(n, 1))).to(torch.float32)
+    a = 0.6 * (absx - 2.0).clamp(min=0)
+    eps_bi = torch.randn(x_t.shape, generator=torch_gen, dtype=torch.float32) * sigma_bi * rhs_scale
+
+    y_zone1 = _f_center_1d(x_t) + eps_exp
+    y_zone2 = _f_center_1d(x_t) + eps_sym
+    y_zone3 = s * a + eps_bi
+    y_t = torch.where(absx <= 1.0, y_zone1, torch.where(absx <= 2.0, y_zone2, y_zone3))
+    return x_t, y_t
+
+
+def make_condexp_1d_dataset_incorrect_conditional_biased(
+    n: int = 20_000,
+    seed: int = 10,
+    x=None,
+    slope_rhs: float = 1.0,
+):
+    """Generate a 1D dataset with a right-side mean-shift perturbation in y|x.
+
+    The perturbation keeps x-sampling unchanged and adds a deterministic linear offset on:
+    - symmetric regime: 1 < x <= 2
+    - bimodal regime: x > 2
+
+    Offset: y <- y + b * (x - 1), where b = slope_rhs.
+    The skewed exponential regime (|x| <= 1) is unchanged.
+    """
+
+    rng = np.random.default_rng(int(seed))
+    torch_gen = torch.Generator().manual_seed(int(seed))
+
+    if x is None:
+        x_np = rng.uniform(-3.0, 3.0, size=(int(n), 1)).astype(np.float32)
+    else:
+        if np.isscalar(x):
+            x_np = np.full((int(n), 1), float(x), dtype=np.float32)
+        else:
+            x_arr = np.asarray(x, dtype=np.float32)
+            if x_arr.ndim == 1:
+                x_arr = x_arr.reshape(-1, 1)
+            if x_arr.shape[1] != 1:
+                raise ValueError(f"x must be shape (n,) or (n,1), got {x_arr.shape}")
+            if x_arr.shape[0] != int(n):
+                n = int(x_arr.shape[0])
+            x_np = x_arr
+
+    x_t = torch.from_numpy(x_np)
+    absx = torch.abs(x_t)
+
+    sigma_sym = 0.04 + 0.05 * np.cos(6 * absx) ** 2 + 0.15 * torch.sin(9 * absx) ** 2
+    sigma_bi = 0.03 + 0.1 * np.cos(5 * absx) ** 2 + 0.06 * np.cos(4 * absx) ** 2
+    base_noise = torch.randn(x_t.shape, generator=torch_gen, dtype=torch.float32)
+    scale_param = _exp_scale_param_1d(absx)
+    u = torch.from_numpy(rng.uniform(0, 1, size=x_t.shape)).to(torch.float32)
+    eps_exp = -scale_param * torch.log(u)
+    eps_sym = base_noise * sigma_sym
+    s = torch.from_numpy(rng.choice([-1.0, 1.0], size=(n, 1))).to(torch.float32)
+    a = 0.6 * (absx - 2.0).clamp(min=0)
+    eps_bi = torch.randn(x_t.shape, generator=torch_gen, dtype=torch.float32) * sigma_bi
+
+    rhs_shift = float(slope_rhs) * torch.clamp(x_t - 1.0, min=0.0)
+
+    y_zone1 = _f_center_1d(x_t) + eps_exp
+    y_zone2 = _f_center_1d(x_t) + eps_sym + rhs_shift
+    y_zone3 = s * a + eps_bi + rhs_shift
     y_t = torch.where(absx <= 1.0, y_zone1, torch.where(absx <= 2.0, y_zone2, y_zone3))
     return x_t, y_t
 
@@ -306,6 +429,16 @@ def true_condexp_1d(x) -> torch.Tensor:
     zone2_exp = _f_center_1d(x)
     zone3_exp = torch.zeros_like(x)
     return torch.where(absx <= 1.0, zone1_exp, torch.where(absx <= 2.0, zone2_exp, zone3_exp))
+
+
+@torch.no_grad()
+def true_condexp_1d_incorrect_conditional_biased(x, slope_rhs: float = 1.0) -> torch.Tensor:
+    """True E[Y|X=x] for the right-side mean-shift perturbed dataset."""
+
+    x = torch.as_tensor(x, dtype=torch.float32)
+    base = true_condexp_1d(x)
+    rhs_shift = float(slope_rhs) * torch.clamp(x - 1.0, min=0.0)
+    return base + rhs_shift
 
 
 def split_standardize_tensors(
@@ -567,6 +700,7 @@ def fit_or_load_ncp_like(
     val_metric: str = "||k(x,y) - k_r(x,y)||",
     checkpoint_meta: dict | None = None,
     show_curve_on_load: bool = True,
+    enable_plots: bool = True,
 ):
     """Train an NCP/eNCP-like model with early stopping or load it from checkpoint.
 
@@ -582,7 +716,7 @@ def fit_or_load_ncp_like(
         best_val = float(checkpoint.get("best_val_loss", np.nan))
         best_state = {k: v.cpu() for k, v in model.state_dict().items()}
         print(f"Loaded - best val objective: {best_val:.5f}")
-        if show_curve_on_load:
+        if show_curve_on_load and enable_plots:
             display_saved_training_curve(checkpoint_path, title=plot_title)
     else:
         print(f"{desc} from scratch...")
@@ -590,7 +724,7 @@ def fit_or_load_ncp_like(
         patience_counter = 0
         best_state = {k: v.cpu() for k, v in model.state_dict().items()}
         pbar = tqdm(range(train_epochs), desc=desc)
-        plotter = LiveLossPlotter(title=plot_title, plot_freq=plot_freq)
+        plotter = LiveLossPlotter(title=plot_title, plot_freq=plot_freq) if enable_plots else None
 
         for epoch in pbar:
             model.train()
@@ -607,7 +741,8 @@ def fit_or_load_ncp_like(
                 pbar.set_postfix(loss=float(loss.item()), val=vm)
                 train_loss = float(metrics.get(val_metric, loss.item()))
                 val_loss = float(val_metrics.get(val_metric, vm))
-                plotter.update(epoch, train_loss=train_loss, val_loss=val_loss)
+                if plotter is not None:
+                    plotter.update(epoch, train_loss=train_loss, val_loss=val_loss)
                 if vm < best_val:
                     best_val = vm
                     best_state = {k: v.cpu() for k, v in model.state_dict().items()}
@@ -627,8 +762,9 @@ def fit_or_load_ncp_like(
                         print(f"Early stopping at epoch {epoch}")
                         break
 
-        save_training_curve_plot(plotter, checkpoint_path)
-        plotter.close()
+        if plotter is not None:
+            save_training_curve_plot(plotter, checkpoint_path)
+            plotter.close()
         print(f"Best val objective: {best_val:.5f}")
 
     model.load_state_dict(best_state)
