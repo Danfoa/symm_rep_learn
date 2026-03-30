@@ -437,6 +437,10 @@ def plot_condexp_metrics_panels(
     show=False,
 ):
     """Plot CI-size and coverage-error comparison panels."""
+    title_fs = 9
+    label_fs = 10
+    tick_fs = 8
+    legend_fs = 8
 
     if model_colors is None:
         model_colors = {"NCP": "tab:green", "NCPaug": "tab:purple", "eNCP": "tab:blue", "MLP": "tab:orange"}
@@ -462,23 +466,35 @@ def plot_condexp_metrics_panels(
     )
     axes = np.atleast_1d(axes)
 
+    if "$\\alpha$" in df_results.columns:
+        alpha_col = "$\\alpha$"
+    elif "Actual $\\alpha$" in df_results.columns:
+        alpha_col = "Actual $\\alpha$"
+    elif "Actual alpha" in df_results.columns:
+        alpha_col = "Actual alpha"
+    else:
+        alpha_col = "Alpha"
+    if alpha_col not in df_results.columns:
+        raise KeyError("`df_results` must contain one of {'$\\\\alpha$', 'Actual $\\\\alpha$', 'Actual alpha', 'Alpha'}.")
+
     for i, model in enumerate(models):
         col = f"{model} CI Size"
         if col not in df_results:
             continue
         style = marker_cycle[i % len(marker_cycle)]
         axes[0].plot(
-            df_results["Alpha"],
+            df_results[alpha_col],
             df_results[col],
             style,
             label=model,
             markersize=6,
             color=model_colors.get(model),
         )
-    axes[0].set_xlabel("Alpha")
-    axes[0].set_ylabel("CI Size")
-    axes[0].set_title("CI Size")
-    axes[0].legend()
+    axes[0].set_xlabel(r"$\alpha$ (desired CI coverage = $100(1-\alpha)\%$)", fontsize=label_fs)
+    axes[0].set_ylabel("CI Size", fontsize=label_fs)
+    axes[0].set_title("CI Size", fontsize=title_fs)
+    axes[0].legend(fontsize=legend_fs)
+    axes[0].tick_params(axis="both", labelsize=tick_fs)
     axes[0].grid(True, alpha=0.3)
 
     for i, model in enumerate(models):
@@ -487,17 +503,18 @@ def plot_condexp_metrics_panels(
             continue
         style = marker_cycle[i % len(marker_cycle)]
         axes[1].plot(
-            df_results["Alpha"],
+            df_results[alpha_col],
             df_results[col],
             style,
             label=model,
             markersize=6,
             color=model_colors.get(model),
         )
-    axes[1].set_xlabel("Alpha")
-    axes[1].set_ylabel("Coverage Error (%)")
-    axes[1].set_title("Coverage Error")
-    axes[1].legend()
+    axes[1].set_xlabel(r"$\alpha$ (desired CI coverage = $100(1-\alpha)\%$)", fontsize=label_fs)
+    axes[1].set_ylabel("Coverage Error (%)", fontsize=label_fs)
+    axes[1].set_title("Coverage Error", fontsize=title_fs)
+    axes[1].legend(fontsize=legend_fs)
+    axes[1].tick_params(axis="both", labelsize=tick_fs)
     axes[1].grid(True, alpha=0.3)
 
     plt.tight_layout()
@@ -567,7 +584,7 @@ def log_condexp_alpha_metrics(
     """Persist per-alpha uncertainty metrics for each model to CSV.
 
     Expected columns in ``df_results``:
-    - ``Alpha``
+    - ``$\alpha$`` (or legacy ``Actual $\alpha$`` / ``Actual alpha`` / ``Alpha``)
     - ``Desired Coverage (%)``
     - ``<model> Coverage (%)``
     - ``<model> Coverage Error``
@@ -586,9 +603,20 @@ def log_condexp_alpha_metrics(
     if not models:
         raise ValueError("No model coverage columns found in `df_results`.")
 
+    if "$\\alpha$" in df_results.columns:
+        alpha_col = "$\\alpha$"
+    elif "Actual $\\alpha$" in df_results.columns:
+        alpha_col = "Actual $\\alpha$"
+    elif "Actual alpha" in df_results.columns:
+        alpha_col = "Actual alpha"
+    else:
+        alpha_col = "Alpha"
+    if alpha_col not in df_results.columns:
+        raise KeyError("`df_results` must contain one of {'$\\\\alpha$', 'Actual $\\\\alpha$', 'Actual alpha', 'Alpha'}.")
+
     rows = []
     for _, row in df_results.iterrows():
-        alpha = float(row["Alpha"])
+        alpha = float(row[alpha_col])
         desired = float(row["Desired Coverage (%)"])
         for model in models:
             cov_col = f"{model} Coverage (%)"
