@@ -46,7 +46,7 @@ pip install -e ".[paper]"
 
 ### 1. Conditional expectation (regression) with uncertainty quantification
 
-We demonstrate conditional expectation (regression) *with uncertainty quantification* in the notebook [conditional_expectation_regression_1D.ipynb](paper/examples/conditional_expectation_regression/conditional_expectation_regression_1D.ipynb). The notebook tackles a picewise 1D regression where we aim to predict both the expected value of `Y` given `X` and confidence intervals (lower and upper quantiles) for the prediction. Confidence intervals are of paramount importance in the regions where the conditional distribution $\mathbb{P(y \mid x)}$ is multimodal or skewed.
+We demonstrate conditional expectation (regression) *with uncertainty quantification* in the notebook [conditional_expectation_regression_1D.ipynb](paper/examples/conditional_expectation_regression/conditional_expectation_regression_1D.ipynb). The notebook tackles a picewise 1D regression where we aim to predict both the expected value of `Y` given `X` and confidence intervals (lower and upper quantiles) for the prediction. Confidence intervals are of paramount importance in the regions where the conditional distribution $\mathbb{P}(y \mid x)$ is multimodal or skewed.
 
 ![1D conditional expectation data](paper/examples/conditional_expectation_regression/plots/data_with_zones_and_true_expectation_train_size=14.0k.png)
 
@@ -78,15 +78,16 @@ The notebook [conditional_quantile_regression_quadruped.ipynb](paper/examples/co
 
 The notebook [misspecified_sensitivity_analysis_1D.ipynb](paper/examples/misspecified_sensitivity_analysis/misspecified_sensitivity_analysis_1D.ipynb) studies robustness to symmetry-prior misspecification in the same 1D synthetic setup of experiment (1). Crucially we test he scenarios of incorrect and extrinsic misspecification follwing the taxonomy of [Wang et al. (2023)](https://proceedings.neurips.cc/paper_files/paper/2023/hash/7dc7793c89b93887e126a86f22ef63c6-Abstract-Conference.html).
 
-1. **Extrinsic misspecification of $P_{x}$ $\mathbb{G}$-invariance**: This scenario corresponds to the case in the assumption of the $\mathbb{G}$-invariance of the marginal distribution of $\mathbf{x}$ is violated, because the support of the random variable in the training/val/test sets is not $\mathbb{G}$-invariant, meaning the empirical distribution of $\mathbf{x}$ is biased to a subset of the support of $P_{x}$. We test this scenario by training on a biased half-space ($x>0$) and evaluating performance on the biased and full support ($x>0$ and $x \in \mathbb{R}$).
+1. **Extrinsic misspecification of $P_{x}$ $\mathbb{G}$-invariance**:
+    This scenario corresponds to the case in the assumption of the $\mathbb{G}$-invariance of the marginal distribution of $\mathbf{x}$ is violated, because the support of the random variable in the training/val/test sets is not $\mathbb{G}$-invariant, meaning the empirical distribution of $\mathbf{x}$ is biased to a subset of the support of $P_{x}$. We test this scenario by training on a biased half-space ($x>0$) and evaluating performance on the biased and full support ($x>0$ and $x \in \mathbb{R}$).
 
-<div align="center">
-   <img src="paper/examples/misspecified_sensitivity_analysis/plots/misspec_px_protocol.png" alt="Marginal coverage grid" width="80%" />
-</div>
+    <div align="center">
+      <img src="paper/examples/misspecified_sensitivity_analysis/plots/misspec_px_protocol.png" alt="Marginal coverage grid" width="80%" />
+    </div>
 
-In these scenarios, the assumption of $\mathbb{G}$-invariance of $P_{x}$ and the use of the eNCP model serve as a regularization that enables o.o.d generalization without hampering the model's performance on the biased support.
-
-1. **Incorrect misspecification of $P_{\mathbb{y} \mid \mathbf{x}}$ $\mathbb{G}$-invariance**: This scenario corresponds to the case in which the assumption of $\mathbb{G}$-equivariance of the conditional distribution of $\mathbf{y}$ given $\mathbf{x}$ is violated on a subset of the support of $\mathbf{x}$. We test two types of inccorrect misspecification:
+    In these scenarios, the assumption of $\mathbb{G}$-invariance of $P_{x}$ and the use of the eNCP model serve as a regularization that enables o.o.d generalization without hampering the model's performance on the biased support.
+2. **Incorrect misspecification of $P_{\mathbb{y} \mid \mathbf{x}}$ $\mathbb{G}$-invariance**:
+    This scenario corresponds to the case in which the assumption of $\mathbb{G}$-equivariance of the conditional distribution of $\mathbf{y}$ given $\mathbf{x}$ is violated on a subset of the support of $\mathbf{x}$. We test two types of inccorrect misspecification:
     - **Unbiased incorrect misspecification**: Where we progressively scale the heteroscedastic noise amplitude on the region $x>1$, thus violating the $\mathbb{G}$-invariance of $P_{\mathbf{y} \mid \mathbf{x}}$ but preserving the $\mathbb{G}$-equivariance of the conditional expectation $\mathbb{E}[\mathbf{y} \mid \mathbf{x}]$.
 
     <div align="center">
