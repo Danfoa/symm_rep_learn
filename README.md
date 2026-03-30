@@ -44,7 +44,7 @@ pip install -e ".[paper]"
 
 ## Reproducible examples
 
-### Conditional expectation (regression) with uncertainty quantification
+### 1. Conditional expectation (regression) with uncertainty quantification
 
 We demonstrate conditional expectation (regression) *with uncertainty quantification* in the notebook [conditional_expectation_regression_1D.ipynb](paper/examples/conditional_expectation_regression/conditional_expectation_regression_1D.ipynb). The notebook tackles a picewise 1D regression where we aim to predict both the expected value of `Y` given `X` and confidence intervals (lower and upper quantiles) for the prediction. Confidence intervals are of paramount importance in the regions where the conditional distribution $\mathbb{P(y \mid x)}$ is multimodal or skewed.
 
@@ -54,7 +54,7 @@ The notebook illustrates how to use the eNCP and NCP models to estimate conditio
 <img src="paper/examples/conditional_expectation_regression/plots/uq_quantiles_comparison_train_size=14.0k.png" alt="Quantile comparison" width="100%" />
 <img src="paper/examples/conditional_expectation_regression/plots/coverage_and_size_comparison_train_size=14.0k.png" alt="Coverage error and set size comparison" width="100%" />
 
-### Conditional quantile regression
+### 2. Conditional quantile regression
 
 The notebook [conditional_quantile_regression_synthetic.ipynb](paper/examples/conditional_quantile_regression/conditional_quantile_regression_synthetic.ipynb) shows how the eNCP and NCP framework *model conditional probabilities* enabling the prediction of the conditional [Cumulative Distribution Function](https://en.wikipedia.org/wiki/Cumulative_distribution_function) (cCDF) enabling the regression of conditional quantiles of any desired coverage level.
 <p float="left">
@@ -65,14 +65,42 @@ The results show how the eNCP and NCP models outperform training frameworks that
 
 ![Equivariant CCDF regression data](paper/examples/conditional_quantile_regression/plots/encp_ccdf_regression.png)
 
-### Uncertainty quantification in ground reaction force estimation in legged locmotion.
+### 3. Uncertainty quantification in ground reaction force estimation in legged locmotion
 
-The notebook [conditional_quantile_regression_quadruped.ipynb](paper/examples/conditional_quantile_regression/conditional_quantile_regression_quadruped.py.ipynb) shows how the eNCP and NCP framework can be used for uncertainty quantification in the estimation of ground reaction forces (GRFs) in quadruped locomotion over rough terrain. 
+The notebook [conditional_quantile_regression_quadruped.ipynb](paper/examples/conditional_quantile_regression/conditional_quantile_regression_quadruped.py.ipynb) shows how the eNCP and NCP framework can be used for uncertainty quantification in the estimation of ground reaction forces (GRFs) in quadruped locomotion over rough terrain.
 
 <div align="center">
     <img src="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExNWx4ampoZ2xobjRvanh4ODFhMXZ2d25jYXp0dm5hb3B3azVrd2dxMyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/hFoRNrXqJIi6BxJyVb/giphy.gif" alt="Quadruped walking on rough terrain" />
    <img src="paper/plots/quadruped_grf_encp.png" alt="Marginal coverage grid" width="80%" />
 </div>
+
+### 4. Sensitivity analysis to symmetry misspecification
+
+The notebook [misspecified_sensitivity_analysis_1D.ipynb](paper/examples/misspecified_sensitivity_analysis/misspecified_sensitivity_analysis_1D.ipynb) studies robustness to symmetry-prior misspecification in the same 1D synthetic setup of experiment (1). Crucially we test he scenarios of incorrect and extrinsic misspecification follwing the taxonomy of [Wang et al. (2023)](https://proceedings.neurips.cc/paper_files/paper/2023/hash/7dc7793c89b93887e126a86f22ef63c6-Abstract-Conference.html).
+
+1. **Extrinsic misspecification of $P_{x}$ $\mathbb{G}$-invariance**: This scenario corresponds to the case in the assumption of the $\mathbb{G}$-invariance of the marginal distribution of $\mathbf{x}$ is violated, because the support of the random variable in the training/val/test sets is not $\mathbb{G}$-invariant, meaning the empirical distribution of $\mathbf{x}$ is biased to a subset of the support of $P_{x}$. We test this scenario by training on a biased half-space ($x>0$) and evaluating performance on the biased and full support ($x>0$ and $x \in \mathbb{R}$).
+
+<div align="center">
+   <img src="paper/examples/misspecified_sensitivity_analysis/plots/misspec_px_protocol.png" alt="Marginal coverage grid" width="80%" />
+</div>
+
+In these scenarios, the assumption of $\mathbb{G}$-invariance of $P_{x}$ and the use of the eNCP model serve as a regularization that enables o.o.d generalization without hampering the model's performance on the biased support.
+
+1. **Incorrect misspecification of $P_{\mathbb{y} \mid \mathbf{x}}$ $\mathbb{G}$-invariance**: This scenario corresponds to the case in which the assumption of $\mathbb{G}$-equivariance of the conditional distribution of $\mathbf{y}$ given $\mathbf{x}$ is violated on a subset of the support of $\mathbf{x}$. We test two types of inccorrect misspecification:
+    - **Unbiased incorrect misspecification**: Where we progressively scale the heteroscedastic noise amplitude on the region $x>1$, thus violating the $\mathbb{G}$-invariance of $P_{\mathbf{y} \mid \mathbf{x}}$ but preserving the $\mathbb{G}$-equivariance of the conditional expectation $\mathbb{E}[\mathbf{y} \mid \mathbf{x}]$.
+
+    <div align="center">
+      <img src="paper/examples/misspecified_sensitivity_analysis/plots/incorrect_conditional_protocol_C=2.png" width="48%" />
+      <img src="paper/examples/misspecified_sensitivity_analysis/plots/incorrect_conditional_protocol_C=6.png" width="48%" />
+    </div>
+
+    - **Biased incorrect misspecification**: Where we progressively add a linear biased on the region $x>1$, thus violating both the $\mathbb{G}$-invariance of $P_{\mathbf{y} \mid \mathbf{x}}$ and the $\mathbb{G}$-equivariance of the conditional expectation $\mathbb{E}[\mathbf{y} \mid \mathbf{x}]$, on the subset $|x|>1$.
+    <div align="center">
+      <img src="paper/examples/misspecified_sensitivity_analysis/plots/incorrect_conditional_biased_protocol_b=0p2.png" width="48%" />
+      <img src="paper/examples/misspecified_sensitivity_analysis/plots/incorrect_conditional_biased_protocol_b=0p75.png" width="48%" />
+    </div>
+
+The results, show that the performance of the eNCP model deteriorates continuously with the degree of misspecification
 
 ## Baseline implementations
 
