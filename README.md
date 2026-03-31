@@ -70,32 +70,34 @@ The results show how the eNCP and NCP models outperform training frameworks that
 The notebook [conditional_quantile_regression_quadruped.ipynb](paper/examples/conditional_quantile_regression/conditional_quantile_regression_quadruped.py.ipynb) shows how the eNCP and NCP framework can be used for uncertainty quantification in the estimation of ground reaction forces (GRFs) in quadruped locomotion over rough terrain.
 
 <div align="center">
-    <img src="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExNWx4ampoZ2xobjRvanh4ODFhMXZ2d25jYXp0dm5hb3B3azVrd2dxMyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/hFoRNrXqJIi6BxJyVb/giphy.gif" alt="Quadruped walking on rough terrain" />
+    <img src="paper/plots/quadruped_rough_terrain_trimmed.gif" alt="Quadruped walking on rough terrain" />
    <img src="paper/plots/quadruped_grf_encp.png" alt="Marginal coverage grid" width="80%" />
 </div>
 
 ### 4. Sensitivity analysis to symmetry misspecification
 
-The notebook [misspecified_sensitivity_analysis_1D.ipynb](paper/examples/misspecified_sensitivity_analysis/misspecified_sensitivity_analysis_1D.ipynb) studies robustness to symmetry-prior misspecification in the same 1D synthetic setup of experiment (1). Crucially we test he scenarios of incorrect and extrinsic misspecification follwing the taxonomy of [Wang et al. (2023)](https://proceedings.neurips.cc/paper_files/paper/2023/hash/7dc7793c89b93887e126a86f22ef63c6-Abstract-Conference.html).
+The notebook [`misspecified_sensitivity_analysis_1D.ipynb`](paper/examples/misspecified_sensitivity_analysis/misspecified_sensitivity_analysis_1D.ipynb) investigates robustness to symmetry-prior misspecification in the same 1D synthetic setting used in experiment (1). In particular, we study the cases of **incorrect** and **extrinsic** misspecification, following the taxonomy of [Wang et al. (2023)](https://proceedings.neurips.cc/paper_files/paper/2023/hash/7dc7793c89b93887e126a86f22ef63c6-Abstract-Conference.html).
 
-1. **Extrinsic misspecification of $P_{x}$ $\mathbb{G}$-invariance**:
-    This scenario corresponds to the case in the assumption of the $\mathbb{G}$-invariance of the marginal distribution of $\mathbf{x}$ is violated, because the support of the random variable in the training/val/test sets is not $\mathbb{G}$-invariant, meaning the empirical distribution of $\mathbf{x}$ is biased to a subset of the support of $P_{x}$. We test this scenario by training on a biased half-space ($x>0$) and evaluating performance on the biased and full support ($x>0$ and $x \in \mathbb{R}$).
+1. **Extrinsic misspecification of $P_{\mathbf{x}}$ $\mathbb{G}$-invariance**:  
+    This scenario arises when the assumption that the marginal distribution of $\mathbf{x}$ is $\mathbb{G}$-invariant is violated. Specifically, the support of the random variable in the training, validation, and test sets is not $\mathbb{G}$-invariant, so the empirical distribution of $\mathbf{x}$ is biased toward only a subset of the support of $P_{\mathbf{x}}$. We study this setting by training on a biased half-space ($\mathbf{x} > 0$) and evaluating performance both on the same biased support and on the full support ($\mathbf{x} > 0$ and $\mathbf{x} \in \mathbb{R}$).
 
     <div align="center">
       <img src="paper/examples/misspecified_sensitivity_analysis/plots/misspec_px_protocol.png" alt="Marginal coverage grid" width="80%" />
     </div>
 
-    In these scenarios, the assumption of $\mathbb{G}$-invariance of $P_{x}$ and the use of the eNCP model serve as a regularization that enables o.o.d generalization without hampering the model's performance on the biased support.
-2. **Incorrect misspecification of $P_{\mathbb{y} \mid \mathbf{x}}$ $\mathbb{G}$-invariance**:
-    This scenario corresponds to the case in which the assumption of $\mathbb{G}$-equivariance of the conditional distribution of $\mathbf{y}$ given $\mathbf{x}$ is violated on a subset of the support of $\mathbf{x}$. We test two types of inccorrect misspecification:
-    - **Unbiased incorrect misspecification**: Where we progressively scale the heteroscedastic noise amplitude on the region $x>1$, thus violating the $\mathbb{G}$-invariance of $P_{\mathbf{y} \mid \mathbf{x}}$ but preserving the $\mathbb{G}$-equivariance of the conditional expectation $\mathbb{E}[\mathbf{y} \mid \mathbf{x}]$.
+    In this setting, assuming $\mathbb{G}$-invariance of $P_{\mathbf{x}}$ and using the eNCP model acts as a form of regularization, enabling out-of-distribution generalization without degrading performance on the biased support.
+
+2. **Incorrect misspecification of $P_{\mathbf{y} \mid \mathbf{x}}$ $\mathbb{G}$-invariance**:  
+    This scenario corresponds to violations of the assumption that the conditional distribution of $\mathbf{y}$ given $\mathbf{x}$ is $\mathbb{G}$-equivariant on a subset of the support of $\mathbf{x}$. We consider two types of incorrect misspecification:
+    - **Unbiased incorrect misspecification**: Here, we progressively scale the heteroscedastic noise amplitude in the region $\mathbf{x} > 1$. This violates the $\mathbb{G}$-invariance of $P_{\mathbf{y} \mid \mathbf{x}}$ while preserving the $\mathbb{G}$-equivariance of the conditional expectation $\mathbb{E}[\mathbf{y} \mid \mathbf{x}]$.
 
     <div align="center">
       <img src="paper/examples/misspecified_sensitivity_analysis/plots/incorrect_conditional_protocol_C=2.png" width="48%" />
       <img src="paper/examples/misspecified_sensitivity_analysis/plots/incorrect_conditional_protocol_C=6.png" width="48%" />
     </div>
 
-    - **Biased incorrect misspecification**: Where we progressively add a linear biased on the region $x>1$, thus violating both the $\mathbb{G}$-invariance of $P_{\mathbf{y} \mid \mathbf{x}}$ and the $\mathbb{G}$-equivariance of the conditional expectation $\mathbb{E}[\mathbf{y} \mid \mathbf{x}]$, on the subset $|x|>1$.
+    - **Biased incorrect misspecification**: Here, we progressively introduce a linear bias in the region $\mathbf{x} > 1$. This violates both the $\mathbb{G}$-invariance of $P_{\mathbf{y} \mid \mathbf{x}}$ and the $\mathbb{G}$-equivariance of the conditional expectation $\mathbb{E}[\mathbf{y} \mid \mathbf{x}]$ on the subset $|\mathbf{x}| > 1$.
+
     <div align="center">
       <img src="paper/examples/misspecified_sensitivity_analysis/plots/incorrect_conditional_biased_protocol_b=0p2.png" width="48%" />
       <img src="paper/examples/misspecified_sensitivity_analysis/plots/incorrect_conditional_biased_protocol_b=0p75.png" width="48%" />
