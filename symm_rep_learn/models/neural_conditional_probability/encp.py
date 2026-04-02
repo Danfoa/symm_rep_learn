@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from math import ceil
 
 import escnn
 import torch
@@ -11,7 +12,10 @@ from symm_learning.nn import eEMAStats, eLinear
 from symm_learning.nn.disentangled import Change2DisentangledBasis
 from symm_learning.representation_theory import direct_sum, isotypic_decomp_rep
 
-from symm_rep_learn.models.neural_conditional_probability.ncp import NCP
+try:
+    from .ncp import NCP
+except ImportError:  # pragma: no cover - allows running this file directly as a script
+    from ncp import NCP
 
 log = logging.getLogger(__name__)
 
@@ -174,137 +178,63 @@ class ENCP(NCP):
 
 
 if __name__ == "__main__":
-    from symm_learning.models import eMLP, iMLP
+    from symm_learning.models import MLP, eMLP
+    from symm_rep_learn.mysc.profiling import run_module_pair_profile
 
-    # Keep dtype consistent with escnn representation matrices for this standalone diagnostic script.
-    torch.set_default_dtype(torch.float64)
-    torch.manual_seed(0)
+    N = 200
+    WARMUP = 50
+    BATCH_SIZE = 2048
+    SEED = 123
 
-    def run_stability_test(
-        name: str,
-        embedding_x: torch.nn.Module,
-        embedding_y: torch.nn.Module,
-        *,
-        n_steps: int = 10,
-        batch_size: int = 512,
-        lr: float = 1e-3,
-    ) -> bool:
-        """Run repeated forward/backward updates and report finite loss/gradient status."""
-        print(f"\n[{name}]")
-        model = ENCP(
-            embedding_x=embedding_x,
-            embedding_y=embedding_y,
-            orth_reg=0.01,
-            centering_reg=0.0,
-            momentum=0.999,
+    torch.manual_seed(SEED)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device.type == "cuda":
+        torch.cuda.manual_seed_all(SEED)
+
+    def _make_models(G: escnn.group.Group):
+
+        mx = ceil(128 / G.regular_representation.size)
+        my = ceil(128 / G.regular_representation.size)
+        rep_x = direct_sum([G.regular_representation for _ in range(mx)])
+        rep_y = direct_sum([G.regular_representation for _ in range(my)])
+
+        HIDDEN_UNITS = [G.regular_representation.size * mx * 2] * 2
+
+        emlp_x = eMLP(in_rep=rep_x, out_rep=rep_x, hidden_units=HIDDEN_UNITS, bias=False)
+        emlp_y = eMLP(in_rep=rep_y, out_rep=rep_y, hidden_units=HIDDEN_UNITS, bias=False)
+        encp = ENCP(embedding_x=emlp_x, embedding_y=emlp_y).to(device)
+
+        mlp_x = MLP(in_dim=rep_x.size, out_dim=rep_x.size, hidden_units=HIDDEN_UNITS, bias=False)
+        mlp_y = MLP(in_dim=rep_y.size, out_dim=rep_y.size, hidden_units=HIDDEN_UNITS, bias=False)
+        ncp = NCP(
+            embedding_x=mlp_x,
+            embedding_y=mlp_y,
+            embedding_dim_x=rep_x.size,
+            embedding_dim_y=rep_y.size,
+        ).to(device)
+
+        x = torch.randn(BATCH_SIZE, rep_x.size, device=device)
+        y = torch.randn(BATCH_SIZE, rep_y.size, device=device)
+        return rep_x, rep_y, encp, ncp, x, y
+
+    groups = (escnn.group.Icosahedral(),)
+    # groups = (escnn.group.CyclicGroup(2),)
+
+    for G in groups:
+        rep_x, rep_y, encp, ncp, x, y = _make_models(G)
+        print()
+        print(f"=== Profiling ENCP vs NCP | Group={G.name} | rep_x={rep_x.size}, rep_y={rep_y.size} ===")
+        run_module_pair_profile(
+            lhs_name="eNCP",
+            lhs=encp,
+            rhs_name="NCP",
+            rhs=ncp,
+            x=(x, y),
+            group_name=G.name,
+            profile_active_steps=N,
+            profile_warmup_steps=WARMUP,
+            mode="both",
+            top_k=10,
+            device=device,
+            dtype=x.dtype,
         )
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-        model.train()
-
-        x_dim = embedding_x.in_rep.size
-        y_dim = embedding_y.in_rep.size
-        all_finite = True
-
-        for step in range(n_steps):
-            x = torch.randn(batch_size, x_dim, dtype=torch.get_default_dtype())
-            y = torch.randn(batch_size, y_dim, dtype=torch.get_default_dtype())
-
-            optimizer.zero_grad(set_to_none=True)
-            try:
-                fx, hy = model(x, y)
-                loss, metrics = model.loss(fx, hy)
-            except RuntimeError as err:
-                print(f"  step {step:02d}: runtime error -> {type(err).__name__}: {err}")
-                all_finite = False
-                break
-
-            finite_loss = torch.isfinite(loss).item()
-            if not finite_loss:
-                print(f"  step {step:02d}: non-finite loss -> {loss}")
-                all_finite = False
-                break
-
-            try:
-                loss.backward()
-            except RuntimeError as err:
-                print(f"  step {step:02d}: backward runtime error -> {type(err).__name__}: {err}")
-                all_finite = False
-                break
-            bad_grad = None
-            for param_name, param in model.named_parameters():
-                if param.grad is not None and not torch.isfinite(param.grad).all():
-                    bad_grad = param_name
-                    break
-
-            if bad_grad is not None:
-                print(f"  step {step:02d}: non-finite gradient at `{bad_grad}`")
-                all_finite = False
-                break
-
-            optimizer.step()
-            print(f"  step {step:02d}: loss={loss.item():+.6e} finite_grad=True")
-
-        status = "PASS" if all_finite else "FAIL"
-        print(f"  -> {status} ({name})")
-        return all_finite
-
-    latent_dim = 32
-    hidden_units = [latent_dim * 2, latent_dim * 2]
-
-    G_eq = escnn.group.CyclicGroup(2)
-    x_rep_eq = G_eq.irrep(1)
-    y_rep_eq = G_eq.trivial_representation
-    reg_rep_eq = G_eq.regular_representation
-    if latent_dim % reg_rep_eq.size != 0:
-        raise ValueError(f"latent_dim={latent_dim} must be divisible by regular rep size={reg_rep_eq.size}")
-    rep_tag_eq = len(G_eq.representations)
-    lat_mult_eq = latent_dim // reg_rep_eq.size
-    lat_rep_x_eq = direct_sum([reg_rep_eq] * lat_mult_eq, name=f"main_emlp_x_lat_{rep_tag_eq}")
-    lat_rep_y_eq = direct_sum([reg_rep_eq] * lat_mult_eq, name=f"main_emlp_y_lat_{rep_tag_eq}")
-
-    # 1) Equivariant embeddings via eMLP.
-    emlp_x = eMLP(
-        in_rep=x_rep_eq,
-        out_rep=lat_rep_x_eq,
-        hidden_units=hidden_units,
-        activation=torch.nn.ELU(),
-        bias=True,
-    )
-    emlp_y = eMLP(
-        in_rep=y_rep_eq,
-        out_rep=lat_rep_y_eq,
-        hidden_units=hidden_units,
-        activation=torch.nn.ELU(),
-        bias=True,
-    )
-    emlp_ok = run_stability_test("eMLP embeddings (equivariant)", emlp_x, emlp_y)
-
-    # Use a different symmetry group here to avoid representation cache-name collisions in a single process.
-    G_inv = escnn.group.DihedralGroup(4)
-    x_rep_inv = G_inv.irrep(1, 1)
-    y_rep_inv = G_inv.trivial_representation
-    rep_tag_inv = len(G_inv.representations)
-
-    # 2) Invariant embeddings via iMLP.
-    imlp_x = iMLP(
-        in_rep=x_rep_inv,
-        out_dim=latent_dim,
-        hidden_units=hidden_units,
-        activation=torch.nn.ELU(),
-        bias=True,
-    )
-    imlp_y = iMLP(
-        in_rep=y_rep_inv,
-        out_dim=latent_dim,
-        hidden_units=hidden_units,
-        activation=torch.nn.ELU(),
-        bias=True,
-    )
-    # Avoid representation name collisions in isotypic decomposition.
-    imlp_x.out_rep.name = f"main_imlp_x_lat_{rep_tag_inv}"
-    imlp_y.out_rep.name = f"main_imlp_y_lat_{rep_tag_inv}"
-    imlp_ok = run_stability_test("iMLP embeddings (invariant)", imlp_x, imlp_y)
-
-    print("\nSummary:")
-    print(f"  eMLP embeddings stable: {emlp_ok}")
-    print(f"  iMLP embeddings stable: {imlp_ok}")
