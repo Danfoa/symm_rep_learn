@@ -11,6 +11,7 @@ from escnn.group import Representation
 from symm_learning.nn import eEMAStats, eLinear
 from symm_learning.nn.disentangled import Change2DisentangledBasis
 from symm_learning.representation_theory import direct_sum, isotypic_decomp_rep
+from symm_rep_learn.nn.losses import symm_orthonormality_regularization
 
 try:
     from .ncp import NCP
@@ -26,8 +27,10 @@ class ENCP(NCP):
         self,
         embedding_x: torch.nn.Module,
         embedding_y: torch.nn.Module,
+        orth_reg_in_dof: bool = True,
         **ncp_kwargs,
     ):
+        self.orth_reg_in_dof = orth_reg_in_dof
         self._validate_embeddings(embedding_x=embedding_x, embedding_y=embedding_y)
         self.G = embedding_x.out_rep.group
         self.x_rep, self.y_rep = embedding_x.in_rep, embedding_y.in_rep
@@ -63,6 +66,27 @@ class ENCP(NCP):
             momentum=self.ema_stats.momentum,
             center_with_running_mean=self.ema_stats.center_with_running_mean,
         )
+        # Constants used during orthonormality regularization in G-HomSpace basis
+        self.register_buffer(
+            "_cov_xx_identity_dof",
+            self.ema_stats.running_cov_xx_dof.detach().clone(),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_cov_yy_identity_dof",
+            self.ema_stats.running_cov_yy_dof.detach().clone(),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_cov_xx_basis_norm_sq",
+            self._hom_basis_norm_sq(self.ema_stats.cov_xx_basis),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_cov_yy_basis_norm_sq",
+            self._hom_basis_norm_sq(self.ema_stats.cov_yy_basis),
+            persistent=False,
+        )
 
         # Custom logic for spectral normalization of equiv layers ___________________________________
         # Buffers for spectral normalization power iteration (2D Dr: (out_dim=hy_size, in_dim=fx_size))
@@ -71,6 +95,17 @@ class ENCP(NCP):
         v = F.normalize(self.Dr.weight.new_empty(fx_rep.size).normal_(0, 1), dim=0, eps=1e-12)
         self.register_buffer("_sn_u", u, persistent=True)
         self.register_buffer("_sn_v", v, persistent=True)
+
+    @staticmethod
+    def _hom_basis_norm_sq(homo_basis: torch.nn.Module) -> torch.Tensor:
+        norm_sq = []
+        for irrep_id in homo_basis.common_irreps:
+            block = homo_basis.iso_blocks[irrep_id]
+            endo_norm_sq = getattr(homo_basis, f"endo_basis_norm_sq_{irrep_id}")
+            norm_sq.append(endo_norm_sq.repeat(block["mul_out"] * block["mul_in"]))
+        if not norm_sq:
+            return homo_basis.Q_out.new_zeros(homo_basis.dim)
+        return torch.cat(norm_sq, dim=0)
 
     @staticmethod
     def _validate_embeddings(embedding_x: torch.nn.Module, embedding_y: torch.nn.Module) -> None:
@@ -132,6 +167,28 @@ class ENCP(NCP):
         sigma = torch.dot(u, torch.mv(Dr, v))
         Dr = Dr / sigma
         return Dr
+
+    def orthonormality_regularization(self, fx_c: torch.Tensor, hy_c: torch.Tensor):
+        if not self.orth_reg_in_dof:
+            return super().orthonormality_regularization(fx_c, hy_c)
+
+        orthonormal_reg_x, metrics_x = symm_orthonormality_regularization(
+            Cx_dof=self.ema_stats.running_cov_xx_dof,
+            identity_dof=self._cov_xx_identity_dof,
+            basis_norm_sq=self._cov_xx_basis_norm_sq,
+            ambient_dim=self.dim_fx,
+            x_mean=self.ema_stats.mean_x,
+            var_name="x",
+        )
+        orthonormal_reg_y, metrics_y = symm_orthonormality_regularization(
+            Cx_dof=self.ema_stats.running_cov_yy_dof,
+            identity_dof=self._cov_yy_identity_dof,
+            basis_norm_sq=self._cov_yy_basis_norm_sq,
+            ambient_dim=self.dim_hy,
+            x_mean=self.ema_stats.mean_y,
+            var_name="y",
+        )
+        return orthonormal_reg_x, orthonormal_reg_y, metrics_x | metrics_y
 
     def fit_linear_decoder(
         self,

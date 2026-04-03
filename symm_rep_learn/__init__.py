@@ -2,4 +2,4 @@
 symm_rep_learn: Learning Disentangled Representations for Equivariant Inference
 """
 
-__version__ = "0.1.4"
+__version__ = "0.2.0"
