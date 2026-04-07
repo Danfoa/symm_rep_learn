@@ -15,4 +15,4 @@
 /paper/results
 .github/
 paper/experiments/dynamics/data/ordered_mnist/
-
+.codex

@@ -81,7 +81,13 @@ LEGEND_MARKER_SCALE = 0.5
 
 
 def plot_analytic_joint_2D(
-    gmm: SymmGaussianMixture, G: Group, rep_X: Representation, rep_Y: Representation, x_samples, y_samples
+    gmm: SymmGaussianMixture,
+    G: Group,
+    rep_X: Representation,
+    rep_Y: Representation,
+    x_samples,
+    y_samples,
+    show_orbit_guides: bool = True,
 ):
     grid = sns.JointGrid(space=0.1, height=PLOT_SIZE)
     x_samples = x_samples.squeeze()
@@ -107,8 +113,9 @@ def plot_analytic_joint_2D(
     rep_X = gmm.rep_X
     rep_Y = gmm.rep_Y
     gx_t, gy_t = (rep_X(gmm.G2Hx(g)) @ [x_t]).squeeze(), (rep_Y(gmm.G2Hy(g)) @ [y_t]).squeeze()
-    grid.ax_joint.axvline(x_t, color="r", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
-    grid.ax_joint.axvline(gx_t, color="g", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
+    if show_orbit_guides:
+        grid.ax_joint.axvline(x_t, color="r", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
+        grid.ax_joint.axvline(gx_t, color="g", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
     # # Draw red point on the selected sample
     # grid.ax_joint.plot(
     #     x_t,
@@ -204,7 +211,13 @@ def plot_analytic_joint_2D(
 
 
 def plot_analytic_prod_2D(
-    gmm: SymmGaussianMixture, G: Group, rep_X: Representation, rep_Y: Representation, x_samples, y_samples
+    gmm: SymmGaussianMixture,
+    G: Group,
+    rep_X: Representation,
+    rep_Y: Representation,
+    x_samples,
+    y_samples,
+    show_orbit_guides: bool = True,
 ):
     grid = sns.JointGrid(space=0.0, height=PLOT_SIZE)
     x_samples = x_samples.squeeze()
@@ -234,10 +247,11 @@ def plot_analytic_prod_2D(
     rep_X = gmm.rep_X
     rep_Y = gmm.rep_Y
     gx_t, gy_t = (rep_X(gmm.G2Hx(g)) @ [x_t]).squeeze(), (rep_Y(gmm.G2Hy(g)) @ [y_t]).squeeze()
-    grid.ax_joint.axvline(x_t, color="r", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
-    grid.ax_joint.axhline(y_t, color="r", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
-    grid.ax_joint.axvline(gx_t, color="g", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
-    grid.ax_joint.axhline(gy_t, color="g", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
+    if show_orbit_guides:
+        grid.ax_joint.axvline(x_t, color="r", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
+        grid.ax_joint.axhline(y_t, color="r", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
+        grid.ax_joint.axvline(gx_t, color="g", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
+        grid.ax_joint.axhline(gy_t, color="g", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
     # Draw red point on the selected sample
     # grid.ax_joint.plot(
     #     x_t,
@@ -281,11 +295,12 @@ def plot_analytic_prod_2D(
         label=PLOT_STYLE["pdf_x"]["legend"],
     )
     # Print a marker at the expected position using the color of the conditional distribution
-    grid.ax_marg_x.plot(x_t, 0, "ro", markersize=5, alpha=0.5)
-    grid.ax_marg_x.plot(gx_t, 0, "go", markersize=5, alpha=0.5)
-    # Print a horizontal line at the probability of x_t
-    grid.ax_marg_x.plot([x_t, x_t], [0, P_x_t], "r-", alpha=0.5)
-    grid.ax_marg_x.plot([gx_t, gx_t], [0, P_x_t], "g-", alpha=0.5)
+    if show_orbit_guides:
+        grid.ax_marg_x.plot(x_t, 0, "ro", markersize=5, alpha=0.5)
+        grid.ax_marg_x.plot(gx_t, 0, "go", markersize=5, alpha=0.5)
+        # Print a horizontal line at the probability of x_t
+        grid.ax_marg_x.plot([x_t, x_t], [0, P_x_t], "r-", alpha=0.5)
+        grid.ax_marg_x.plot([gx_t, gx_t], [0, P_x_t], "g-", alpha=0.5)
 
     grid.ax_marg_x.set_ylim([0, None])
     # Plot marginal y
@@ -301,11 +316,12 @@ def plot_analytic_prod_2D(
         label=PLOT_STYLE["pdf_y"]["legend"],
     )
     # Print a marker at the expected position using the color of the conditional distribution
-    grid.ax_marg_y.plot(0, y_t, "ro", markersize=5, alpha=0.5)
-    grid.ax_marg_y.plot(0, gy_t, "go", markersize=5, alpha=0.5)
-    # Print a vertical line at the probability of y_t
-    grid.ax_marg_y.plot([0, P_y_t], [y_t, y_t], "r-", alpha=0.5)
-    grid.ax_marg_y.plot([0, P_y_t], [gy_t, gy_t], "g-", alpha=0.5)
+    if show_orbit_guides:
+        grid.ax_marg_y.plot(0, y_t, "ro", markersize=5, alpha=0.5)
+        grid.ax_marg_y.plot(0, gy_t, "go", markersize=5, alpha=0.5)
+        # Print a vertical line at the probability of y_t
+        grid.ax_marg_y.plot([0, P_y_t], [y_t, y_t], "r-", alpha=0.5)
+        grid.ax_marg_y.plot([0, P_y_t], [gy_t, gy_t], "g-", alpha=0.5)
 
     grid.ax_marg_y.set_xlim([0, None])
 
@@ -439,7 +455,13 @@ def plot_analytic_npmi_2D(
 
 
 def plot_analytic_pmd_2D(
-    gmm: SymmGaussianMixture, G: Group, rep_X: Representation, rep_Y: Representation, x_samples, y_samples
+    gmm: SymmGaussianMixture,
+    G: Group,
+    rep_X: Representation,
+    rep_Y: Representation,
+    x_samples,
+    y_samples,
+    show_orbit_guides: bool = True,
 ):
     grid = sns.JointGrid(space=0.0, height=PLOT_SIZE)
     x_samples = x_samples.squeeze()
@@ -462,10 +484,11 @@ def plot_analytic_pmd_2D(
     rep_X = gmm.rep_X
     rep_Y = gmm.rep_Y
     gx_t, gy_t = (rep_X(gmm.G2Hx(g)) @ [x_t]).squeeze(), (rep_Y(gmm.G2Hy(g)) @ [y_t]).squeeze()
-    grid.ax_joint.axvline(x_t, color="r", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
-    grid.ax_joint.axhline(y_t, color="r", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
-    grid.ax_joint.axvline(gx_t, color="g", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
-    grid.ax_joint.axhline(gy_t, color="g", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
+    if show_orbit_guides:
+        grid.ax_joint.axvline(x_t, color="r", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
+        grid.ax_joint.axhline(y_t, color="r", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
+        grid.ax_joint.axvline(gx_t, color="g", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
+        grid.ax_joint.axhline(gy_t, color="g", alpha=PLOT_ALPHA, linewidth=COND_LINEWIDTH)
     # grid.ax_joint.plot(x_t, y_t, "ro", markersize=PLOT_MARKERSIZE, alpha=PLOT_ALPHA)
     # grid.ax_joint.plot(gx_t, gy_t, "go", markersize=PLOT_MARKERSIZE, alpha=PLOT_ALPHA)
     grid.ax_joint.set_xlim([-x_max, x_max])

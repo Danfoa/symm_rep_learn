@@ -11,7 +11,14 @@ from symm_learning.representation_theory import direct_sum
 # Density Ratio Fitting.
 class InvDRF(DRF):
     def __init__(self, embedding: torch.nn.Module, gamma: float = 0.01):
-        assert embedding.out_type.size == 1, "The output of the embedding must be a scalar."
+        out_rep = getattr(embedding, "out_rep", None)
+        out_type = getattr(embedding, "out_type", None)
+        out_size = None
+        if out_rep is not None:
+            out_size = out_rep.size
+        elif out_type is not None:
+            out_size = out_type.size
+        assert out_size == 1, "The output of the embedding must be a scalar."
         # TODO: Assert embedding is invariant.
         super().__init__(embedding=embedding, gamma=gamma)
 

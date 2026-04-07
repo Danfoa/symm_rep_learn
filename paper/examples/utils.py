@@ -581,7 +581,7 @@ def save_training_curve_plot(plotter: LiveLossPlotter | None, checkpoint_path: P
         plotter._plot()
     except Exception:
         pass
-    plotter.fig.savefig(out_path, dpi=220, bbox_inches="tight")
+    plotter.fig.savefig(out_path, dpi=440, bbox_inches="tight")
     return out_path
 
 
@@ -607,7 +607,7 @@ def display_saved_training_curve(checkpoint_path: Path | str, title: str, figsiz
         ax.set_xticks([])
         ax.set_yticks([])
         img_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(img_path, dpi=220, bbox_inches="tight")
+        fig.savefig(img_path, dpi=440, bbox_inches="tight")
         print(f"Saved placeholder training-curve figure to {img_path}")
     ax.set_title(title, fontsize=8)
     fig.tight_layout()
