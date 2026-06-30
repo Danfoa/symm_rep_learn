@@ -2,6 +2,8 @@ import numpy as np
 import torch
 from torch import Tensor
 
+from symm_rep_learn.mysc.statistics import cov_norm_squared_unbiased_estimation
+
 
 def contrastive_low_rank_loss_memory_heavy(fx_c, hy_c, Dr) -> tuple[Tensor, dict]:
     """Implementation of ||E - E_r||_HS^2, while assuming E_r is a full matrix.
@@ -115,7 +117,7 @@ def contrastive_low_rank_loss(
     return loss, metrics
 
 
-def orthonormality_regularization(x, Cx: Tensor = None, x_mean: Tensor = None, var_name="x"):
+def orthonormality_regularization(x, Cx: Tensor = None, x_mean: Tensor = None, var_name="x", unbiased=True):
     """Computes orthonormality and centering regularization penalization for a batch of feature vectors.
 
     Computes finite sample unbiased empirical estimates of the term:
@@ -137,6 +139,7 @@ def orthonormality_regularization(x, Cx: Tensor = None, x_mean: Tensor = None, v
         Cx: (Tensor) of shape (r, r) covariance matrix of the feature vectors. If None, it is computed from x.
         x_mean: (Tensor) of shape (1, r) mean of the feature vectors. If None, it is computed from x.
         var_name: (str) Name of the variable for metric names (e.g., 'x' or 'y').
+        unbiased: (bool) Whether to compute the unbiased estimate of ||Cx||_F^2. If False, uses biased estimate.
 
     Returns:
         Regularization term as a scalar tensor.
@@ -154,8 +157,11 @@ def orthonormality_regularization(x, Cx: Tensor = None, x_mean: Tensor = None, v
         Cx = torch.cov(x_c.T, correction=0).to(x.dtype, x.device)  # Covariance matrix if not provided
 
     # Compute unbiased empirical estimates ||Cx||_F^2 = E_(x,x')~p(x) [(f_c(x).T f_c(x'))^2]
-    # Cx_fro_2 = cov_norm_squared_unbiased_estimation(x_c, False)
-    Cx_fro_2 = torch.linalg.matrix_norm(Cx, ord="fro") ** 2
+    if unbiased:
+        Cx_fro_2 = cov_norm_squared_unbiased_estimation(x_c)
+    else:
+        Cx_fro_2 = torch.linalg.matrix_norm(Cx, ord="fro") ** 2
+
     tr_Cx = torch.trace(Cx)  # E[f_c(x)^T f_c(x)] =  tr(Cx)
     fx_centering_loss = (x_mean**2).sum()  # ||E_p(x) (f(x_i))||^2
 
