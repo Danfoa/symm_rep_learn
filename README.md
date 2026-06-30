@@ -1,7 +1,15 @@
 # Representation Learning for Equivariant Inference with Guarantees
 
-This repository hosts the code of the paper "Representation Learning for Equivariant Inference with Guarantees".
+Code repository for ICML 2026 submission "Representation Learning for Equivariant Inference with Guarantees".
 
+<p align="center">
+  <a href="https://arxiv.org/abs/2505.19809">
+    <img src="https://img.shields.io/badge/arXiv-2505.19809-b31b1b.svg" alt="arXiv">
+  </a>
+  <a href="https://icml.cc/virtual/2026/poster/62770">
+    <img src="https://img.shields.io/badge/ICML-2026%20poster-0e7c66.svg" alt="ICML 2026 Poster">
+  </a>
+</p>
 
 ## Installation
 
